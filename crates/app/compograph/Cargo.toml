@@ -1,0 +1,21 @@
+[package]
+name = "compograph"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "compograph"
+path = "src/main.rs"
+
+[dependencies]
+cg-graph.workspace = true
+cg-layout.workspace = true
+cg-render.workspace = true
+cg-types.workspace = true
+gpui.workspace = true
+gpui_platform.workspace = true
+petgraph.workspace = true

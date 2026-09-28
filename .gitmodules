@@ -1,0 +1,5 @@
+[submodule "crates/vendor/zed-gpui"]
+	path = crates/vendor/zed-gpui
+	url = https://gh-proxy.com/https://github.com/kkkqkx123/zed-gpui.git
+	branch = lean
+	shallow = true

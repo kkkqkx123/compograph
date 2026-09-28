@@ -1,5 +1,7 @@
 # 自研绘图库借鉴 cytoscape.js 的完整分析
 
+> **文档状态（2026-09-28）**：本分析的定稿与落地映射已由 `docs/architecture/borrowing-design.md` 取消（借鉴总表、不借鉴清单、源文件→模块映射均已更新至 cg-* crate 命名），正文保留作为逐子系统分析依据。
+
 > 配套：`compograph-design.md`（总体方案）。本文件聚焦**自研绘图库（L2 布局 + L3 渲染/交互）应从 cytoscape.js 借鉴什么、以及哪些不能直接参考**。
 > 引用基线：cytoscape.js 本地克隆 `/workspace/cytoscape.js`（行号基于当前 HEAD）。
 > 角色对照：petgraph 负责"图模型+算法"，cytoscape.js 的"布局+渲染+交互"正是自研绘图库要替代/借鉴的对象。

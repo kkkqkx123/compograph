@@ -1,0 +1,43 @@
+[workspace]
+resolver = "2"
+members = [
+    # compograph crates, grouped by layer.
+    "crates/foundation/*",
+    "crates/engine/*",
+    "crates/render/*",
+    "crates/app/*",
+]
+
+[workspace.package]
+publish = false
+edition = "2024"
+
+[workspace.lints.rust]
+unexpected_cfgs = { level = "allow" }
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+declare_interior_mutable_const = "deny"
+redundant_clone = "deny"
+disallowed_methods = "deny"
+
+# gpui and its sibling crates come from the submodule at crates/vendor/zed-gpui.
+# That snapshot is published in expanded form (see the submodule's
+# docs/dev/branch-sync.md), so the paths below are all this workspace needs:
+# there is no gpui workspace table to restate here.
+[workspace.dependencies]
+petgraph = "0.8"
+
+gpui = { path = "crates/vendor/zed-gpui/crates/gpui", default-features = false }
+gpui_macros = { path = "crates/vendor/zed-gpui/crates/gpui_macros" }
+gpui_platform = { path = "crates/vendor/zed-gpui/crates/gpui_platform", default-features = false }
+gpui_shared_string = { path = "crates/vendor/zed-gpui/crates/gpui_shared_string" }
+gpui_util = { path = "crates/vendor/zed-gpui/crates/gpui_util" }
+
+cg-types = { path = "crates/foundation/cg-types" }
+cg-geometry = { path = "crates/foundation/cg-geometry" }
+cg-graph = { path = "crates/foundation/cg-graph" }
+cg-layout = { path = "crates/engine/cg-layout" }
+cg-render = { path = "crates/render/cg-render" }
+cg-interact = { path = "crates/render/cg-interact" }
