@@ -9,6 +9,7 @@ pub mod retained;
 pub mod spatial;
 pub mod style;
 pub mod synth;
+pub mod text;
 pub mod view;
 
 pub use camera::{Camera, MAX_ZOOM, MIN_ZOOM};
@@ -30,6 +31,10 @@ pub use style::{
     SELECTED_NODE_FILL, StyleMapper, StyleSheet, scale_for_rank, scc_fill,
 };
 pub use synth::{SynthGraph, chain_with_cross_edges, grid_with_random_edges};
+pub use text::{
+    DEFAULT_LABEL_COLOR, DEFAULT_LABEL_SIZE, LABEL_GAP, PaintedLabel, draws_labels,
+    paint_labels_for,
+};
 pub use view::{
     EDGE_AGGREGATION_THRESHOLD, EdgePaintOptions, NODE_SIDE, PARALLEL_STEP, PaintedArrow,
     PaintedEdge, PaintedNode, PaintedRubberBand, bundle_slot, edge_ordinals_for, graph_view,

@@ -24,7 +24,8 @@ use cg_render::{
     NodeStylePatch, PaintedArrow, PaintedEdge, PaintedNode, PaintedRubberBand, PlanCounts,
     RefreshInput, RetainedCache, SpatialIndex, StoredPlans, StyleMapper, StyleSheet,
     edge_ordinals_for, encode_ppm, export_pixels, graph_view, paint_arrows_for_level,
-    paint_edges_for, paint_nodes_for, subscribe_repaint, visible_node_ids, world_viewport_rect,
+    paint_edges_for, paint_labels_for, paint_nodes_for, subscribe_repaint, visible_node_ids,
+    world_viewport_rect,
 };
 use cg_types::{Point2, Rect, Vec2};
 use gpui::{
@@ -596,6 +597,68 @@ impl GraphWindow {
         cx.notify();
     }
 
+    fn import_dot(&mut self, cx: &mut Context<Self>) {
+        let receiver = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: None,
+        });
+        let task = cx.spawn(async move |weak, async_cx| {
+            let picked = match receiver.await {
+                Ok(Ok(paths)) => paths.and_then(|mut paths| paths.pop()),
+                _ => {
+                    weak.update(&mut *async_cx, |this, cx| {
+                        match file_io::import_dot_file(file_io::DOT_PATH) {
+                            Ok(document) => {
+                                let count = document.nodes.len();
+                                this.apply_document(&document, cx);
+                                this.io_message = format!(
+                                    "imported {count} nodes from {} (picker unavailable)",
+                                    file_io::DOT_PATH
+                                );
+                            }
+                            Err(note) => this.io_message = note,
+                        }
+                        cx.notify();
+                    })
+                    .ok();
+                    return;
+                }
+            };
+            // Distinguish cancellation (dialog answered with no path) from a
+            // platform failure (handled above as the scratch fallback).
+            let Some(path) = picked else {
+                weak.update(&mut *async_cx, |this, cx| {
+                    this.io_message = "import cancelled".to_string();
+                    cx.notify();
+                })
+                .ok();
+                return;
+            };
+            let loaded = async_cx
+                .background_executor()
+                .spawn(async move {
+                    file_io::import_dot_from_path(&path).map(|document| (document, path))
+                })
+                .await;
+            weak.update(&mut *async_cx, |this, cx| {
+                match loaded {
+                    Ok((document, path)) => {
+                        let count = document.nodes.len();
+                        this.apply_document(&document, cx);
+                        this.io_message = format!("imported {count} nodes from {}", path.display());
+                    }
+                    Err(note) => this.io_message = note,
+                }
+                cx.notify();
+            })
+            .ok();
+        });
+        self.io_task = Some(task);
+        cx.notify();
+    }
+
     fn export_dot(&mut self, cx: &mut Context<Self>) {
         let store = self.store.read(cx);
         let encoded = export_dot(store.graph());
@@ -949,6 +1012,18 @@ impl Render for GraphWindow {
             }
             (nodes, edges, arrows)
         };
+        // Labels are planned from the visible node plan every frame rather than
+        // cached: their cache key would need a text-shaping dimension the
+        // retained geometry cache does not track, and shaping is cheap relative
+        // to the geometry rebuilds it would key against.
+        let label_of = |node: NodeIndex| {
+            labels
+                .iter()
+                .find(|(id, _, _)| *id == node)
+                .map(|(_, text, _)| text.clone())
+        };
+        let label_size_of = |node: NodeIndex| style_of(node).label_size;
+        let painted_labels = paint_labels_for(&nodes, lod, label_of, label_size_of);
         let plan_ms = plan_started.elapsed().as_secs_f64() * 1000.0;
         self.metrics.push(FrameSample {
             counts: PlanCounts {
@@ -1077,6 +1152,15 @@ impl Render for GraphWindow {
                     )
                     .child(
                         div()
+                            .id("io-import-dot")
+                            .px_2()
+                            .child("import dot")
+                            .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                                this.import_dot(cx);
+                            })),
+                    )
+                    .child(
+                        div()
                             .id("view-aggregate-toggle")
                             .px_2()
                             .child(aggregate_label)
@@ -1125,7 +1209,7 @@ impl Render for GraphWindow {
                             .flex_1()
                             .relative()
                             .track_focus(&self.focus)
-                            .child(graph_view(nodes, edges, arrows, rubber_band))
+                            .child(graph_view(nodes, edges, arrows, painted_labels, rubber_band))
                             .when(hovering && hover_text.is_some(), |canvas| {
                                 canvas.child(
                                     div()

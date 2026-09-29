@@ -62,15 +62,17 @@
 
 ## 3. 现状与差距（Gap）
 
+> 2026-09-29 实测校准：下表"缺口"列原按阶段填写，多数已在后续阶段落地。已落地项标注 ✅，剩余缺口见[功能实测分析报告](./feature-analysis-report.md)与[P0 方案](./compograph-p0-plan.md)。
+
 | 层 | 已有 | 缺口 |
 |---|---|---|
 | workspace/上游源码 | 结构、展开、解析与编译验证完成 | 沙箱无图形环境，窗口显示需目标机验证 |
-| foundation | cg-types 几何原语+单测；cg-geometry 命中/曲线骨架+单测；cg-graph 存储 + 变更事件广播 + 订阅过滤（`binding.rs`）+ 算法桥（`algo.rs`） | 只读视图 trait |
-| engine | LayoutEngine trait、注册表、preset/random 布局+单测；LayoutDriver 订阅驱动的位置增量维护（`driver.rs`、`reaction.rs`） | 力导向（CoSE 移植）与布局族 |
-| render | Camera 仿射+单测；canvas 节点绘制+视口剔除；结构变更订阅重绘（`refresh.rs`） | 边/箭头绘制、标签、拾取接线、LOD、保留模式 |
-| interact | DragState 状态机+单测 | 与 gpui 指针事件的对接、框选、平移缩放 |
-| app | 引导+演示场景（已接线结构变更重绘） | 窗口 resize 视口、布局切换 UI、算法面板、文件 I/O |
-| 文档 | architecture/plan 三件套 + AGENTS.md | 随代码落地持续回改 |
+| foundation | cg-types 几何原语+单测；cg-geometry 命中/曲线/聚合几何+单测；cg-graph 存储 + 变更事件广播 + 订阅过滤（`binding.rs`）+ 算法桥 11 个（`algo.rs`）+ JSON/DOT 进出（`io.rs`） | ✅ 只读视图 trait 已落地（`view.rs` 的 `GraphView`/`MockGraph`） |
+| engine | LayoutEngine trait、注册表、**8 种布局**（force/random/preset/grid/circle/breadthfirst/concentric/hierarchical）+ LayoutDriver 增量维护 | ✅ 力导向与布局族均已落地；Radial 布局未做 |
+| render | Camera、canvas 绘制、视口剔除、边/箭头/自环/haystack、空间索引、样式层与 bypass、**保留模式**、LOD、帧度量、PPM 导出、**节点标签文本** | ⚠️ 节点形状族、边标签、PNG 导出未做 |
+| interact | 平移/缩放/拖拽/点选/框选/悬停 全套状态机 + 指针事件桥 | ✅ 均已落地 |
+| app | 引导+演示场景、布局切换 UI、算法面板（5 类）、JSON/DOT/图片出入口、状态栏 | ✅ 均已落地 |
+| 文档 | architecture/plan 四件套 + AGENTS.md | 随代码落地持续回改（本次已回改 P0 相关项） |
 
 ## 4. 总体阶段划分
 
@@ -163,7 +165,7 @@
 | OQ-1 | gpui 升级会漂移 API（本仓已证实 `Model`→`Entity` 演进） | 保持 submodule 指向 zed-gpui `lean` 分支；升级在 zed-gpui 内完成并发布新快照，本项目只更新 submodule 指向 + 复核 2.2 表 |
 | OQ-2 | 力导向物理选型：CoSE 直译 vs d3-force 风格 | 先直译 cose（:705），手感不满意再评估 |
 | OQ-3 | 目标图规模（千/万/十万） | 决定 LOD 与路线 C 启动时机，需拍板 |
-| OQ-5 | 标签渲染：gpui 文本系统 vs 离屏纹理；中文换行/锚点 | 阶段 1 先不做标签，阶段 2 拍板 |
+| OQ-5 | 标签渲染：gpui 文本系统 vs 离屏纹理；中文换行/锚点 | ✅ 已定并落地（节点标签走 gpui 文本系统，单行居中）；边标签与中文换行待做 |
 | OQ-7 | 视觉保真度：贝塞尔/箭头/自环优先级 | 建议顺序：直线+箭头 → 贝塞尔 → 自环 → taxi/haystack |
 | OQ-8 | headless 渲染测试覆盖面 | 拾取几何 + 事件接线优先 |
 | OQ-10 | 指针事件入口：元素级（div 包 canvas）vs window 级监听 | 阶段 1 以最小可用为标准先接 div 级，必要时上 window 级 |
@@ -173,5 +175,15 @@
 
 1. 目标机执行阶段 0 收口：`cargo run -p compograph` 演示窗口验证（事件流接线已完成，见第 5 章）。
 2. 阶段 1 开工顺序：空间索引 → 拾取几何移植 → force.rs 移植 → 指针事件接线 → 相机交互。
-3. 文档与代码一致性（已完成第二轮）：architecture 三文档改用 cg-* 命名；上游结构描述已从"平铺在 crates/"更正为"submodule 挂 crates/vendor/zed-gpui"，并补 zed-gpui 侧展开工作区继承的机制说明（architecture-design §2.1）；原作者文档（compograph-design.md / cytoscape-borrow-analysis.md）已加取代指引注。后续随代码落地持续回改。
+3. 文档与代码一致性（已完成第三轮，2026-09-29）：architecture 三文档改用 cg-* 命名；上游结构描述已从"平铺在 crates/"更正为"submodule 挂 crates/vendor/zed-gpui"，并补 zed-gpui 侧展开工作区继承的机制说明（architecture-design §2.1）；原作者文档（compograph-design.md / cytoscape-borrow-analysis.md）已加取代指引注；本轮按[功能实测分析报告](./feature-analysis-report.md)回改 `feature-list.md`/`architecture-design.md`/本文的进度口径。
 4. 每阶段结束在本文件补记"实际落地差异"，供后续阶段参考。
+
+### 11.1 P0 落地记录（2026-09-29）
+
+按 [P0 方案](./compograph-p0-plan.md) 完成三项：
+
+- **节点标签文本渲染**：新增 `cg-render/src/text.rs`（`PaintedLabel` + `paint_labels_for`，含 headless 单测）；`graph_view` 增第 5 参并在节点之后、框选之前经 gpui 文本系统（`shape_line` + `ShapedLine::paint`）绘制；`main.rs` 复用既有 `labels` 生成计划；`DetailLevel::Minimal` 隐藏标签。
+- **DOT 导入**：`cg-graph/src/io.rs` 的 `import_dot` 由占位改为自写轻量解析器（头/节点/边链/属性/注释/引号字符串），产出 `GraphDocument` 并复用 `validate`；应用层新增 `import_dot_file` 与 `import dot` 按钮。
+- **文档回改**：`feature-list.md`/`architecture-design.md`/本文按实测校准进度口径。
+- **验证**：`cargo check --workspace --all-targets` 通过；`cargo test` 6 自建 crate 全绿（cg-types 5 / cg-geometry 22 / cg-graph 40 / cg-interact 15 / cg-layout 42+9 / cg-render 51+2 / compograph 14）；`cargo fmt --all --check` 通过；clippy 仅 `cg-render` 一处**既有**告警（`metrics.rs` 的 `len` 无 `is_empty`，非本次引入）。
+- **遗留未闭环**：图形窗口目视确认需目标机。

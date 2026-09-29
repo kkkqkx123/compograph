@@ -10,9 +10,13 @@ use cg_geometry::{
 
 use crate::lod::DetailLevel;
 use crate::spatial::SpatialIndex;
+use crate::text::PaintedLabel;
 use cg_graph::{GraphView, NodeIndex, Positions};
 use cg_types::{Point2, Rect, Vec2};
-use gpui::{App, Bounds, IntoElement, Pixels, Rgba, Window, canvas, fill, rgb};
+use gpui::{
+    App, Bounds, Font, Hsla, IntoElement, Pixels, Rgba, SharedString, TextAlign, TextRun, Window,
+    canvas, fill, rgb,
+};
 
 use crate::camera::Camera;
 use crate::style::{EdgeStyle, NodeStyle};
@@ -823,20 +827,22 @@ fn bounds_visible(min_x: f32, min_y: f32, max_x: f32, max_y: f32, viewport: Vec2
         && min_y <= viewport.y + CULL_MARGIN
 }
 
-/// Canvas element painting edges under arrows under nodes.
+/// Canvas element painting edges under arrows under nodes under labels.
 ///
 /// Each edge carries its own tint and width, so strokes are built per edge
-/// instead of sharing one path. The closure receives owned plans so the
-/// element stays `'static`.
+/// instead of sharing one path. Labels are shaped through the window text
+/// system and centered on their anchor. The closure receives owned plans so
+/// the element stays `'static`.
 pub fn graph_view(
     nodes: Vec<PaintedNode>,
     edges: Vec<PaintedEdge>,
     arrows: Vec<PaintedArrow>,
+    labels: Vec<PaintedLabel>,
     rubber_band: Option<PaintedRubberBand>,
 ) -> impl IntoElement {
     canvas(
         |_bounds: Bounds<Pixels>, _window: &mut Window, _cx: &mut App| {},
-        move |_bounds: Bounds<Pixels>, (), window: &mut Window, _cx: &mut App| {
+        move |_bounds: Bounds<Pixels>, (), window: &mut Window, cx: &mut App| {
             for edge in &edges {
                 let mut strokes = gpui::PathBuilder::stroke(gpui::px(edge.width.max(0.5)));
                 strokes.move_to(to_pixels(edge.start));
@@ -896,6 +902,9 @@ pub fn graph_view(
                 );
                 window.paint_quad(quad);
             }
+            for label in &labels {
+                paint_label(label, window, cx);
+            }
             if let Some(band) = rubber_band {
                 let quad = fill(
                     Bounds {
@@ -924,6 +933,33 @@ fn with_opacity(tint: u32, opacity: f32) -> Rgba {
     let mut color = rgb(tint);
     color.a = opacity.clamp(0.0, 1.0);
     color
+}
+
+/// Shapes and paints one node label centered on its anchor.
+///
+/// Shaping and painting both report errors rather than panicking; a failed
+/// label is skipped so one bad glyph never blanks the frame. The line height
+/// tracks the font size, and the label is centered over the node width so the
+/// text stays under its body regardless of length.
+fn paint_label(label: &PaintedLabel, window: &mut Window, cx: &mut App) {
+    let size = gpui::px(label.size.max(1.0));
+    let color: Hsla = rgb(label.color).into();
+    let run = TextRun {
+        len: label.text.len(),
+        font: Font::default(),
+        color,
+        ..TextRun::default()
+    };
+    let line =
+        window
+            .text_system()
+            .shape_line(SharedString::from(label.text.clone()), size, &[run], None);
+    let width = line.width();
+    let origin = gpui::point(
+        gpui::px(label.origin.x - f32::from(width) / 2.0),
+        gpui::px(label.origin.y),
+    );
+    let _ = line.paint(origin, size, TextAlign::Left, None, window, cx);
 }
 
 fn to_pixels(point: Point2) -> gpui::Point<Pixels> {

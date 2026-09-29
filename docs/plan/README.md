@@ -6,6 +6,8 @@
 | [phase-1-detailed-plan.md](./phase-1-detailed-plan.md) | **阶段 1 细化方案**：几何数学层、空间索引、力导向移植、后台执行、边箭头绘制、指针事件桥、应用接线的任务分解、顺序与验收 |
 | [phase-2-detailed-plan.md](./phase-2-detailed-plan.md) | **阶段 2 细化方案**：布局族、样式与旁路、多选框选、算法桥扩展与面板、图出入口、应用组装的任务分解、顺序与验收 |
 | [phase-3-detailed-plan.md](./phase-3-detailed-plan.md) | **阶段 3 细化方案**：度量基线、细节层次、边聚合、索引与剔除改造、保留模式、后台调度、图片导出、路线 C 评估的任务分解、顺序与验收 |
+| [feature-analysis-report.md](./feature-analysis-report.md) | **功能实测分析报告**：以代码为准盘点已落地功能、对照 cytoscape.js 的差距、待补充清单与优先级、文档与代码的偏差表（供回改） |
+| [compograph-p0-plan.md](./compograph-p0-plan.md) | **P0 阶段方案**：节点标签文本渲染、DOT 导入、应用接线、文档回改的实施设计与验证 |
 
 ## 约定
 

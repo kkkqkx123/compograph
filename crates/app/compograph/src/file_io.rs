@@ -27,6 +27,11 @@ pub fn import_json_file(path: &str) -> Result<GraphDocument, String> {
     import_json_from_path(Path::new(path))
 }
 
+/// Reads and parses a DOT file into a transferable document.
+pub fn import_dot_file(path: &str) -> Result<GraphDocument, String> {
+    import_dot_from_path(Path::new(path))
+}
+
 /// Writes caller-rendered text such as DOT output.
 pub fn write_text_file(content: &str, path: &str) -> Result<(), String> {
     write_text_to_path(content, Path::new(path))
@@ -54,6 +59,13 @@ pub fn import_json_from_path(path: &Path) -> Result<GraphDocument, String> {
     let encoded = std::fs::read_to_string(path)
         .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
     cg_graph::import_json(&encoded).map_err(|error| error.message().to_string())
+}
+
+/// Reads and parses a DOT file from a dialog-chosen path.
+pub fn import_dot_from_path(path: &Path) -> Result<GraphDocument, String> {
+    let encoded = std::fs::read_to_string(path)
+        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    cg_graph::import_dot(&encoded).map_err(|error| error.message().to_string())
 }
 
 /// Writes caller-rendered text such as DOT output to a dialog-chosen path.
@@ -108,6 +120,19 @@ mod tests {
     #[test]
     fn missing_files_report_readable_errors() {
         assert!(import_json_file("/tmp/compograph-graph-absent.json").is_err());
+    }
+
+    #[test]
+    fn dot_file_round_trips_through_the_scratch_path() {
+        let path = "/tmp/compograph-graph-test.dot";
+        let encoded = "digraph { a -> b [weight=2]; c; }";
+        write_text_file(encoded, path).expect("write works");
+        let document = import_dot_file(path).expect("dot import works");
+        assert_eq!(document.nodes.len(), 3);
+        assert_eq!(document.edges.len(), 1);
+        assert!((document.edges[0].weight - 2.0).abs() < 1e-5);
+        std::fs::remove_file(path).expect("scratch file is removed");
+        assert!(import_dot_file("/tmp/compograph-graph-absent.dot").is_err());
     }
 
     #[test]

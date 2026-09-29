@@ -9,6 +9,7 @@
 > - `[gpui]` 直接使用 gpui（zed-gpui fork）平台能力
 >
 > 阶段：P0 骨架闭环 → P1 可交互 → P2 接近 cytoscape 可用度 → P3 大规模。
+> **进度口径（2026-09-29 实测校准）**：P0–P3 绝大多数项已落地，表格"阶段"列保留原计划口径，已落地项在"状态"列标注。实测见 [功能实测分析报告](../plan/feature-analysis-report.md)。
 > 事实基线：petgraph `a4d94bd`（0.8.3）、zed-gpui `212afa4`（gpui 0.2.2）、cytoscape.js `7ba6340`，均已在本地克隆核验。
 
 ---
@@ -22,8 +23,8 @@
 | 1.3 | 共享状态容器 + 变更事件 | `[gpui]` | P0 | `Entity<GraphStore>`（`entity_map.rs:435`）+ `EventEmitter` + `subscribe`（`app.rs:1272`） |
 | 1.4 | 坐标外挂 `PositionStore` | `[自研]` | P0 | petgraph 不存坐标；`Positions = HashMap<NodeIndex,(f32,f32)>` + `fixed` 集 |
 | 1.5 | 只读图视图 trait（解耦 L2/L3） | `[petgraph]` | P1 | 基于 `visit` trait 簇（`IntoNeighbors:107`、`IntoNodeIdentifiers:183`、`IntoEdges:147`） |
-| 1.6 | 图 I/O（JSON/GraphML 导入导出） | `[自研]` | P2 | 参考 cytoscape JSON 元素格式；serde 可选 |
-| 1.7 | DOT 导出/导入 | `[petgraph]` | P2 | `src/dot/`（导入需 `dot_parser` feature） |
+| 1.6 | 图 I/O（JSON/GraphML 导入导出） | `[自研]` | P2 | ✅ 已落地：JSON 导入导出 + 校验（`io.rs`）；GraphML 未做 |
+| 1.7 | DOT 导出/导入 | `[自研]` | P2 | ✅ 已落地：`export_dot`（petgraph `Dot`）+ 自写轻量 `import_dot`（`io.rs`） |
 
 ### 1A. 算法库复用清单（petgraph `a4d94bd` 已核验）
 
@@ -44,6 +45,8 @@
 | 遍历 | `Bfs`/`Dfs`/`DfsPostOrder`/`Topo`、`depth_first_search` | `visit/` | P1（布局内部即用） |
 
 > petgraph 缺失、cytoscape 独有的"网络科学"算法（度/接近/介数中心性、MCL、k-means、层次聚类、亲和传播、Euler 路径、Karger-Stein 最小割）**不在 v1 范围**，列为远期自研项（见 §6）。
+>
+> **已桥接算法（`cg-graph/src/algo.rs`，共 11 个）**：`shortest_paths`/`shortest_path_cost`（Dijkstra）、`shortest_path`（A*）、`heuristic_shortest_path`（带位置启发式 A*）、`strongly_connected_components`（Tarjan）、`minimum_spanning_forest`（Kruskal）、`minimum_spanning_tree_single`（Prim）、`topological_order`、`immediate_dominators`、`rank_nodes`（PageRank）、`transitive_reduction`。UI 已暴露其中 5 类（最短路/引导搜索/连通分量/PageRank/生成树）。
 
 ---
 
@@ -51,19 +54,19 @@
 
 | # | 功能 | 来源 | 阶段 | 说明 |
 |---|---|---|---|---|
-| 2.1 | `LayoutEngine` trait + 布局注册表 | `[cy→模式]` | P0 | 借鉴 `extensions/layout/index.mjs` 的 name→impl 注册表 |
-| 2.2 | 布局桥接契约（产坐标→写回→触发重绘） | `[cy→模式]` | P0 | 借鉴 `collection/layout.mjs:41 layoutPositions` |
-| 2.3 | Preset 布局（使用给定坐标） | `[cy→移植]` | P0 | `preset.mjs:25`，平凡实现，P0 画静态图即用 |
-| 2.4 | Random 布局 | `[cy→移植]` | P0 | `random.mjs:21` |
-| 2.5 | Force-directed（CoSE/FR 物理：斥力/引力/温度退火） | `[cy→移植]` | P1 | `cose.mjs`（`run:126`、物理步 `step:705`），自包含可直译；d3-force 风格替代为开放点 OQ-B1 |
-| 2.6 | Grid 布局 | `[cy→移植]` | P1 | `grid.mjs:30` |
-| 2.7 | Circle 布局 | `[cy→移植]` | P1 | `circle.mjs:31` |
-| 2.8 | Breadth-first 布局 | `[cy→移植]` | P1 | `breadthfirst.mjs:42` |
-| 2.9 | Concentric 布局 | `[cy→移植]` | P2 | `concentric.mjs:37` |
-| 2.10 | Radial（按中心性定半径，petgraph `page_rank` 辅助排序） | `[自研]` | P2 | petgraph `page_rank.rs:64` 作子步骤 |
-| 2.11 | Hierarchical（DAG 分层） | `[petgraph` 辅助`+自研]` | P2 | toposort/`tred`/`dominators` 做分层，坐标分配自研 |
-| 2.12 | 增量布局（固定未变节点、局部更新） | `[自研]` | P1 | 避免整图抖动 |
-| 2.13 | 后台线程布局 + 分批回写（动画式收敛） | `[gpui]` | P1 | `App::spawn`（`app.rs:2039`）/ `background_executor`（`app.rs:300`） |
+| 2.1 | `LayoutEngine` trait + 布局注册表 | `[cy→模式]` | P0 | ✅ 已落地（`engine.rs`/`registry.rs`），注册 8 种 |
+| 2.2 | 布局桥接契约（产坐标→写回→触发重绘） | `[cy→模式]` | P0 | ✅ 已落地（`driver.rs` + `reaction.rs`） |
+| 2.3 | Preset 布局（使用给定坐标） | `[cy→移植]` | P0 | ✅ 已落地（`preset.rs`） |
+| 2.4 | Random 布局 | `[cy→移植]` | P0 | ✅ 已落地（`random.rs`） |
+| 2.5 | Force-directed（CoSE/FR 物理：斥力/引力/温度退火） | `[cy→移植]` | P1 | ✅ 已落地（`force.rs`） |
+| 2.6 | Grid 布局 | `[cy→移植]` | P1 | ✅ 已落地（`grid.rs`） |
+| 2.7 | Circle 布局 | `[cy→移植]` | P1 | ✅ 已落地（`circle.rs`） |
+| 2.8 | Breadth-first 布局 | `[cy→移植]` | P1 | ✅ 已落地（`breadthfirst.rs`） |
+| 2.9 | Concentric 布局 | `[cy→移植]` | P2 | ✅ 已落地（`concentric.rs`） |
+| 2.10 | Radial（按中心性定半径，petgraph `page_rank` 辅助排序） | `[自研]` | P2 | ❌ 未实现（缺口） |
+| 2.11 | Hierarchical（DAG 分层） | `[petgraph` 辅助`+自研]` | P2 | ✅ 已落地（`hierarchical.rs`） |
+| 2.12 | 增量布局（固定未变节点、局部更新） | `[自研]` | P1 | ✅ 已落地（`driver.rs` 的 `pin`/`move_pinned`/`request_refine`） |
+| 2.13 | 后台线程布局 + 分批回写（动画式收敛） | `[gpui]` | P1 | ✅ 已落地（`LayoutProgress` + `SYNC_LAYOUT_NODE_LIMIT`） |
 
 ---
 
@@ -73,21 +76,21 @@
 |---|---|---|---|---|
 | 3.1 | 路线 A：`gpui::canvas` 即时绘制 `GraphView` | `[gpui]` | P0 | `elements/canvas.rs:10`；节点 `paint_quad`（`window.rs:4502`） |
 | 3.2 | 边绘制（直线/折线/贝塞尔） | `[cy→移植]+[gpui]` | P1 | 几何借 `edge-control-points.mjs`（`findStraightEdgePoints:251`、`findBezierPoints:257`、`findTaxiPoints:309`、`findLoopPoints:162`），落为 `Path`（`scene.rs:840/847/859`） |
-| 3.3 | 箭头（三角几何） | `[cy→移植]+[gpui]` | P1 | 借 `edge-arrows.mjs` 方位/位移 + `arrow-shapes.mjs:142` 顶点表；`Path::push_triangle`（`scene.rs:876`） |
-| 3.4 | 节点形状（圆/椭圆/圆角矩形起步，多边形族后续） | `[cy→移植]+[gpui]` | P1/P2 | 借 `node-shapes.mjs` 顶点生成（`generateEllipse:43`、`generateRoundRectangle:143`、`generatePolygon:6`），绘制改 `Path`/`Quad` |
-| 3.5 | 自环边 | `[cy→移植]` | P2 | `findLoopPoints`（`edge-control-points.mjs:162`） |
-| 3.6 | Haystack 边聚合（大图简化边） | `[cy→移植]` | P3 | `findHaystackPoints`（`:64`） |
-| 3.7 | 相机 `Camera{offset,zoom}`（平移/缩放） | `[cy→模式]+[gpui]` | P1 | 公式思路借 `math.mjs:9/14`；实现用 CPU 仿射或 `TransformationMatrix`（`scene.rs:608`） |
-| 3.8 | 空间索引（四叉树/均匀网格）+ 点选命中 | `[cy→移植]` | P1 | 命中数学直译 `coords.mjs`（`findNearestElement:75`、`checkNode:131`、`checkEdge:157`） |
-| 3.9 | 框选命中 | `[cy→移植]` | P2 | `getAllInBox`（`coords.mjs:323`）、`doLinesIntersect`（`:413`） |
-| 3.10 | 节点/边标签 | `[自研]`（gpui 文本系统） | P1/P2 | 中文换行/锚点策略为开放点 OQ-5 |
-| 3.11 | 样式属性层（颜色/描边/宽度/透明度…） | `[cy→模式]` | P2 | 借 `style/properties.mjs` schema 思想 + mapper/trigger；落点重映射为 `PaintQuad`/`Path` 字段 |
-| 3.12 | 选中/高亮覆盖（bypass 式 override） | `[cy→模式]` | P2 | 借 `style/bypass.mjs` 概念 |
-| 3.13 | 绘制顺序编排（先边后节点、标签最上、z-order） | `[cy→模式]` | P1 | 借 `drawing-nodes.mjs:11`、`drawing-edges.mjs:8`、`z-ordering.mjs` 的编排结构 |
-| 3.14 | 路线 B：自定义 `Element` + 保留场景（增量 flush） | `[gpui]` | P3 | `Element` trait（`element.rs:53`） |
-| 3.15 | LOD（缩放阈值后降级为点/线） | `[自研]` | P3 | — |
-| 3.16 | 图片导出（PNG） | `[自研]`（思路参考 cytoscape `export-image.mjs`） | P3 | wgpu 截图/离屏渲染 |
-| 3.17 | 路线 C：wgpu 实例化（十万级） | `[gpui_wgpu]` | 按需 | fork 的 `WgpuContext` 公开 `device/queue`（`gpui_wgpu/src/wgpu_context.rs:13-14`），可行性高于原判 |
+| 3.3 | 箭头（三角几何） | `[cy→移植]+[gpui]` | P1 | ✅ 已落地（`view.rs` 的 `arrow_triangle` 等） |
+| 3.4 | 节点形状（圆/椭圆/圆角矩形起步，多边形族后续） | `[cy→移植]+[gpui]` | P1/P2 | ⚠️ 部分：当前仅方形块，形状族未做（缺口） |
+| 3.5 | 自环边 | `[cy→移植]` | P2 | ✅ 已落地（`curves.rs` 的 `self_loop_*`） |
+| 3.6 | Haystack 边聚合（大图简化边） | `[cy→移植]` | P3 | ✅ 已落地（`aggregation.rs` + `view.rs` 的 `bundle_slot`） |
+| 3.7 | 相机 `Camera{offset,zoom}`（平移/缩放） | `[cy→模式]+[gpui]` | P1 | ✅ 已落地（`camera.rs`，含光标锚点缩放） |
+| 3.8 | 空间索引（四叉树/均匀网格）+ 点选命中 | `[cy→移植]` | P1 | ✅ 已落地（`spatial.rs` 均匀网格 + `picking.rs`） |
+| 3.9 | 框选命中 | `[cy→移植]` | P2 | ✅ 已落地（`picking.rs` 的 `polyline_intersects_rect` 等） |
+| 3.10 | 节点/边标签 | `[自研]`（gpui 文本系统） | P1/P2 | ✅ 节点标签已落地（`text.rs` + `graph_view` 内文本整形）；边标签未做 |
+| 3.11 | 样式属性层（颜色/描边/宽度/透明度…） | `[cy→模式]` | P2 | ✅ 已落地（`style.rs`，常用子集 + mapper/谓词） |
+| 3.12 | 选中/高亮覆盖（bypass 式 override） | `[cy→模式]` | P2 | ✅ 已落地（`style.rs` 的 `BypassStore`） |
+| 3.13 | 绘制顺序编排（先边后节点、标签最上、z-order） | `[cy→模式]` | P1 | ✅ 已落地（`graph_view`：边→箭头→节点→标签→框选） |
+| 3.14 | 路线 B：自定义 `Element` + 保留场景（增量 flush） | `[gpui]` | P3 | ✅ 已落地（`retained.rs` 的 `RetainedCache`） |
+| 3.15 | LOD（缩放阈值后降级为点/线） | `[自研]` | P3 | ✅ 已落地（`lod.rs` 三级 + 滞回） |
+| 3.16 | 图片导出（PNG） | `[自研]`（思路参考 cytoscape `export-image.mjs`） | P3 | ⚠️ 部分：软件光栅化 PPM（`export.rs`），PNG 未做 |
+| 3.17 | 路线 C：wgpu 实例化（十万级） | `[gpui_wgpu]` | 按需 | ❌ 未实现（评估项） |
 
 ---
 
@@ -95,14 +98,14 @@
 
 | # | 功能 | 来源 | 阶段 | 说明 |
 |---|---|---|---|---|
-| 4.1 | 画布平移（空白处拖拽） | `[自研]+[gpui]` | P1 | 改 `Camera.offset` |
-| 4.2 | 滚轮/捏合缩放（光标锚点） | `[自研]` | P1 | — |
-| 4.3 | 节点拖拽（fixed + 局部重布局） | `[自研]` | P1 | 与 2.12 联动 |
-| 4.4 | 点选 / 多选 | `[cy→移植]` | P1 | 命中经空间索引（3.8） |
-| 4.5 | 框选 | `[cy→移植]` | P2 | 命中经 3.9 |
-| 4.6 | 高亮/悬停效果 | `[cy→模式]` | P2 | bypass 式覆盖（3.12） |
-| 4.7 | 悬停 tooltip（popover） | `[gpui]` | P2 | 复用 gpui 组件 |
-| 4.8 | 指针事件 → 相机逆变换 → 命中查询 事件桥 | `[自研]` | P1 | cytoscape 的 DOM 事件桥不可借，需按 gpui 指针事件重写 |
+| 4.1 | 画布平移（空白处拖拽） | `[自研]+[gpui]` | P1 | ✅ 已落地（`input.rs` 的 `PanState`） |
+| 4.2 | 滚轮/捏合缩放（光标锚点） | `[自研]` | P1 | ✅ 已落地（`handlers.rs` 的 `wheel_zoom_factor`） |
+| 4.3 | 节点拖拽（fixed + 局部重布局） | `[自研]` | P1 | ✅ 已落地（`DragState` + `drag_position`） |
+| 4.4 | 点选 / 多选 | `[cy→移植]` | P1 | ✅ 已落地（`SelectionState`） |
+| 4.5 | 框选 | `[cy→移植]` | P2 | ✅ 已落地（`BoxSelectState` + `nodes_in_rect`/`edges_in_rect`） |
+| 4.6 | 高亮/悬停效果 | `[cy→模式]` | P2 | ✅ 已落地（`hover_node` + `BypassStore`） |
+| 4.7 | 悬停 tooltip（popover） | `[gpui]` | P2 | ✅ 已落地（`main.rs` 的 `hover_label`） |
+| 4.8 | 指针事件 → 相机逆变换 → 命中查询 事件桥 | `[自研]` | P1 | ✅ 已落地（`main.rs` 指针事件接线） |
 
 ---
 
@@ -110,11 +113,11 @@
 
 | # | 功能 | 来源 | 阶段 | 说明 |
 |---|---|---|---|---|
-| 5.1 | 窗口/画布容器 `GraphView` | `[gpui]` | P0 | — |
-| 5.2 | 布局切换 UI（下拉/命令面板） | `[自研]` | P1 | 对接布局注册表（2.1） |
-| 5.3 | 算法执行面板（选算法→后台跑→结果高亮/面板展示） | `[自研]` | P2 | 大图算法走 `App::spawn` |
-| 5.4 | 图导入/导出入口（文件对话框） | `[自研]` | P2 | 对接 1.6/1.7 |
-| 5.5 | 状态栏（节点/边计数、缩放比、布局耗时） | `[自研]` | P2 | — |
+| 5.1 | 窗口/画布容器 `GraphView` | `[gpui]` | P0 | ✅ 已落地（`main.rs` 的 `GraphWindow`） |
+| 5.2 | 布局切换 UI（下拉/命令面板） | `[自研]` | P1 | ✅ 已落地（`switch_layout` + 顶栏菜单） |
+| 5.3 | 算法执行面板（选算法→后台跑→结果高亮/面板展示） | `[自研]` | P2 | ✅ 已落地（5 类算法 + `algo_panel.rs` + 代次守卫） |
+| 5.4 | 图导入/导出入口（文件对话框） | `[自研]` | P2 | ✅ 已落地：JSON 进出、DOT 进出、图片导出（PPM） |
+| 5.5 | 状态栏（节点/边计数、缩放比、布局耗时） | `[自研]` | P2 | ✅ 已落地（含 LOD/帧耗时/索引耗时） |
 
 ---
 
@@ -131,9 +134,20 @@
 
 ## 7. 阶段汇总
 
+> 实测进度（2026-09-29）：P0/P1/P2 项基本全部落地，P3 除"路线 C"与"PNG 导出"外亦已落地。下表保留原计划口径，"已落地"以各表状态列为准。
+
 | 阶段 | 目标 | 覆盖功能项 |
 |---|---|---|
 | **P0** | "petgraph 图 → gpui 画布"闭环 | 1.1–1.4、2.1–2.4、3.1、5.1 |
 | **P1** | 可交互探索小图 | 1.5、2.5–2.8、2.12–2.13、3.2–3.4、3.7–3.8、3.10、3.13、4.1–4.4、4.8、5.2 |
 | **P2** | 接近 cytoscape 可用度 | 1.6–1.7、2.9–2.11、3.5、3.9、3.11–3.12、4.5–4.7、5.3–5.5、算法桥接（最短路/SCC/PageRank/MST） |
 | **P3** | 大规模 | 3.6、3.14–3.16、远期算法按需；路线 C 视规模评估（3.17） |
+
+### 7.1 实测缺口汇总（对照 [分析报告](../plan/feature-analysis-report.md)）
+
+- **2.10 Radial 布局**：未实现。
+- **3.4 节点形状族**：仅方形块，未做形状族。
+- **3.10 边标签**：节点标签已落地，边标签未做。
+- **3.16 PNG 导出**：仅 PPM。
+- **3.17 路线 C**：未实现（评估项）。
+- **§6 远期算法**：中心性三件套、聚类套件、Euler、Karger-Stein 均未做。

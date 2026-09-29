@@ -326,7 +326,7 @@ zed-gpui fork 把 wgpu 后端独立为 `gpui_wgpu` crate，且 `WgpuContext` 公
 | OQ-2 | 渲染路线 A/B/C | 架构 | 默认 A→B 渐进 |
 | OQ-3 | 目标图规模 | LOD/索引/路线 | 需产品拍板 |
 | OQ-4 | L2/L3 是否仅依赖 visit trait | 可测试性 | 推荐是（§2 解耦选项） |
-| OQ-5 | 标签/文本渲染方案 | 标签可读性 | gpui 文本系统 vs 离屏纹理 |
+| OQ-5 | 标签/文本渲染方案 | 标签可读性 | ✅ 已定并落地：节点标签走 gpui 文本系统（`TextSystem::shape_line` + `ShapedLine::paint`），单行居中；边标签与多行/中文换行待做 |
 | OQ-6 | 算法 UI 暴露范围 | 功能面 | 见功能清单 §6 |
 | OQ-7 | 视觉保真度（贝塞尔/箭头/子图/动画） | 自研量 | v1 先直线+箭头 |
 | OQ-8 | headless 测试策略 | 质量门 | gpui `TestAppContext`（`src/app/test_context.rs`） |
@@ -336,12 +336,14 @@ zed-gpui fork 把 wgpu 后端独立为 `gpui_wgpu` crate，且 `WgpuContext` 公
 
 ## 9. 实施路线
 
+> 实测进度（2026-09-29）：下表 P0–P3 绝大部分已落地，仅"节点形状族""PNG 导出""路线 C"等少数项待做。逐项落地状态见[功能清单](./feature-list.md)与[功能实测分析报告](../plan/feature-analysis-report.md)。
+
 | 阶段 | 内容 | 产出 |
 |---|---|---|
-| **P0** | workspace + `cg-graph`（`Entity<GraphStore>` + `StableGraph`）+ 路线 A 静态 `GraphView` | "petgraph 图 → gpui 画布"闭环 |
-| **P1** | 力导向布局 + `Camera` 平移/缩放 + 节点拖拽 + 空间索引拾取 + 几何数学层（cytoscape 直译） | 可交互探索小图 |
-| **P2** | 其余布局 + 框选/高亮 + 算法 UI 桥接（dijkstra/SCC/PageRank/最大流…） | 接近 cytoscape 可用度 |
-| **P3** | 保留模式（B）+ LOD + 后台布局线程；必要时评估路线 C（`gpui_wgpu` device/queue） | 支撑大图 |
+| **P0** | workspace + `cg-graph`（`Entity<GraphStore>` + `StableGraph`）+ 路线 A 静态 `GraphView` | ✅ "petgraph 图 → gpui 画布"闭环 |
+| **P1** | 力导向布局 + `Camera` 平移/缩放 + 节点拖拽 + 空间索引拾取 + 几何数学层（cytoscape 直译） | ✅ 可交互探索小图 |
+| **P2** | 其余布局 + 框选/高亮 + 算法 UI 桥接（dijkstra/SCC/PageRank/最大流…） | ✅ 接近 cytoscape 可用度 |
+| **P3** | 保留模式（B）+ LOD + 后台布局线程；必要时评估路线 C（`gpui_wgpu` device/queue） | ✅ 保留模式/LOD/后台布局已落地；路线 C 未启动 |
 
 ---
 
