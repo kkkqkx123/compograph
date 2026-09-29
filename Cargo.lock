@@ -1053,6 +1053,7 @@ dependencies = [
 name = "cg-interact"
 version = "0.1.0"
 dependencies = [
+ "cg-geometry",
  "cg-graph",
  "cg-render",
  "cg-types",
@@ -1315,6 +1316,7 @@ name = "compograph"
 version = "0.1.0"
 dependencies = [
  "cg-graph",
+ "cg-interact",
  "cg-layout",
  "cg-render",
  "cg-types",

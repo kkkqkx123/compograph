@@ -55,7 +55,12 @@ mod tests {
     struct Fixed;
 
     impl LayoutEngine for Fixed {
-        fn layout(&self, _store: &cg_graph::GraphStore, _previous: &Positions) -> Positions {
+        fn layout(
+            &self,
+            _graph: &dyn cg_graph::GraphView,
+            _previous: &Positions,
+            _fixed: &cg_graph::FixedNodes,
+        ) -> Positions {
             HashMap::new()
         }
 

@@ -2,6 +2,17 @@
 
 use cg_types::{Point2, Rect};
 
+use crate::curves::sample_quadratic_bezier;
+
+/// Pointer tolerance for node hits, in model units.
+pub const NODE_HIT_TOLERANCE: f32 = 2.0;
+
+/// Pointer tolerance for edge hits, in model units.
+pub const EDGE_HIT_TOLERANCE: f32 = 8.0;
+
+/// Sample count used when approximating a Bezier edge by segments.
+pub const BEZIER_HIT_SAMPLES: usize = 16;
+
 /// Shortest distance from `point` to the segment between `a` and `b`.
 ///
 /// Falls back to the point distance when the segment degenerates.
@@ -67,6 +78,65 @@ fn on_segment(a: Point2, b: Point2, point: Point2) -> bool {
         && point.y <= a.y.max(b.y)
 }
 
+/// True when `point` falls inside the square node body around `center`.
+///
+/// The body half extent grows by `tolerance` so near misses still select.
+pub fn point_hits_node(point: Point2, center: Point2, half_extent: f32, tolerance: f32) -> bool {
+    let half = half_extent + tolerance;
+    (point.x - center.x).abs() <= half && (point.y - center.y).abs() <= half
+}
+
+/// Index of the nearest candidate to `point`, if any candidate exists.
+///
+/// Candidates stay index-agnostic so this crate never names graph identifiers.
+pub fn nearest_point_index(point: Point2, candidates: &[Point2]) -> Option<usize> {
+    let mut best: Option<(usize, f32)> = None;
+    for (index, candidate) in candidates.iter().enumerate() {
+        let distance = (*candidate - point).length_squared();
+        let replace = best.map(|(_, known)| distance < known).unwrap_or(true);
+        if replace {
+            best = Some((index, distance));
+        }
+    }
+    best.map(|(index, _)| index)
+}
+
+/// Shortest distance from `point` to the polyline through `points`.
+///
+/// Returns none for an empty polyline and the endpoint distance for a single
+/// point, so callers never divide by an implicit segment count.
+pub fn distance_to_polyline(point: Point2, points: &[Point2]) -> Option<f32> {
+    let mut head = points.first()?;
+    if points.len() == 1 {
+        return Some((*head - point).length());
+    }
+    let mut best = f32::INFINITY;
+    for next in points.iter().skip(1) {
+        best = best.min(distance_to_segment(point, *head, *next));
+        head = next;
+    }
+    Some(best)
+}
+
+/// Shortest distance from `point` to a quadratic Bezier edge.
+///
+/// The curve is discretised into [`BEZIER_HIT_SAMPLES`] segments, matching the
+/// sampling strategy of the reference implementation.
+pub fn distance_to_bezier(start: Point2, ctrl: Point2, end: Point2, point: Point2) -> f32 {
+    let samples = sample_quadratic_bezier(start, ctrl, end, BEZIER_HIT_SAMPLES);
+    distance_to_polyline(point, &samples).unwrap_or(f32::INFINITY)
+}
+
+/// True when `point` lies within `tolerance` of the straight edge `a`-`b`.
+pub fn edge_hit(point: Point2, a: Point2, b: Point2, tolerance: f32) -> bool {
+    distance_to_segment(point, a, b) <= tolerance
+}
+
+/// True when `point` lies within `tolerance` of the Bezier edge.
+pub fn bezier_hit(start: Point2, ctrl: Point2, end: Point2, point: Point2, tolerance: f32) -> bool {
+    distance_to_bezier(start, ctrl, end, point) <= tolerance
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -93,6 +163,77 @@ mod tests {
             Point2::new(0.0, 5.0),
             Point2::new(10.0, 5.0),
             rect
+        ));
+    }
+
+    #[test]
+    fn node_hit_expands_body_by_tolerance() {
+        let center = Point2::new(10.0, 10.0);
+        assert!(point_hits_node(
+            Point2::new(10.0, 10.0),
+            center,
+            12.0,
+            NODE_HIT_TOLERANCE
+        ));
+        assert!(point_hits_node(
+            Point2::new(23.0, 10.0),
+            center,
+            12.0,
+            NODE_HIT_TOLERANCE
+        ));
+        assert!(!point_hits_node(
+            Point2::new(40.0, 10.0),
+            center,
+            12.0,
+            NODE_HIT_TOLERANCE
+        ));
+    }
+
+    #[test]
+    fn nearest_candidate_prefers_the_closer_point() {
+        let candidates = vec![Point2::new(0.0, 0.0), Point2::new(9.0, 0.0)];
+        assert_eq!(
+            nearest_point_index(Point2::new(7.0, 0.0), &candidates),
+            Some(1)
+        );
+        assert_eq!(nearest_point_index(Point2::new(0.0, 0.0), &[]), None);
+    }
+
+    #[test]
+    fn polyline_distance_covers_empty_and_degenerate_cases() {
+        let point = Point2::new(3.0, 4.0);
+        assert_eq!(distance_to_polyline(point, &[]), None);
+        assert_eq!(
+            distance_to_polyline(point, &[Point2::new(0.0, 0.0)]),
+            Some(5.0)
+        );
+        let polyline = vec![Point2::new(0.0, 0.0), Point2::new(10.0, 0.0)];
+        assert_eq!(
+            distance_to_polyline(Point2::new(5.0, 2.0), &polyline),
+            Some(2.0)
+        );
+    }
+
+    #[test]
+    fn edge_and_bezier_hits_follow_tolerance() {
+        let a = Point2::new(0.0, 0.0);
+        let b = Point2::new(10.0, 0.0);
+        assert!(edge_hit(Point2::new(5.0, 2.0), a, b, EDGE_HIT_TOLERANCE));
+        assert!(!edge_hit(Point2::new(5.0, 20.0), a, b, EDGE_HIT_TOLERANCE));
+        let ctrl = Point2::new(5.0, 10.0);
+        assert!(bezier_hit(
+            a,
+            ctrl,
+            b,
+            Point2::new(5.0, 5.0),
+            EDGE_HIT_TOLERANCE
+        ));
+        assert!(!bezier_hit(
+            a,
+            ctrl,
+            b,
+            Point2::new(5.0, -10.0),
+            EDGE_HIT_TOLERANCE
         ));
     }
 }

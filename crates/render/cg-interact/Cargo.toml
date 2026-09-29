@@ -8,6 +8,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+cg-geometry.workspace = true
 cg-graph.workspace = true
 cg-render.workspace = true
 cg-types.workspace = true

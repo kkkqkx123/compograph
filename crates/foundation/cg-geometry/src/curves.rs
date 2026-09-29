@@ -12,6 +12,50 @@ pub fn quadratic_bezier(start: Point2, ctrl: Point2, end: Point2, t: f32) -> Poi
     )
 }
 
+/// Samples the quadratic Bezier into `segments` straight pieces.
+///
+/// The returned polyline always includes both endpoints; a zero segment count
+/// falls back to the endpoints so callers never receive an empty path.
+pub fn sample_quadratic_bezier(
+    start: Point2,
+    ctrl: Point2,
+    end: Point2,
+    segments: usize,
+) -> Vec<Point2> {
+    let segments = segments.max(1);
+    (0..=segments)
+        .map(|step| quadratic_bezier(start, ctrl, end, step as f32 / segments as f32))
+        .collect()
+}
+
+/// Control point for a single curved edge between `start` and `end`.
+///
+/// The control point sits on the perpendicular bisector at `offset` model
+/// units, so parallel edges spread symmetrically around the straight line.
+/// Degenerate endpoints fall back to a horizontal nudge to avoid NaNs.
+pub fn bezier_control_for_edge(start: Point2, end: Point2, offset: f32) -> Point2 {
+    use cg_types::Vec2;
+
+    let mid = Point2::new((start.x + end.x) / 2.0, (start.y + end.y) / 2.0);
+    let delta = end - start;
+    let length = delta.length();
+    if length <= f32::EPSILON {
+        return mid + Vec2::new(offset, 0.0);
+    }
+    let normal = Vec2::new(-delta.y / length, delta.x / length);
+    mid + normal * offset
+}
+
+/// Symmetric perpendicular offsets for `count` parallel edges.
+///
+/// A single edge stays straight at zero; pairs split evenly around the line;
+/// larger bundles step outwards in whole `step` multiples.
+pub fn parallel_offsets(count: usize, step: f32) -> Vec<f32> {
+    (0..count)
+        .map(|index| (index as f32 - (count as f32 - 1.0) / 2.0) * step)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -32,5 +76,40 @@ mod tests {
         let end = Point2::new(20.0, 0.0);
         let mid = quadratic_bezier(start, ctrl, end, 0.5);
         assert_eq!(mid, Point2::new(10.0, 5.0));
+    }
+
+    #[test]
+    fn sampling_keeps_endpoints_and_midpoint() {
+        let samples = sample_quadratic_bezier(
+            Point2::new(0.0, 0.0),
+            Point2::new(10.0, 10.0),
+            Point2::new(20.0, 0.0),
+            4,
+        );
+        assert_eq!(samples.len(), 5);
+        assert_eq!(samples[0], Point2::new(0.0, 0.0));
+        assert_eq!(samples[4], Point2::new(20.0, 0.0));
+        assert_eq!(samples[2], Point2::new(10.0, 5.0));
+    }
+
+    #[test]
+    fn control_point_offsets_along_the_normal() {
+        let start = Point2::new(0.0, 0.0);
+        let end = Point2::new(10.0, 0.0);
+        assert_eq!(
+            bezier_control_for_edge(start, end, 4.0),
+            Point2::new(5.0, 4.0)
+        );
+        assert_eq!(
+            bezier_control_for_edge(start, end, 0.0),
+            Point2::new(5.0, 0.0)
+        );
+    }
+
+    #[test]
+    fn parallel_offsets_stay_symmetric() {
+        assert_eq!(parallel_offsets(1, 8.0), vec![0.0]);
+        assert_eq!(parallel_offsets(2, 8.0), vec![-4.0, 4.0]);
+        assert_eq!(parallel_offsets(3, 8.0), vec![-8.0, 0.0, 8.0]);
     }
 }

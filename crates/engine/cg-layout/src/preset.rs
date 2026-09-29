@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use cg_graph::{GraphStore, Positions};
+use cg_graph::{FixedNodes, GraphView, Positions};
 use cg_types::Point2;
 
 use crate::engine::LayoutEngine;
@@ -21,11 +21,16 @@ impl PresetLayout {
 }
 
 impl LayoutEngine for PresetLayout {
-    fn layout(&self, store: &GraphStore, previous: &Positions) -> Positions {
-        let node_count = store.node_count().max(1) as f32;
+    fn layout(
+        &self,
+        graph: &dyn GraphView,
+        previous: &Positions,
+        _fixed: &FixedNodes,
+    ) -> Positions {
+        let node_count = graph.node_count().max(1) as f32;
         let mut result: Positions = HashMap::new();
         let mut ordinal = 0.0f32;
-        for node in store.node_ids() {
+        for node in graph.node_ids() {
             if let Some(position) = previous.get(&node) {
                 result.insert(node, *position);
             } else {

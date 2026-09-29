@@ -1,12 +1,13 @@
 //! Editable graph storage built on petgraph's stable index graph.
 
 use petgraph::stable_graph::{EdgeIndex, NodeIndex, StableGraph};
-use petgraph::visit::{EdgeRef, IntoNodeIdentifiers};
+use petgraph::visit::{EdgeRef, IntoEdgeReferences, IntoNodeIdentifiers};
 use petgraph::{Directed, Direction};
 
 use gpui::Context;
 
 use crate::events::GraphChangeEvent;
+use crate::view::GraphView;
 
 /// Application-level payload attached to a node.
 #[derive(Clone, Debug)]
@@ -143,6 +144,27 @@ impl GraphStore {
         self.graph.clear();
         cx.emit(GraphChangeEvent::StructureReset);
         cx.notify();
+    }
+}
+
+impl GraphView for GraphStore {
+    fn node_ids(&self) -> Vec<NodeIndex> {
+        self.graph.node_identifiers().collect()
+    }
+
+    fn node_count(&self) -> usize {
+        self.graph.node_count()
+    }
+
+    fn edge_count(&self) -> usize {
+        self.graph.edge_count()
+    }
+
+    fn edges(&self) -> Vec<(NodeIndex, NodeIndex)> {
+        self.graph
+            .edge_references()
+            .map(|edge| (edge.source(), edge.target()))
+            .collect()
     }
 }
 

@@ -13,6 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 cg-graph.workspace = true
+cg-interact.workspace = true
 cg-layout.workspace = true
 cg-render.workspace = true
 cg-types.workspace = true

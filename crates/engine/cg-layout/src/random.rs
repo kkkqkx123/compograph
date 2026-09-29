@@ -1,6 +1,6 @@
 //! Layout that scatters nodes on a sunflower spiral inside a circle.
 
-use cg_graph::{GraphStore, Positions};
+use cg_graph::{FixedNodes, GraphView, Positions};
 use cg_types::Point2;
 
 use crate::engine::LayoutEngine;
@@ -21,10 +21,15 @@ impl RandomLayout {
 }
 
 impl LayoutEngine for RandomLayout {
-    fn layout(&self, store: &GraphStore, _previous: &Positions) -> Positions {
-        let node_count = store.node_count().max(1) as f32;
+    fn layout(
+        &self,
+        graph: &dyn GraphView,
+        _previous: &Positions,
+        _fixed: &FixedNodes,
+    ) -> Positions {
+        let node_count = graph.node_count().max(1) as f32;
         let mut result: Positions = Positions::new();
-        for (ordinal, node) in store.node_ids().enumerate() {
+        for (ordinal, node) in graph.node_ids().into_iter().enumerate() {
             let ordinal = ordinal as f32;
             let angle = ordinal * GOLDEN_ANGLE;
             let radius = self.radius * (ordinal / node_count).sqrt();
@@ -38,5 +43,20 @@ impl LayoutEngine for RandomLayout {
 
     fn name(&self) -> &'static str {
         "random"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use cg_graph::MockGraph;
+
+    use super::*;
+
+    #[test]
+    fn scatter_runs_against_the_view_without_a_store() {
+        let graph = MockGraph::chain(4);
+        let layout = RandomLayout::new(100.0);
+        let positions = layout.layout(&graph, &Positions::new(), &FixedNodes::default());
+        assert_eq!(positions.len(), 4);
     }
 }

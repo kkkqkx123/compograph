@@ -11,6 +11,12 @@ pub struct Camera {
     pub zoom: f32,
 }
 
+/// Smallest allowed zoom, keeping the graph from collapsing to a dot.
+pub const MIN_ZOOM: f32 = 0.1;
+
+/// Largest allowed zoom, keeping single nodes from filling the screen.
+pub const MAX_ZOOM: f32 = 8.0;
+
 impl Camera {
     pub fn new(center: Point2, zoom: f32) -> Self {
         Self { center, zoom }
@@ -31,6 +37,29 @@ impl Camera {
             self.center.x + offset.x / self.zoom,
             self.center.y + offset.y / self.zoom,
         )
+    }
+
+    /// Zooms around a viewport anchor so the model point under the cursor stays put.
+    ///
+    /// The factor multiplies the current zoom and the result is clamped to the
+    /// supported range; a non-positive factor leaves the camera untouched.
+    pub fn zoom_at(&mut self, viewport_size: Vec2, anchor: Point2, factor: f32) {
+        if factor <= 0.0 || !factor.is_finite() {
+            return;
+        }
+        let world_before = self.viewport_to_world(viewport_size, anchor);
+        self.zoom = (self.zoom * factor).clamp(MIN_ZOOM, MAX_ZOOM);
+        let half = viewport_size * 0.5;
+        let offset = Vec2::new(anchor.x - half.x, anchor.y - half.y);
+        self.center = Point2::new(
+            world_before.x - offset.x / self.zoom,
+            world_before.y - offset.y / self.zoom,
+        );
+    }
+
+    /// Moves the visible center by a model-space displacement.
+    pub fn pan_by(&mut self, delta: Vec2) {
+        self.center = self.center + delta;
     }
 }
 
@@ -55,5 +84,28 @@ mod tests {
         let size = Vec2::new(100.0, 100.0);
         let viewport = camera.world_to_viewport(size, Point2::new(5.0, 0.0));
         assert_eq!(viewport, Point2::new(60.0, 50.0));
+    }
+
+    #[test]
+    fn zoom_anchor_keeps_the_cursor_model_point_still() {
+        let mut camera = Camera::new(Point2::ZERO, 1.0);
+        let size = Vec2::new(800.0, 600.0);
+        let anchor = Point2::new(500.0, 200.0);
+        let before = camera.viewport_to_world(size, anchor);
+        camera.zoom_at(size, anchor, 2.0);
+        let after = camera.viewport_to_world(size, anchor);
+        assert!((before.x - after.x).abs() < 1e-4);
+        assert!((before.y - after.y).abs() < 1e-4);
+        assert_eq!(camera.zoom, 2.0);
+    }
+
+    #[test]
+    fn zoom_clamps_to_the_supported_range() {
+        let mut camera = Camera::new(Point2::ZERO, 1.0);
+        let size = Vec2::new(100.0, 100.0);
+        camera.zoom_at(size, Point2::new(50.0, 50.0), 100.0);
+        assert_eq!(camera.zoom, MAX_ZOOM);
+        camera.zoom_at(size, Point2::new(50.0, 50.0), 0.0);
+        assert_eq!(camera.zoom, MAX_ZOOM);
     }
 }
