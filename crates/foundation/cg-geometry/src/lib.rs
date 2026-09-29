@@ -1,8 +1,13 @@
 //! Framework-agnostic geometry for hit testing and edge shapes.
 
+pub mod aggregation;
 pub mod curves;
 pub mod picking;
 
+pub use aggregation::{
+    HAYSTACK_BUNDLE_THRESHOLD, HAYSTACK_RADIUS_SCALE, HAYSTACK_SPREAD, ORTHO_MAX_BENDS,
+    OrthoDirection, haystack_angle, haystack_endpoints, ortho_polyline, use_haystack,
+};
 pub use curves::{
     SELF_LOOP_HALF_WIDTH_SCALE, SELF_LOOP_HEIGHT_SCALE, SELF_LOOP_SAMPLES, bezier_control_for_edge,
     cubic_bezier, parallel_offsets, quadratic_bezier, sample_cubic_bezier, sample_quadratic_bezier,

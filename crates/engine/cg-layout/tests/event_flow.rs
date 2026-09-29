@@ -10,6 +10,7 @@ use cg_graph::{ChangeFilter, GraphStore, Positions, subscribe_graph};
 use cg_layout::driver::LayoutDriver;
 use cg_layout::random::RandomLayout;
 use cg_layout::reaction::{LayoutWork, work_for};
+use cg_types::Point2;
 use gpui::{App, AppContext, Context, Entity, Subscription, TestAppContext};
 
 /// Records every event a subscriber observes, so tests can assert on the exact
@@ -136,6 +137,104 @@ fn node_removal_keeps_the_remaining_node_count_consistent(cx: &mut TestAppContex
         1,
         "positions track the nodes that remain after removal"
     );
+}
+
+#[gpui::test]
+fn cancel_and_engine_switch_bump_the_generation(cx: &mut TestAppContext) {
+    let store = cx.update(|cx: &mut App| cx.new(|_| GraphStore::new()));
+    let layout = cx.update(|cx: &mut App| {
+        cx.new(|cx| LayoutDriver::new(cx, &store, Box::new(RandomLayout::new(50.0))))
+    });
+
+    assert_eq!(cx.update(|cx| layout.read(cx).progress().generation), 0);
+    cx.update(|cx| {
+        layout.update(cx, |driver, _| driver.cancel());
+    });
+    assert_eq!(cx.update(|cx| layout.read(cx).progress().generation), 1);
+    assert!(!cx.update(|cx| layout.read(cx).is_running()));
+    cx.update(|cx| {
+        layout.update(cx, |driver, cx| {
+            driver.set_engine(&store, Box::new(RandomLayout::new(50.0)), cx);
+        });
+    });
+    cx.update(|cx| {
+        let driver = layout.read(cx);
+        assert_eq!(driver.progress().generation, 2);
+        assert_eq!(driver.positions_version(), 1);
+        assert!(!driver.is_running());
+    });
+}
+
+#[gpui::test]
+fn drag_pin_holds_the_node_and_versions_the_write(cx: &mut TestAppContext) {
+    let store = cx.update(|cx: &mut App| cx.new(|_| GraphStore::new()));
+    cx.update(|cx| {
+        store.update(cx, |graph, cx| {
+            graph.add_node(cx, "solo");
+        });
+    });
+    let layout = cx.update(|cx: &mut App| {
+        cx.new(|cx| LayoutDriver::new(cx, &store, Box::new(RandomLayout::new(50.0))))
+    });
+
+    cx.update(|cx| {
+        layout.update(cx, |driver, cx| {
+            let node = store.read(cx).node_ids().next().expect("node exists");
+            driver.pin(node);
+            assert!(driver.pinned().contains(&node));
+            assert!(driver.move_pinned(node, Point2::new(7.0, 8.0), cx));
+            assert_eq!(driver.positions().get(&node), Some(&Point2::new(7.0, 8.0)));
+            assert!(!driver.move_pinned(cg_graph::NodeIndex::new(99), Point2::ZERO, cx));
+        });
+    });
+    assert_eq!(cx.update(|cx| layout.read(cx).positions_version()), 1);
+}
+
+#[gpui::test]
+fn static_refine_on_small_graphs_lands_synchronously(cx: &mut TestAppContext) {
+    let store = cx.update(|cx: &mut App| cx.new(|_| GraphStore::new()));
+    cx.update(|cx| {
+        store.update(cx, |graph, cx| {
+            for index in 0..3 {
+                graph.add_node(cx, format!("n{index}"));
+            }
+        });
+    });
+    let layout = cx.update(|cx: &mut App| {
+        cx.new(|cx| LayoutDriver::new(cx, &store, Box::new(RandomLayout::new(50.0))))
+    });
+
+    cx.update(|cx| {
+        layout.update(cx, |driver, cx| {
+            driver.request_refine(&store, cx);
+        });
+    });
+    cx.update(|cx| {
+        let driver = layout.read(cx);
+        assert!(!driver.is_running());
+        assert_eq!(driver.positions_version(), 1);
+        assert_eq!(driver.positions().len(), 3);
+    });
+}
+
+#[gpui::test]
+fn incremental_reaction_supersedes_the_generation(cx: &mut TestAppContext) {
+    let store = cx.update(|cx: &mut App| cx.new(|_| GraphStore::new()));
+    let layout = cx.update(|cx: &mut App| {
+        cx.new(|cx| LayoutDriver::new(cx, &store, Box::new(RandomLayout::new(50.0))))
+    });
+
+    cx.update(|cx| {
+        store.update(cx, |graph, cx| {
+            graph.add_node(cx, "a");
+        });
+    });
+    cx.update(|cx| {
+        let driver = layout.read(cx);
+        assert_eq!(driver.progress().generation, 1);
+        assert_eq!(driver.positions_version(), 1);
+        assert_eq!(driver.positions().len(), 1);
+    });
 }
 
 #[gpui::test]

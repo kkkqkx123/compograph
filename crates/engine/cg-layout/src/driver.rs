@@ -22,6 +22,18 @@ const INCREMENTAL_PLACEMENT_BUDGET: u32 = 64;
 /// Iterations computed per background chunk between write-backs.
 const BACKGROUND_CHUNK_ITERATIONS: usize = 25;
 
+/// Node count below which non-force engines run synchronously.
+pub const SYNC_LAYOUT_NODE_LIMIT: usize = 2_000;
+
+/// Progress of the active layout task for status display.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct LayoutProgress {
+    pub generation: u64,
+    pub chunks_written: u64,
+    pub running: bool,
+    pub last_ms: f64,
+}
+
 /// Keeps [`Positions`] in step with a live [`GraphStore`].
 ///
 /// The driver holds the subscription that drives it and the running engine, so
@@ -34,8 +46,13 @@ pub struct LayoutDriver {
     placements_since_full_run: u32,
     /// Counts background refinements; stale tasks check it before writing back.
     generation: u64,
+    /// Counts every committed position write; views rebuild indexes only when
+    /// this moves, so viewport-only frames reuse the cached cells.
+    positions_version: u64,
     /// Milliseconds of the latest refinement, updated on every write-back.
     last_refine_ms: f64,
+    /// Completed background write-backs of the current generation.
+    chunks_written: u64,
     /// Held so an in-flight refinement is cancelled when replaced or dropped.
     _task: Option<Task<()>>,
     _subscription: Subscription,
@@ -66,7 +83,9 @@ impl LayoutDriver {
             pinned: FixedNodes::default(),
             placements_since_full_run: 0,
             generation: 0,
+            positions_version: 0,
             last_refine_ms,
+            chunks_written: 0,
             _task: None,
             _subscription: subscription,
         }
@@ -77,6 +96,15 @@ impl LayoutDriver {
         &self.positions
     }
 
+    /// Monotonic counter of committed position writes.
+    ///
+    /// Viewport motion never moves it; every layout write-back, drag move and
+    /// import does. Rendering uses it to skip index rebuilds on camera-only
+    /// frames.
+    pub fn positions_version(&self) -> u64 {
+        self.positions_version
+    }
+
     /// Milliseconds of the latest refinement, for status display.
     ///
     /// Synchronous engines report the dispatch cost; force-directed engines
@@ -84,6 +112,30 @@ impl LayoutDriver {
     /// layout.
     pub fn last_refine_ms(&self) -> f64 {
         self.last_refine_ms
+    }
+
+    /// Progress snapshot of the active layout task.
+    pub fn progress(&self) -> LayoutProgress {
+        LayoutProgress {
+            generation: self.generation,
+            chunks_written: self.chunks_written,
+            running: self._task.is_some(),
+            last_ms: self.last_refine_ms,
+        }
+    }
+
+    /// Cooperatively cancels the in-flight task.
+    ///
+    /// The task checks the generation at chunk boundaries, so cancellation
+    /// takes effect on the next write-back without preemption.
+    pub fn cancel(&mut self) {
+        self.generation += 1;
+        self._task = None;
+    }
+
+    /// True while a background task may still write back.
+    pub fn is_running(&self) -> bool {
+        self._task.is_some()
     }
 
     /// Nodes held in place by the user; layouts move around them.
@@ -110,6 +162,8 @@ impl LayoutDriver {
     ) {
         self.generation += 1;
         self._task = None;
+        self.chunks_written = 0;
+        self.positions_version += 1;
         let store_snapshot = store.read(cx);
         let view: &dyn GraphView = store_snapshot;
         self.positions = engine.layout(view, &self.positions, &self.pinned);
@@ -124,6 +178,8 @@ impl LayoutDriver {
     pub fn replace_positions(&mut self, positions: Positions, cx: &mut Context<Self>) {
         self.generation += 1;
         self._task = None;
+        self.chunks_written = 0;
+        self.positions_version += 1;
         self.positions = positions;
         self.placements_since_full_run = 0;
         cx.notify();
@@ -153,6 +209,7 @@ impl LayoutDriver {
         };
         *slot = position;
         self.pinned.insert(node);
+        self.positions_version += 1;
         cx.notify();
         true
     }
@@ -165,16 +222,24 @@ impl LayoutDriver {
     /// engine swap bumps the generation, and stale chunks stop writing.
     pub fn request_refine(&mut self, store: &Entity<GraphStore>, cx: &mut Context<Self>) {
         let Some(options) = self.engine.force_options() else {
-            let store_snapshot = store.read(cx);
-            let view: &dyn GraphView = store_snapshot;
-            let previous = std::mem::take(&mut self.positions);
-            let started = Instant::now();
-            self.positions = self.engine.layout(view, &previous, &self.pinned);
-            self.last_refine_ms = started.elapsed().as_secs_f64() * 1000.0;
-            self.placements_since_full_run = 0;
+            let node_count = store.read(cx).node_count();
+            if node_count < SYNC_LAYOUT_NODE_LIMIT {
+                let store_snapshot = store.read(cx);
+                let view: &dyn GraphView = store_snapshot;
+                let previous = std::mem::take(&mut self.positions);
+                let started = Instant::now();
+                self.positions = self.engine.layout(view, &previous, &self.pinned);
+                self.last_refine_ms = started.elapsed().as_secs_f64() * 1000.0;
+                self.placements_since_full_run = 0;
+                self.chunks_written = 0;
+                self.positions_version += 1;
+                return;
+            }
+            self.run_static_in_background(store, cx);
             return;
         };
         self.generation += 1;
+        self.chunks_written = 0;
         let generation = self.generation;
         let store_snapshot = store.read(cx);
         let snapshot = snapshot_of(store_snapshot as &dyn GraphView);
@@ -217,7 +282,9 @@ impl LayoutDriver {
                                 return true;
                             }
                             this.positions = working.clone();
+                            this.positions_version += 1;
                             this.last_refine_ms = started.elapsed().as_secs_f64() * 1000.0;
+                            this.chunks_written += 1;
                             cx.notify();
                             false
                         })
@@ -245,10 +312,16 @@ impl LayoutDriver {
                 if self.placements_since_full_run >= INCREMENTAL_PLACEMENT_BUDGET {
                     self.run_full(store, cx);
                 } else {
+                    // The synchronous write supersedes any in-flight background
+                    // task, so its late chunks must not overwrite this result.
+                    self.generation += 1;
+                    self._task = None;
+                    self.chunks_written = 0;
                     let previous = std::mem::take(&mut self.positions);
                     let store_snapshot = store.read(cx);
                     let view: &dyn GraphView = store_snapshot;
                     self.positions = self.engine.layout(view, &previous, &self.pinned);
+                    self.positions_version += 1;
                     self.placements_since_full_run += 1;
                 }
             }
@@ -258,9 +331,156 @@ impl LayoutDriver {
     fn run_full(&mut self, store: &Entity<GraphStore>, cx: &mut App) {
         self.generation += 1;
         self._task = None;
+        self.chunks_written = 0;
         let store_snapshot = store.read(cx);
         let view: &dyn GraphView = store_snapshot;
         self.positions = self.engine.layout(view, &Positions::new(), &self.pinned);
+        self.positions_version += 1;
         self.placements_since_full_run = 0;
+    }
+
+    /// Runs a static engine off the UI thread with a single write-back.
+    ///
+    /// Large static layouts still block for hundreds of milliseconds, so the
+    /// computation moves to the background executor while the generation
+    /// guard discards late results after cancellation or engine switches.
+    /// Dragged nodes stay pinned because the snapshot carries them through.
+    fn run_static_in_background(&mut self, store: &Entity<GraphStore>, cx: &mut Context<Self>) {
+        self.generation += 1;
+        self.chunks_written = 0;
+        let generation = self.generation;
+        let snapshot = snapshot_of(store.read(cx) as &dyn GraphView);
+        let previous = self.positions.clone();
+        let pinned = self.pinned.clone();
+        let engine_name = self.engine.name();
+        let started = Instant::now();
+        let task = cx.spawn(
+            async move |weak: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                let outcome = cx
+                    .background_executor()
+                    .spawn(async move {
+                        let engine = crate::registry::LayoutRegistry::engine_for(engine_name)?;
+                        let mut seeded = previous;
+                        seeded.retain(|node, _| snapshot.nodes.contains(node));
+                        Some(engine.layout(&StaticView::new(snapshot.clone()), &seeded, &pinned))
+                    })
+                    .await;
+                weak.update(&mut *cx, |this: &mut Self, cx| {
+                    if this.generation != generation {
+                        return;
+                    }
+                    if let Some(positions) = outcome {
+                        this.positions = positions;
+                        this.positions_version += 1;
+                        this.last_refine_ms = started.elapsed().as_secs_f64() * 1000.0;
+                        this.chunks_written += 1;
+                        this.placements_since_full_run = 0;
+                        cx.notify();
+                    }
+                    this._task = None;
+                })
+                .ok();
+            },
+        );
+        self._task = Some(task);
+    }
+}
+
+struct StaticView {
+    snapshot: crate::force::ForceSnapshot,
+}
+
+impl StaticView {
+    fn new(snapshot: crate::force::ForceSnapshot) -> Self {
+        Self { snapshot }
+    }
+}
+
+impl GraphView for StaticView {
+    fn node_ids(&self) -> Vec<NodeIndex> {
+        self.snapshot.nodes.clone()
+    }
+
+    fn node_count(&self) -> usize {
+        self.snapshot.nodes.len()
+    }
+
+    fn edge_count(&self) -> usize {
+        self.snapshot.edges.len()
+    }
+
+    fn edges(&self) -> Vec<(NodeIndex, NodeIndex)> {
+        self.snapshot.edges.clone()
+    }
+
+    fn degree(&self, node: NodeIndex) -> usize {
+        self.snapshot
+            .edges
+            .iter()
+            .filter(|(source, target)| *source == node || *target == node)
+            .count()
+    }
+
+    fn neighbors(&self, node: NodeIndex) -> Vec<NodeIndex> {
+        collect_neighbors(&self.snapshot.edges, node, true, true)
+    }
+
+    fn successors(&self, node: NodeIndex) -> Vec<NodeIndex> {
+        collect_neighbors(&self.snapshot.edges, node, true, false)
+    }
+
+    fn predecessors(&self, node: NodeIndex) -> Vec<NodeIndex> {
+        collect_neighbors(&self.snapshot.edges, node, false, true)
+    }
+}
+
+fn collect_neighbors(
+    edges: &[(NodeIndex, NodeIndex)],
+    node: NodeIndex,
+    outgoing: bool,
+    incoming: bool,
+) -> Vec<NodeIndex> {
+    let mut out: Vec<NodeIndex> = edges
+        .iter()
+        .filter_map(|(source, target)| {
+            if outgoing && *source == node {
+                Some(*target)
+            } else if incoming && *target == node {
+                Some(*source)
+            } else {
+                None
+            }
+        })
+        .collect();
+    out.sort_unstable_by_key(|node| node.index());
+    out.dedup_by_key(|node| node.index());
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::collect_neighbors;
+    use cg_graph::NodeIndex;
+
+    #[test]
+    fn neighbor_directions_stay_directed() {
+        let edges = vec![(NodeIndex::new(0), NodeIndex::new(1))];
+        assert_eq!(
+            collect_neighbors(&edges, NodeIndex::new(0), true, true),
+            vec![NodeIndex::new(1)]
+        );
+        assert_eq!(
+            collect_neighbors(&edges, NodeIndex::new(1), true, true),
+            vec![NodeIndex::new(0)]
+        );
+        assert_eq!(
+            collect_neighbors(&edges, NodeIndex::new(0), true, false),
+            vec![NodeIndex::new(1)]
+        );
+        assert!(collect_neighbors(&edges, NodeIndex::new(0), false, true).is_empty());
+        assert_eq!(
+            collect_neighbors(&edges, NodeIndex::new(1), false, true),
+            vec![NodeIndex::new(0)]
+        );
     }
 }

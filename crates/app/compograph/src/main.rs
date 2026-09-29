@@ -9,9 +9,9 @@ use std::time::Instant;
 
 use algo_panel::{AlgoOutcome, EdgePair};
 use cg_graph::{
-    GraphDocument, GraphStore, GraphView, NodeEntry, NodeIndex, Positions, export_dot,
-    heuristic_shortest_path, minimum_spanning_forest, rank_nodes, remap_positions, shortest_path,
-    strongly_connected_components,
+    ChangeFilter, GraphDocument, GraphStore, GraphView, NodeEntry, NodeIndex, Positions,
+    export_dot, heuristic_shortest_path, minimum_spanning_forest, rank_nodes, remap_positions,
+    shortest_path, strongly_connected_components, subscribe_graph,
 };
 use cg_interact::{
     BoxSelectState, DragState, NODE_HALF_EXTENT, SelectionState, drag_position, edges_in_rect,
@@ -19,9 +19,12 @@ use cg_interact::{
 };
 use cg_layout::{LayoutDriver, LayoutRegistry};
 use cg_render::{
-    BypassStore, Camera, EdgeMapper, EdgeStylePatch, NODE_SIDE, NodeStylePatch, PaintedRubberBand,
-    SpatialIndex, StyleMapper, StyleSheet, graph_view, paint_arrows, paint_edges, paint_nodes,
-    subscribe_repaint,
+    BypassStore, CacheVersions, Camera, DetailLevel, EdgeMapper, EdgePaintOptions, EdgeStylePatch,
+    ExportRequest, ExportScope, ExportSnapshot, FrameMetrics, FrameSample, LodParams, NODE_SIDE,
+    NodeStylePatch, PaintedArrow, PaintedEdge, PaintedNode, PaintedRubberBand, PlanCounts,
+    RefreshInput, RetainedCache, SpatialIndex, StoredPlans, StyleMapper, StyleSheet,
+    edge_ordinals_for, encode_ppm, export_pixels, graph_view, paint_arrows_for_level,
+    paint_edges_for, paint_nodes_for, subscribe_repaint, visible_node_ids, world_viewport_rect,
 };
 use cg_types::{Point2, Rect, Vec2};
 use gpui::{
@@ -48,6 +51,9 @@ const PAGERANK_ITERATIONS: usize = 20;
 /// Damping step of the panel controls, clamped to the unit interval.
 const DAMPING_STEP: f32 = 0.05;
 
+/// Magnification applied to exported images.
+const EXPORT_SCALE: f32 = 2.0;
+
 /// True when the pressed key dismisses the selection.
 fn is_dismiss_key(key: &str) -> bool {
     key == DISMISS_KEY
@@ -71,6 +77,8 @@ struct GraphWindow {
     _refresh: Subscription,
     /// Kept alive so background layout passes repaint the window.
     _layout_observer: Subscription,
+    /// Kept alive so structural edits invalidate the retained paint cache.
+    _structure_mark: Subscription,
     camera: Camera,
     viewport: Vec2,
     drag: DragState,
@@ -98,6 +106,16 @@ struct GraphWindow {
     algo_goal: usize,
     damping: f32,
     io_message: String,
+    lod: DetailLevel,
+    lod_params: LodParams,
+    aggregate: bool,
+    retained: RetainedCache,
+    retained_options: EdgePaintOptions,
+    structure_version: u64,
+    style_version: u64,
+    spatial_version: Option<u64>,
+    metrics: FrameMetrics,
+    export_message: String,
 }
 
 impl GraphWindow {
@@ -121,6 +139,14 @@ impl GraphWindow {
         // Structural edits repaint the window directly, independently of the
         // position changes the layout driver reports.
         let refresh = subscribe_repaint(cx, &store);
+        // Structural edits also invalidate the retained paint cache, so a
+        // later topology change can never reuse plans from before the edit.
+        // The counter is the structure generation: every accepted mutation
+        // moves it exactly once through this subscription.
+        let structure_mark = subscribe_graph(cx, &store, ChangeFilter::ALL, |this, _event, _cx| {
+            this.structure_version += 1;
+            this.retained.mark_structure();
+        });
         let layout_observer = cx.observe(&layout, |_this, _entity, cx| {
             cx.notify();
         });
@@ -128,6 +154,7 @@ impl GraphWindow {
             store,
             layout,
             _refresh: refresh,
+            _structure_mark: structure_mark,
             _layout_observer: layout_observer,
             camera: Camera::new(Point2::ZERO, 1.0),
             viewport: Vec2::new(1024.0, 768.0),
@@ -156,6 +183,16 @@ impl GraphWindow {
             algo_goal: 1,
             damping: 0.85,
             io_message: String::new(),
+            lod: DetailLevel::Full,
+            lod_params: LodParams::default(),
+            aggregate: false,
+            retained: RetainedCache::new(false),
+            retained_options: EdgePaintOptions::default(),
+            structure_version: 0,
+            style_version: 0,
+            spatial_version: None,
+            metrics: FrameMetrics::new(30),
+            export_message: String::new(),
         };
         view.layout.update(cx, |driver, cx| {
             driver.request_refine(&view.store, cx);
@@ -202,6 +239,7 @@ impl GraphWindow {
     /// selection or the hovered node.
     fn rebuild_bypass(&mut self) {
         self.bypass.clear_all();
+        self.style_version += 1;
         if let Some(node) = self.hovered {
             self.bypass.set_node(node, NodeStylePatch::hovered());
         }
@@ -227,6 +265,18 @@ impl GraphWindow {
         self.rebuild_bypass();
     }
 
+    /// Rebuilds the spatial index only after position write-backs.
+    ///
+    /// Viewport motion reuses the cached cells; structural edits and layout
+    /// write-backs move the positions version and trigger a rebuild. The
+    /// adaptive cell follows the node extent.
+    fn refresh_spatial(&mut self, positions: &Positions, version: u64) {
+        if self.spatial.ensure_cell(NODE_SIDE, positions) || self.spatial_version != Some(version) {
+            self.spatial.rebuild(positions);
+            self.spatial_version = Some(version);
+        }
+    }
+
     /// Applies a finished rubber-band rectangle to the selection.
     ///
     /// The viewport rectangle is converted to model space once, then node and
@@ -246,7 +296,8 @@ impl GraphWindow {
             self.camera.viewport_to_world(self.viewport, far),
         );
         let positions = self.layout.read(cx).positions().clone();
-        self.spatial.rebuild(&positions);
+        let version = self.layout.read(cx).positions_version();
+        self.refresh_spatial(&positions, version);
         let nodes = nodes_in_rect(&positions, &self.spatial, model_rect, NODE_HALF_EXTENT);
         let store = self.store.read(cx);
         let view: &dyn GraphView = store;
@@ -627,6 +678,119 @@ impl GraphWindow {
         self.clear_algo_highlights();
     }
 
+    fn export_image(&mut self, scope: ExportScope, cx: &mut Context<Self>) {
+        let store = self.store.read(cx);
+        let view: &dyn GraphView = store;
+        let mut node_ids: Vec<NodeIndex> = view.node_ids();
+        node_ids.sort_unstable_by_key(|node| node.index());
+        let mut pairs = view.edges();
+        pairs.sort_unstable_by_key(|(source, target)| (source.index(), target.index()));
+        let mut node_styles = HashMap::new();
+        let mut edge_styles = HashMap::new();
+        for node in &node_ids {
+            let label = store
+                .node_data(*node)
+                .map(|data| data.label.clone())
+                .unwrap_or_default();
+            node_styles.insert(
+                *node,
+                self.bypass.resolve_node(
+                    &self.sheet,
+                    &self.mapper,
+                    *node,
+                    Some(label.as_str()),
+                    view.degree(*node),
+                ),
+            );
+        }
+        for (source, target) in &pairs {
+            edge_styles.insert(
+                (*source, *target),
+                self.bypass
+                    .resolve_edge(&self.sheet, &self.edge_mapper, *source, *target),
+            );
+        }
+        let positions = self.layout.read(cx).positions().clone();
+        let snapshot = ExportSnapshot {
+            node_ids,
+            pairs,
+            positions,
+            node_styles,
+            edge_styles,
+            camera: self.camera,
+            viewport: self.viewport,
+            aggregate: self.aggregate,
+        };
+        let request = ExportRequest {
+            scope,
+            scale: EXPORT_SCALE,
+            viewport: self.viewport,
+        };
+        let default_name = match scope {
+            ExportScope::Viewport => "compograph-viewport.ppm",
+            ExportScope::FullGraph => "compograph-full.ppm",
+        };
+        let receiver = cx.prompt_for_new_path(&working_directory(), Some(default_name));
+        let task = cx.spawn(async move |weak, async_cx| {
+            let picked = match receiver.await {
+                Ok(Ok(Some(path))) => Some(path),
+                Ok(Ok(None)) => {
+                    weak.update(&mut *async_cx, |this, cx| {
+                        this.export_message = "export cancelled".to_string();
+                        cx.notify();
+                    })
+                    .ok();
+                    return;
+                }
+                _ => None,
+            };
+            let note = async_cx
+                .background_executor()
+                .spawn(async move {
+                    let Some((pixels, width, height)) = export_pixels(scope, request, &snapshot)
+                    else {
+                        return "nothing to export".to_string();
+                    };
+                    let encoded = encode_ppm(width, height, &pixels);
+                    match picked {
+                        Some(path) => match file_io::write_bytes_to_path(&encoded, &path) {
+                            Ok(()) => format!("exported {width}x{height} to {}", path.display()),
+                            Err(note) => note,
+                        },
+                        None => {
+                            let fallback = match scope {
+                                ExportScope::Viewport => "/tmp/compograph-viewport.ppm",
+                                ExportScope::FullGraph => "/tmp/compograph-full.ppm",
+                            };
+                            match file_io::write_bytes_file(&encoded, fallback) {
+                                Ok(()) => format!(
+                                    "exported {width}x{height} to {fallback} (picker unavailable)"
+                                ),
+                                Err(note) => note,
+                            }
+                        }
+                    }
+                })
+                .await;
+            weak.update(&mut *async_cx, |this, cx| {
+                this.export_message = note;
+                cx.notify();
+            })
+            .ok();
+        });
+        self.io_task = Some(task);
+        cx.notify();
+    }
+
+    /// Plans currently held by the retained cache.
+    fn cached_plans(&self) -> (Vec<PaintedNode>, Vec<PaintedEdge>, Vec<PaintedArrow>) {
+        (
+            self.retained.nodes().to_vec(),
+            self.retained.edges().to_vec(),
+            self.retained.arrows().to_vec(),
+        )
+    }
+
     fn cycle_start(&mut self, cx: &mut Context<Self>) {
         let count = self.ordered_nodes(cx).len().max(1);
         self.algo_start = (self.algo_start + 1) % count;
@@ -687,7 +851,10 @@ impl Render for GraphWindow {
         let store = self.store.read(cx);
         let view: &dyn GraphView = store;
         let positions: &Positions = self.layout.read(cx).positions();
-        self.spatial.rebuild(positions);
+        let positions_version = self.layout.read(cx).positions_version();
+        let index_started = Instant::now();
+        self.refresh_spatial(positions, positions_version);
+        let index_ms = index_started.elapsed().as_secs_f64() * 1000.0;
         let mut labels: Vec<(NodeIndex, String, usize)> = Vec::new();
         for node in view.node_ids() {
             let label = store
@@ -708,15 +875,91 @@ impl Render for GraphWindow {
             let (label, degree) = entry.unwrap_or(("", 0));
             bypass.resolve_node(sheet, mapper, node, Some(label), degree)
         };
-        let nodes = paint_nodes(view, positions, &self.camera, self.viewport, style_of);
-        let edges = paint_edges(
-            view,
-            positions,
-            &self.camera,
-            self.viewport,
-            |source, target| bypass.resolve_edge(sheet, edge_mapper, source, target),
-        );
-        let arrows = paint_arrows(&edges);
+        let world_rect = world_viewport_rect(&self.camera, self.viewport);
+        let visible_ids = visible_node_ids(positions, &self.spatial, world_rect, NODE_HALF_EXTENT);
+        self.lod = self
+            .lod_params
+            .select(self.camera.zoom, visible_ids.len(), self.lod);
+        let lod = self.lod;
+        let edge_options = EdgePaintOptions {
+            level: lod,
+            aggregate_threshold: cg_render::EDGE_AGGREGATION_THRESHOLD,
+            force_haystack: self.aggregate,
+            ortho: None,
+        };
+        let versions = CacheVersions {
+            structure: self.structure_version,
+            positions: positions_version,
+            style: self.style_version,
+        };
+        let mut pairs = view.edges();
+        pairs.sort_unstable_by_key(|(source, target)| (source.index(), target.index()));
+        let camera = self.camera;
+        let viewport = self.viewport;
+        let plan_started = Instant::now();
+        let cached_hit = self.retained.enabled()
+            && self.retained.is_populated()
+            && self.retained.is_fresh(versions)
+            && self.retained_options == edge_options
+            && !self.retained.needs_reproject(&camera, viewport);
+        let partial_hit = !cached_hit
+            && self.retained.enabled()
+            && self.retained.is_populated()
+            && self.retained_options == edge_options
+            && self.retained.refresh_moved(
+                RefreshInput {
+                    pairs: &pairs,
+                    positions,
+                    camera: &camera,
+                    viewport,
+                    options: edge_options,
+                    versions,
+                },
+                style_of,
+                |source, target| bypass.resolve_edge(sheet, edge_mapper, source, target),
+            );
+        let (nodes, edges, arrows) = if cached_hit || partial_hit {
+            self.cached_plans()
+        } else {
+            let nodes = paint_nodes_for(&visible_ids, positions, &camera, viewport, style_of);
+            let edges = paint_edges_for(
+                &pairs,
+                positions,
+                &camera,
+                viewport,
+                edge_options,
+                |source, target| bypass.resolve_edge(sheet, edge_mapper, source, target),
+            );
+            let arrows = paint_arrows_for_level(&edges, lod);
+            if self.retained.enabled() {
+                let ordinals = edge_ordinals_for(&edges, &pairs);
+                self.retained.store(
+                    StoredPlans {
+                        nodes: nodes.clone(),
+                        node_order: visible_ids.clone(),
+                        edges: edges.clone(),
+                        edge_ordinals: ordinals,
+                        arrows: arrows.clone(),
+                    },
+                    versions,
+                    &camera,
+                    viewport,
+                );
+                self.retained_options = edge_options;
+            }
+            (nodes, edges, arrows)
+        };
+        let plan_ms = plan_started.elapsed().as_secs_f64() * 1000.0;
+        self.metrics.push(FrameSample {
+            counts: PlanCounts {
+                nodes: nodes.len(),
+                edges: edges.len(),
+                arrows: arrows.len(),
+            },
+            plan_ms,
+            index_ms,
+            visible_nodes: visible_ids.len(),
+        });
         let rubber_band: Option<PaintedRubberBand> =
             self.rubber.rect().map(|rect| PaintedRubberBand {
                 origin: rect.origin,
@@ -730,7 +973,8 @@ impl Render for GraphWindow {
         let selected_count = self.selection.len();
         let hover_text = self.hover_label(cx);
         let hover_anchor = self.hover_anchor;
-        let hovering = self.hovered.is_some() && !self.rubber.is_active();
+        let hovering =
+            self.hovered.is_some() && !self.rubber.is_active() && lod != DetailLevel::Minimal;
         let layouts = self.layouts.clone();
         let menu_open = self.menu_open;
         let current_layout = engine_name.clone();
@@ -740,6 +984,26 @@ impl Render for GraphWindow {
         let algo_busy = self.algo_busy;
         let algo_summary = self.algo_summary.clone();
         let io_message = self.io_message.clone();
+        let progress = self.layout.read(cx).progress();
+        let frame_ms = self.metrics.average_plan_ms();
+        let index_ms = self.metrics.average_index_ms();
+        let visible = self.metrics.latest_visible();
+        let lod_label = match lod {
+            DetailLevel::Full => "full",
+            DetailLevel::Simplified => "simplified",
+            DetailLevel::Minimal => "minimal",
+        };
+        let aggregate_label = if self.aggregate {
+            "aggregate:on"
+        } else {
+            "aggregate:off"
+        };
+        let retained_label = if self.retained.enabled() {
+            "retained:on"
+        } else {
+            "retained:off"
+        };
+        let export_message = self.export_message.clone();
         let view = cx.entity();
         div()
             .size_full()
@@ -810,6 +1074,45 @@ impl Render for GraphWindow {
                             .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
                                 this.export_dot(cx);
                             })),
+                    )
+                    .child(
+                        div()
+                            .id("view-aggregate-toggle")
+                            .px_2()
+                            .child(aggregate_label)
+                            .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                                this.aggregate = !this.aggregate;
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        div()
+                            .id("view-retained-toggle")
+                            .px_2()
+                            .child(retained_label)
+                            .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                                this.retained.set_enabled(!this.retained.enabled());
+                                cx.notify();
+                            })),
+                    )
+                    .child(div().px_2().child(format!("lod:{lod_label}")))
+                    .child(
+                        div()
+                            .id("io-export-viewport")
+                            .px_2()
+                            .child("export view")
+                            .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                                this.export_image(ExportScope::Viewport, cx);
+                            })),
+                    )
+                    .child(
+                        div()
+                            .id("io-export-full")
+                            .px_2()
+                            .child("export full")
+                            .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                                this.export_image(ExportScope::FullGraph, cx);
+                            })),
                     ),
             )
             .child(
@@ -844,7 +1147,8 @@ impl Render for GraphWindow {
                                         .viewport_to_world(this.viewport, viewport_point);
                                     let positions =
                                         this.layout.read(cx).positions().clone();
-                                    this.spatial.rebuild(&positions);
+                                    let version = this.layout.read(cx).positions_version();
+                                    this.refresh_spatial(&positions, version);
                                     match press_hit(
                                         world,
                                         &positions,
@@ -885,9 +1189,12 @@ impl Render for GraphWindow {
                                             .camera
                                             .viewport_to_world(this.viewport, viewport_point);
                                         let target = drag_position(world, offset);
-                                        this.layout.update(cx, |driver, cx| {
-                                            driver.move_pinned(node, target, cx);
+                                        let moved = this.layout.update(cx, |driver, cx| {
+                                            driver.move_pinned(node, target, cx)
                                         });
+                                        if moved {
+                                            this.retained.mark_moved([node]);
+                                        }
                                         cx.notify();
                                     } else if this.rubber.is_active() {
                                         this.rubber.update(viewport_point);
@@ -898,7 +1205,8 @@ impl Render for GraphWindow {
                                             .viewport_to_world(this.viewport, viewport_point);
                                         let positions =
                                             this.layout.read(cx).positions().clone();
-                                        this.spatial.rebuild(&positions);
+                                        let version = this.layout.read(cx).positions_version();
+                                        this.refresh_spatial(&positions, version);
                                         let hovered = hover_node(
                                             world,
                                             &positions,
@@ -1109,7 +1417,9 @@ impl Render for GraphWindow {
             )
             .child(
                 div().px_2().py_1().child(format!(
-                    "nodes: {node_count} edges: {edge_count} zoom: {zoom:.2} layout: {engine_name} {last_ms:.1}ms selected: {selected_count} {io_message}"
+                    "nodes: {node_count} edges: {edge_count} visible: {visible} zoom: {zoom:.2} lod:{lod_label} frame:{frame_ms:.1}ms index:{index_ms:.1}ms layout: {engine_name} {last_ms:.1}ms chunks:{} gen:{} selected: {selected_count} {io_message} {export_message}",
+                    progress.chunks_written,
+                    progress.generation,
                 )),
             )
     }

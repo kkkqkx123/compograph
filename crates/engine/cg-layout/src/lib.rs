@@ -16,7 +16,7 @@ pub mod registry;
 pub use breadthfirst::{BfsDirection, BreadthFirstLayout, BreadthFirstOptions};
 pub use circle::{CircleLayout, CircleOptions};
 pub use concentric::{ConcentricLayout, ConcentricOptions, ConcentricScoring};
-pub use driver::LayoutDriver;
+pub use driver::{LayoutDriver, LayoutProgress, SYNC_LAYOUT_NODE_LIMIT};
 pub use engine::LayoutEngine;
 pub use force::{ForceLayout, ForceOptions, ForceSimulation, ForceSnapshot, snapshot_of};
 pub use grid::{GridLayout, GridOptions};

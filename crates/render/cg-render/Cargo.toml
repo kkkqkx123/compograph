@@ -18,3 +18,8 @@ gpui.workspace = true
 # The test-support feature pulls in gpui's TestAppContext, which the
 # subscription tests need to drive an application without a window.
 gpui = { workspace = true, features = ["test-support"] }
+
+[[bench]]
+name = "scale"
+harness = false
+

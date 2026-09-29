@@ -32,6 +32,11 @@ pub fn write_text_file(content: &str, path: &str) -> Result<(), String> {
     write_text_to_path(content, Path::new(path))
 }
 
+/// Writes caller-rendered bytes such as exported PPM images.
+pub fn write_bytes_file(content: &[u8], path: &str) -> Result<(), String> {
+    write_bytes_to_path(content, Path::new(path))
+}
+
 /// Writes a document as JSON to a dialog-chosen path.
 pub fn export_json_to_path(document: &GraphDocument, path: &Path) -> Result<String, String> {
     let encoded = cg_graph::export_json(document).map_err(|error| error.message().to_string())?;
@@ -53,6 +58,12 @@ pub fn import_json_from_path(path: &Path) -> Result<GraphDocument, String> {
 
 /// Writes caller-rendered text such as DOT output to a dialog-chosen path.
 pub fn write_text_to_path(content: &str, path: &Path) -> Result<(), String> {
+    std::fs::write(path, content)
+        .map_err(|error| format!("cannot write {}: {error}", path.display()))
+}
+
+/// Writes caller-rendered bytes such as PPM output to a dialog-chosen path.
+pub fn write_bytes_to_path(content: &[u8], path: &Path) -> Result<(), String> {
     std::fs::write(path, content)
         .map_err(|error| format!("cannot write {}: {error}", path.display()))
 }

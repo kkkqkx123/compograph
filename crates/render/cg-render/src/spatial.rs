@@ -9,10 +9,15 @@ use std::collections::HashMap;
 use cg_graph::{NodeIndex, Positions};
 use cg_types::{Point2, Rect};
 
+/// Cell multiplier applied to the node extent for adaptive sizing.
+pub const ADAPTIVE_CELL_MULTIPLE: f32 = 2.0;
+
 /// Maps model-space positions to grid cells of fixed edge length.
 pub struct SpatialIndex {
     cell: f32,
     cells: HashMap<(i32, i32), Vec<NodeIndex>>,
+    version: u64,
+    built_for: usize,
 }
 
 impl SpatialIndex {
@@ -21,12 +26,29 @@ impl SpatialIndex {
         Self {
             cell: cell.max(1.0),
             cells: HashMap::new(),
+            version: 0,
+            built_for: 0,
         }
+    }
+
+    /// Builds an index with an adaptive cell derived from the node extent.
+    pub fn with_adaptive_cell(node_side: f32) -> Self {
+        Self::new(adaptive_cell(node_side))
     }
 
     /// Grid edge length in model units.
     pub fn cell(&self) -> f32 {
         self.cell
+    }
+
+    /// Monotonic rebuild counter; pan and zoom never bump it.
+    pub fn version(&self) -> u64 {
+        self.version
+    }
+
+    /// Position count the cached cells were built for.
+    pub fn built_for(&self) -> usize {
+        self.built_for
     }
 
     /// Rebuilds the index from the current positions.
@@ -40,6 +62,31 @@ impl SpatialIndex {
                 .or_default()
                 .push(*node);
         }
+        self.version += 1;
+        self.built_for = positions.len();
+    }
+
+    /// Rebuilds only when the position count changed or `force` is set.
+    ///
+    /// Viewport motion never triggers a rebuild; structural and position
+    /// write-backs call with `force` set after mutating positions.
+    pub fn rebuild_if_stale(&mut self, positions: &Positions, force: bool) -> bool {
+        if !force && positions.len() == self.built_for && self.version > 0 {
+            return false;
+        }
+        self.rebuild(positions);
+        true
+    }
+
+    /// Retunes the cell from the node extent and rebuilds when it changed.
+    pub fn ensure_cell(&mut self, node_side: f32, positions: &Positions) -> bool {
+        let wanted = adaptive_cell(node_side);
+        if (wanted - self.cell).abs() < f32::EPSILON {
+            return false;
+        }
+        self.cell = wanted;
+        self.rebuild(positions);
+        true
     }
 
     /// Nodes whose cells overlap the disc around `point`.
@@ -85,6 +132,11 @@ fn cell_of(point: Point2, cell: f32) -> (i32, i32) {
         (point.x / cell).floor() as i32,
         (point.y / cell).floor() as i32,
     )
+}
+
+/// Adaptive grid edge from the node extent.
+pub fn adaptive_cell(node_side: f32) -> f32 {
+    (node_side.max(1.0) * ADAPTIVE_CELL_MULTIPLE).max(1.0)
 }
 
 #[cfg(test)]
@@ -143,5 +195,26 @@ mod tests {
             index.query_point(Point2::new(100.0, 100.0), 3.0),
             vec![NodeIndex::new(0)]
         );
+    }
+
+    #[test]
+    fn versioned_reuse_skips_viewport_only_changes() {
+        let mut index = SpatialIndex::new(10.0);
+        let positions = positions_at(&[(0, 5.0, 5.0)]);
+        assert!(index.rebuild_if_stale(&positions, true));
+        let version = index.version();
+        assert!(!index.rebuild_if_stale(&positions, false));
+        assert_eq!(index.version(), version);
+        assert!(index.rebuild_if_stale(&positions, true));
+        assert_eq!(index.version(), version + 1);
+    }
+
+    #[test]
+    fn adaptive_cell_scales_with_node_size() {
+        assert_eq!(adaptive_cell(24.0), 48.0);
+        let mut index = SpatialIndex::new(10.0);
+        let positions = positions_at(&[(0, 5.0, 5.0)]);
+        index.ensure_cell(24.0, &positions);
+        assert_eq!(index.cell(), 48.0);
     }
 }
