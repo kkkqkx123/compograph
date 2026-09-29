@@ -1,7 +1,11 @@
 //! Pointer-driven manipulation state: dragging, panning and selection.
 
+use std::collections::BTreeSet;
+
 use cg_graph::NodeIndex;
-use cg_types::{Point2, Vec2};
+use cg_types::{Point2, Rect, Vec2};
+
+use super::handlers::normalize_drag;
 
 /// A node currently held by the pointer.
 pub struct DragGesture {
@@ -57,23 +61,123 @@ impl PanState {
     }
 }
 
-/// Single-node selection state; empty selection carries none.
+/// In-progress rubber-band box selection in viewport pixels.
+#[derive(Default)]
+pub struct BoxSelectState {
+    start: Option<Point2>,
+    current: Option<Point2>,
+}
+
+impl BoxSelectState {
+    pub fn begin(&mut self, viewport_point: Point2) {
+        self.start = Some(viewport_point);
+        self.current = Some(viewport_point);
+    }
+
+    pub fn update(&mut self, viewport_point: Point2) {
+        if self.start.is_some() {
+            self.current = Some(viewport_point);
+        }
+    }
+
+    pub fn end(&mut self) -> Option<(Point2, Point2)> {
+        let span = self.start.zip(self.current);
+        self.start = None;
+        self.current = None;
+        span
+    }
+
+    pub fn cancel(&mut self) {
+        self.start = None;
+        self.current = None;
+    }
+
+    pub fn is_active(&self) -> bool {
+        self.start.is_some()
+    }
+
+    /// Normalized viewport rectangle of the current drag, if any.
+    pub fn rect(&self) -> Option<Rect> {
+        self.start
+            .zip(self.current)
+            .map(|(start, current)| normalize_drag(start, current))
+    }
+}
+
+/// Multi-node selection state; empty selection carries no nodes.
+///
+/// The set stays ordered by node index so iteration is reproducible. The
+/// single-node accessors mirror the previous single-selection API for
+/// existing callers: `selected` returns the smallest member.
 #[derive(Default)]
 pub struct SelectionState {
-    selected: Option<NodeIndex>,
+    members: BTreeSet<usize>,
 }
 
 impl SelectionState {
+    /// Replaces the selection with one node.
     pub fn select(&mut self, node: NodeIndex) {
-        self.selected = Some(node);
+        self.members.clear();
+        self.members.insert(node.index());
+    }
+
+    /// Replaces the selection with the given nodes.
+    pub fn select_many(&mut self, nodes: impl IntoIterator<Item = NodeIndex>) {
+        self.members.clear();
+        self.members
+            .extend(nodes.into_iter().map(|node| node.index()));
+    }
+
+    /// Adds one node to the selection.
+    pub fn add(&mut self, node: NodeIndex) {
+        self.members.insert(node.index());
+    }
+
+    /// Adds several nodes to the selection.
+    pub fn add_many(&mut self, nodes: impl IntoIterator<Item = NodeIndex>) {
+        self.members
+            .extend(nodes.into_iter().map(|node| node.index()));
+    }
+
+    /// Removes one node from the selection.
+    pub fn remove(&mut self, node: NodeIndex) {
+        self.members.remove(&node.index());
+    }
+
+    /// Toggles one node in the selection.
+    pub fn toggle(&mut self, node: NodeIndex) {
+        if !self.members.remove(&node.index()) {
+            self.members.insert(node.index());
+        }
     }
 
     pub fn clear(&mut self) {
-        self.selected = None;
+        self.members.clear();
     }
 
+    pub fn contains(&self, node: NodeIndex) -> bool {
+        self.members.contains(&node.index())
+    }
+
+    pub fn len(&self) -> usize {
+        self.members.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.members.is_empty()
+    }
+
+    /// Smallest selected node, preserving the previous single-select API.
     pub fn selected(&self) -> Option<NodeIndex> {
-        self.selected
+        self.members
+            .iter()
+            .next()
+            .map(|index| NodeIndex::new(*index))
+    }
+
+    /// Every selected node in index order.
+    pub fn iter(&self) -> impl Iterator<Item = NodeIndex> + '_ {
+        self.members.iter().map(|index| NodeIndex::new(*index))
     }
 }
 
@@ -116,5 +220,39 @@ mod tests {
         assert_eq!(selection.selected(), Some(NodeIndex::new(2)));
         selection.clear();
         assert!(selection.selected().is_none());
+    }
+
+    #[test]
+    fn selection_accumulates_and_toggles_members() {
+        let mut selection = SelectionState::default();
+        selection.select(NodeIndex::new(2));
+        selection.add(NodeIndex::new(5));
+        assert_eq!(selection.len(), 2);
+        assert!(selection.contains(NodeIndex::new(5)));
+        selection.toggle(NodeIndex::new(2));
+        assert!(!selection.contains(NodeIndex::new(2)));
+        assert_eq!(selection.selected(), Some(NodeIndex::new(5)));
+        selection.select_many([NodeIndex::new(7), NodeIndex::new(3)]);
+        assert_eq!(
+            selection.iter().collect::<Vec<_>>(),
+            vec![NodeIndex::new(3), NodeIndex::new(7)]
+        );
+        selection.remove(NodeIndex::new(3));
+        assert!(selection.contains(NodeIndex::new(7)));
+        assert!(!selection.is_empty());
+    }
+
+    #[test]
+    fn box_select_tracks_a_normalized_rect() {
+        let mut rubber = BoxSelectState::default();
+        assert!(!rubber.is_active());
+        rubber.begin(Point2::new(30.0, 10.0));
+        rubber.update(Point2::new(10.0, 40.0));
+        let rect = rubber.rect().expect("active drag has a rect");
+        assert_eq!(rect.origin, Point2::new(10.0, 10.0));
+        assert_eq!(rect.size, Vec2::new(20.0, 30.0));
+        let span = rubber.end().expect("span on release");
+        assert_eq!(span, (Point2::new(30.0, 10.0), Point2::new(10.0, 40.0)));
+        assert!(!rubber.is_active());
     }
 }

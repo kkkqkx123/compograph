@@ -11,3 +11,9 @@ workspace = true
 cg-types.workspace = true
 gpui.workspace = true
 petgraph.workspace = true
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+
+[features]
+default = ["json-io"]
+json-io = ["dep:serde", "dep:serde_json"]

@@ -1,38 +1,66 @@
 //! compograph desktop application entry point.
 
-use cg_graph::{GraphStore, GraphView, Positions};
+mod algo_panel;
+mod file_io;
+
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::time::Instant;
+
+use algo_panel::{AlgoOutcome, EdgePair};
+use cg_graph::{
+    GraphDocument, GraphStore, GraphView, NodeEntry, NodeIndex, Positions, export_dot,
+    heuristic_shortest_path, minimum_spanning_forest, rank_nodes, remap_positions, shortest_path,
+    strongly_connected_components,
+};
 use cg_interact::{
-    DragState, PanState, SelectionState, drag_position, press_hit, wheel_zoom_factor,
+    BoxSelectState, DragState, NODE_HALF_EXTENT, SelectionState, drag_position, edges_in_rect,
+    hover_node, nodes_in_rect, press_hit, wheel_zoom_factor,
 };
-use cg_layout::{ForceLayout, LayoutDriver, LayoutEngine, PresetLayout, RandomLayout};
+use cg_layout::{LayoutDriver, LayoutRegistry};
 use cg_render::{
-    Camera, SpatialIndex, graph_view, paint_arrows, paint_edges, paint_nodes, subscribe_repaint,
+    BypassStore, Camera, EdgeMapper, EdgeStylePatch, NODE_SIDE, NodeStylePatch, PaintedRubberBand,
+    SpatialIndex, StyleMapper, StyleSheet, graph_view, paint_arrows, paint_edges, paint_nodes,
+    subscribe_repaint,
 };
-use cg_types::{Point2, Vec2};
+use cg_types::{Point2, Rect, Vec2};
 use gpui::{
-    App, AppContext, Bounds, ClickEvent, Context, Entity, InteractiveElement, IntoElement,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Render, ScrollDelta,
-    ScrollWheelEvent, StatefulInteractiveElement, Styled, Subscription, Window, WindowBounds,
-    WindowOptions, div, px, size,
+    App, AppContext, Bounds, ClickEvent, Context, Entity, FocusHandle, InteractiveElement,
+    IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    ParentElement, PathPromptOptions, Render, ScrollDelta, ScrollWheelEvent,
+    StatefulInteractiveElement, Styled, Subscription, Task, Window, WindowBounds, WindowOptions,
+    div, prelude::FluentBuilder, px, size,
 };
 use gpui_platform::application;
 
 /// Node count of the built-in smoke scene.
 const DEMO_NODE_COUNT: usize = 12;
 
-/// Engine names cycled by the toolbar, in order.
-const LAYOUT_CYCLE: [&str; 3] = ["force", "random", "preset"];
+/// Clicks shorter than this viewport distance count as taps, not box selects.
+const TAP_THRESHOLD: f32 = 4.0;
 
-/// Radius of the scatter layouts.
-const DEMO_LAYOUT_RADIUS: f32 = 220.0;
+/// Key dismissing the current selection and any in-progress box select.
+const DISMISS_KEY: &str = "escape";
 
-/// Builds the engine behind a toolbar name.
-fn engine_for(name: &str) -> Box<dyn LayoutEngine> {
-    match name {
-        "random" => Box::new(RandomLayout::new(DEMO_LAYOUT_RADIUS)),
-        "preset" => Box::new(PresetLayout::new(DEMO_LAYOUT_RADIUS)),
-        _ => Box::new(ForceLayout::new()),
-    }
+/// PageRank refinement rounds per panel run.
+const PAGERANK_ITERATIONS: usize = 20;
+
+/// Damping step of the panel controls, clamped to the unit interval.
+const DAMPING_STEP: f32 = 0.05;
+
+/// True when the pressed key dismisses the selection.
+fn is_dismiss_key(key: &str) -> bool {
+    key == DISMISS_KEY
+}
+
+/// Ordinal of `node` within the sorted store order, for endpoint slots.
+fn endpoint_slot(ids: &[NodeIndex], node: NodeIndex) -> Option<usize> {
+    ids.iter().position(|candidate| *candidate == node)
+}
+
+/// Directory the file dialogs open in, falling back to scratch space.
+fn working_directory() -> PathBuf {
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp"))
 }
 
 /// Root view that owns the graph state and draws the canvas.
@@ -46,10 +74,30 @@ struct GraphWindow {
     camera: Camera,
     viewport: Vec2,
     drag: DragState,
-    pan: PanState,
+    rubber: BoxSelectState,
     selection: SelectionState,
+    selected_edges: Vec<(NodeIndex, NodeIndex)>,
     spatial: SpatialIndex,
-    layout_index: usize,
+    focus: FocusHandle,
+    layouts: Vec<&'static str>,
+    menu_open: bool,
+    sheet: StyleSheet,
+    mapper: StyleMapper,
+    edge_mapper: EdgeMapper,
+    bypass: BypassStore,
+    hovered: Option<NodeIndex>,
+    hover_anchor: Point2,
+    algo_nodes: HashMap<NodeIndex, NodeStylePatch>,
+    algo_edges: HashMap<EdgePair, EdgeStylePatch>,
+    algo_summary: String,
+    algo_busy: bool,
+    algo_generation: u64,
+    algo_task: Option<Task<()>>,
+    io_task: Option<Task<()>>,
+    algo_start: usize,
+    algo_goal: usize,
+    damping: f32,
+    io_message: String,
 }
 
 impl GraphWindow {
@@ -66,7 +114,10 @@ impl GraphWindow {
                 graph.add_edge(cx, pair[0], pair[1], 1.0);
             }
         });
-        let layout = cx.new(|cx| LayoutDriver::new(cx, &store, engine_for(LAYOUT_CYCLE[0])));
+        let layouts = LayoutRegistry::with_defaults().names();
+        let first = layouts.first().copied().unwrap_or("force");
+        let engine = LayoutRegistry::engine_for(first).expect("default layout is registered");
+        let layout = cx.new(|cx| LayoutDriver::new(cx, &store, engine));
         // Structural edits repaint the window directly, independently of the
         // position changes the layout driver reports.
         let refresh = subscribe_repaint(cx, &store);
@@ -81,10 +132,30 @@ impl GraphWindow {
             camera: Camera::new(Point2::ZERO, 1.0),
             viewport: Vec2::new(1024.0, 768.0),
             drag: DragState::default(),
-            pan: PanState::default(),
+            rubber: BoxSelectState::default(),
             selection: SelectionState::default(),
+            selected_edges: Vec::new(),
             spatial: SpatialIndex::new(48.0),
-            layout_index: 0,
+            focus: cx.focus_handle(),
+            layouts,
+            menu_open: false,
+            sheet: StyleSheet::default(),
+            mapper: StyleMapper::default(),
+            edge_mapper: EdgeMapper::new(),
+            bypass: BypassStore::new(),
+            hovered: None,
+            hover_anchor: Point2::ZERO,
+            algo_nodes: HashMap::new(),
+            algo_edges: HashMap::new(),
+            algo_summary: "no algorithm run yet".to_string(),
+            algo_busy: false,
+            algo_generation: 0,
+            algo_task: None,
+            io_task: None,
+            algo_start: 0,
+            algo_goal: 1,
+            damping: 0.85,
+            io_message: String::new(),
         };
         view.layout.update(cx, |driver, cx| {
             driver.request_refine(&view.store, cx);
@@ -100,14 +171,511 @@ impl GraphWindow {
         (24.0 / self.camera.zoom).max(4.0)
     }
 
-    fn cycle_layout(&mut self, cx: &mut Context<Self>) {
-        self.layout_index = (self.layout_index + 1) % LAYOUT_CYCLE.len();
-        let engine = engine_for(LAYOUT_CYCLE[self.layout_index]);
+    fn switch_layout(&mut self, name: &'static str, cx: &mut Context<Self>) {
+        let Some(engine) = LayoutRegistry::engine_for(name) else {
+            return;
+        };
         let store = self.store.clone();
         self.layout.update(cx, |driver, cx| {
             driver.set_engine(&store, engine, cx);
             driver.request_refine(&store, cx);
         });
+        self.menu_open = false;
+        cx.notify();
+    }
+
+    /// Drops the node and edge selection and aborts any box select.
+    ///
+    /// Algorithm highlights survive: they live in their own maps and are
+    /// merged back by [`GraphWindow::rebuild_bypass`].
+    fn clear_selection(&mut self) {
+        self.selection.clear();
+        self.selected_edges.clear();
+        self.rubber.cancel();
+        self.rebuild_bypass();
+    }
+
+    /// Rebuilds the bypass from hover, selection sets plus algorithm highlights.
+    ///
+    /// Hover sits below selection, and algorithm patches overlay both, so a
+    /// highlighted path stays visible even where it crosses the current
+    /// selection or the hovered node.
+    fn rebuild_bypass(&mut self) {
+        self.bypass.clear_all();
+        if let Some(node) = self.hovered {
+            self.bypass.set_node(node, NodeStylePatch::hovered());
+        }
+        for node in self.selection.iter() {
+            self.bypass.set_node(node, NodeStylePatch::selected());
+        }
+        for (source, target) in &self.selected_edges {
+            self.bypass
+                .set_edge(*source, *target, EdgeStylePatch::highlighted());
+        }
+        for (node, patch) in &self.algo_nodes {
+            self.bypass.set_node(*node, patch.clone());
+        }
+        for ((source, target), patch) in &self.algo_edges {
+            self.bypass.set_edge(*source, *target, patch.clone());
+        }
+    }
+
+    /// Drops algorithm highlights while keeping the selection intact.
+    fn clear_algo_highlights(&mut self) {
+        self.algo_nodes.clear();
+        self.algo_edges.clear();
+        self.rebuild_bypass();
+    }
+
+    /// Applies a finished rubber-band rectangle to the selection.
+    ///
+    /// The viewport rectangle is converted to model space once, then node and
+    /// edge membership come from the shared model-space selection helpers, so
+    /// box selection agrees with pointer hit testing.
+    fn finish_rubber(&mut self, viewport_rect: Rect, additive: bool, cx: &mut Context<Self>) {
+        if viewport_rect.size.x < TAP_THRESHOLD && viewport_rect.size.y < TAP_THRESHOLD {
+            return;
+        }
+        let far = Point2::new(
+            viewport_rect.origin.x + viewport_rect.size.x,
+            viewport_rect.origin.y + viewport_rect.size.y,
+        );
+        let model_rect = Rect::from_corners(
+            self.camera
+                .viewport_to_world(self.viewport, viewport_rect.origin),
+            self.camera.viewport_to_world(self.viewport, far),
+        );
+        let positions = self.layout.read(cx).positions().clone();
+        self.spatial.rebuild(&positions);
+        let nodes = nodes_in_rect(&positions, &self.spatial, model_rect, NODE_HALF_EXTENT);
+        let store = self.store.read(cx);
+        let view: &dyn GraphView = store;
+        let edges = edges_in_rect(view, &positions, model_rect, NODE_SIDE);
+        if additive {
+            self.selection.add_many(nodes);
+            for pair in edges {
+                if !self.selected_edges.contains(&pair) {
+                    self.selected_edges.push(pair);
+                }
+            }
+        } else {
+            self.selection.select_many(nodes);
+            self.selected_edges = edges;
+        }
+        self.rebuild_bypass();
+    }
+
+    fn hover_label(&self, cx: &App) -> Option<String> {
+        let node = self.hovered?;
+        self.store
+            .read(cx)
+            .node_data(node)
+            .map(|data| data.label.clone())
+    }
+
+    /// Sorted node identifiers currently in the store.
+    fn ordered_nodes(&self, cx: &App) -> Vec<NodeIndex> {
+        let mut ids: Vec<NodeIndex> = self.store.read(cx).node_ids().collect();
+        ids.sort_unstable_by_key(|node| node.index());
+        ids
+    }
+
+    /// Start and goal nodes selected by the panel parameters.
+    fn algo_endpoints(&self, cx: &App) -> Option<(NodeIndex, NodeIndex)> {
+        let ids = self.ordered_nodes(cx);
+        if ids.is_empty() {
+            return None;
+        }
+        Some((
+            ids[self.algo_start % ids.len()],
+            ids[self.algo_goal % ids.len()],
+        ))
+    }
+
+    /// Label shown for a panel endpoint slot.
+    fn endpoint_label(&self, slot: usize, cx: &App) -> String {
+        let ids = self.ordered_nodes(cx);
+        if ids.is_empty() {
+            return "-".to_string();
+        }
+        let node = ids[slot % ids.len()];
+        self.store
+            .read(cx)
+            .node_data(node)
+            .map(|data| data.label.clone())
+            .unwrap_or_default()
+    }
+
+    /// Marks a new algorithm run and returns its generation.
+    ///
+    /// Later runs supersede earlier ones: a background task whose generation
+    /// no longer matches commits nothing.
+    fn begin_algo_run(&mut self) -> u64 {
+        self.algo_generation += 1;
+        self.algo_busy = true;
+        self.algo_generation
+    }
+
+    /// Commits a background outcome unless a newer run superseded it.
+    ///
+    /// Returns false for stale generations without touching any state, so
+    /// overlapping runs cannot overwrite each other out of order.
+    fn commit_outcome(&mut self, generation: u64, outcome: AlgoOutcome) -> bool {
+        if algo_panel::is_stale(self.algo_generation, generation) {
+            return false;
+        }
+        self.algo_nodes.clear();
+        self.algo_edges.clear();
+        for (node, patch) in outcome.nodes {
+            self.algo_nodes.insert(node, patch);
+        }
+        for (pair, patch) in outcome.edges {
+            self.algo_edges.insert(pair, patch);
+        }
+        self.algo_summary = outcome.summary;
+        self.algo_busy = false;
+        self.rebuild_bypass();
+        true
+    }
+
+    /// Hands an outcome computed off-thread back to this view.
+    ///
+    /// Dropping the previous handle asks the framework to cancel the
+    /// superseded run; cancellation is best-effort, so the generation guard
+    /// in [`GraphWindow::commit_outcome`] stays the correctness barrier.
+    fn spawn_algo_task(
+        &mut self,
+        cx: &mut Context<Self>,
+        generation: u64,
+        compute: impl FnOnce() -> AlgoOutcome + Send + 'static,
+    ) {
+        self.algo_task = None;
+        let task = cx.spawn(async move |weak, async_cx| {
+            let outcome = async_cx
+                .background_executor()
+                .spawn(async move { compute() })
+                .await;
+            weak.update(&mut *async_cx, |this, cx| {
+                if this.commit_outcome(generation, outcome) {
+                    cx.notify();
+                }
+            })
+            .ok();
+        });
+        self.algo_task = Some(task);
+        cx.notify();
+    }
+
+    fn run_shortest_path(&mut self, cx: &mut Context<Self>) {
+        let Some((start, goal)) = self.algo_endpoints(cx) else {
+            self.algo_summary = "shortest path needs at least one node".to_string();
+            cx.notify();
+            return;
+        };
+        let snapshot = self.store.read(cx).graph().clone();
+        let generation = self.begin_algo_run();
+        self.spawn_algo_task(cx, generation, move || {
+            let started = Instant::now();
+            let found = shortest_path(&snapshot, start, goal);
+            let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+            match found {
+                Some((cost, path)) => {
+                    algo_panel::path_outcome(&path, cost, elapsed_ms, "shortest path")
+                }
+                None => algo_panel::path_outcome(&[], 0.0, elapsed_ms, "shortest path"),
+            }
+        });
+    }
+
+    fn run_heuristic_path(&mut self, cx: &mut Context<Self>) {
+        let Some((start, goal)) = self.algo_endpoints(cx) else {
+            self.algo_summary = "guided search needs at least one node".to_string();
+            cx.notify();
+            return;
+        };
+        let snapshot = self.store.read(cx).graph().clone();
+        let positions: Positions = self.layout.read(cx).positions().clone();
+        let generation = self.begin_algo_run();
+        self.spawn_algo_task(cx, generation, move || {
+            let started = Instant::now();
+            let found = heuristic_shortest_path(&snapshot, &positions, start, goal);
+            let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+            match found {
+                Some((cost, path)) => {
+                    algo_panel::path_outcome(&path, cost, elapsed_ms, "guided search")
+                }
+                None => algo_panel::path_outcome(&[], 0.0, elapsed_ms, "guided search"),
+            }
+        });
+    }
+
+    fn run_components(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.store.read(cx).graph().clone();
+        let generation = self.begin_algo_run();
+        self.spawn_algo_task(cx, generation, move || {
+            let started = Instant::now();
+            let groups = strongly_connected_components(&snapshot);
+            let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+            algo_panel::scc_outcome(&groups, elapsed_ms)
+        });
+    }
+
+    fn run_pagerank(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.store.read(cx).graph().clone();
+        let damping = self.damping;
+        let generation = self.begin_algo_run();
+        self.spawn_algo_task(cx, generation, move || {
+            let started = Instant::now();
+            let order: Vec<NodeIndex> = snapshot.node_indices().collect();
+            let scores = rank_nodes(&snapshot, damping, PAGERANK_ITERATIONS);
+            let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+            algo_panel::pagerank_outcome(&order, &scores, elapsed_ms)
+        });
+    }
+
+    fn run_spanning_forest(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.store.read(cx).graph().clone();
+        let generation = self.begin_algo_run();
+        self.spawn_algo_task(cx, generation, move || {
+            let started = Instant::now();
+            let edges = minimum_spanning_forest(&snapshot);
+            let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+            algo_panel::forest_outcome(&edges, elapsed_ms)
+        });
+    }
+
+    fn export_json(&mut self, cx: &mut Context<Self>) {
+        let store = self.store.read(cx);
+        let positions = self.layout.read(cx).positions().clone();
+        let document = GraphDocument::collect_from(store.graph(), &positions);
+        let directory = working_directory();
+        let receiver = cx.prompt_for_new_path(&directory, Some("compograph-graph.json"));
+        let task = cx.spawn(async move |weak, async_cx| match receiver.await {
+            Ok(Ok(Some(path))) => {
+                let note =
+                    file_io::export_json_to_path(&document, &path).unwrap_or_else(|error| error);
+                weak.update(&mut *async_cx, |this, cx| {
+                    this.io_message = note;
+                    cx.notify();
+                })
+                .ok();
+            }
+            Ok(Ok(None)) => {
+                weak.update(&mut *async_cx, |this, cx| {
+                    this.io_message = "export cancelled".to_string();
+                    cx.notify();
+                })
+                .ok();
+            }
+            _ => {
+                let note = match file_io::export_json_file(&document, file_io::JSON_PATH) {
+                    Ok(note) => format!("{note} (picker unavailable)"),
+                    Err(note) => note,
+                };
+                weak.update(&mut *async_cx, |this, cx| {
+                    this.io_message = note;
+                    cx.notify();
+                })
+                .ok();
+            }
+        });
+        self.io_task = Some(task);
+        cx.notify();
+    }
+
+    fn import_json(&mut self, cx: &mut Context<Self>) {
+        let receiver = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: None,
+        });
+        let task = cx.spawn(async move |weak, async_cx| {
+            let picked = match receiver.await {
+                Ok(Ok(paths)) => paths.and_then(|mut paths| paths.pop()),
+                _ => {
+                    weak.update(&mut *async_cx, |this, cx| {
+                        match file_io::import_json_file(file_io::JSON_PATH) {
+                            Ok(document) => {
+                                let count = document.nodes.len();
+                                this.apply_document(&document, cx);
+                                this.io_message = format!(
+                                    "imported {count} nodes from {} (picker unavailable)",
+                                    file_io::JSON_PATH
+                                );
+                            }
+                            Err(note) => this.io_message = note,
+                        }
+                        cx.notify();
+                    })
+                    .ok();
+                    return;
+                }
+            };
+            // Distinguish cancellation (dialog answered with no path) from a
+            // platform failure (handled above as the scratch fallback).
+            let Some(path) = picked else {
+                weak.update(&mut *async_cx, |this, cx| {
+                    this.io_message = "import cancelled".to_string();
+                    cx.notify();
+                })
+                .ok();
+                return;
+            };
+            let loaded = async_cx
+                .background_executor()
+                .spawn(async move {
+                    file_io::import_json_from_path(&path).map(|document| (document, path))
+                })
+                .await;
+            weak.update(&mut *async_cx, |this, cx| {
+                match loaded {
+                    Ok((document, path)) => {
+                        let count = document.nodes.len();
+                        this.apply_document(&document, cx);
+                        this.io_message = format!("imported {count} nodes from {}", path.display());
+                    }
+                    Err(note) => this.io_message = note,
+                }
+                cx.notify();
+            })
+            .ok();
+        });
+        self.io_task = Some(task);
+        cx.notify();
+    }
+
+    fn export_dot(&mut self, cx: &mut Context<Self>) {
+        let store = self.store.read(cx);
+        let encoded = export_dot(store.graph());
+        let count = store.node_count();
+        let directory = working_directory();
+        let receiver = cx.prompt_for_new_path(&directory, Some("compograph-graph.dot"));
+        let task = cx.spawn(async move |weak, async_cx| match receiver.await {
+            Ok(Ok(Some(path))) => {
+                let note = match file_io::write_text_to_path(&encoded, &path) {
+                    Ok(()) => format!("exported dot with {count} nodes to {}", path.display()),
+                    Err(note) => note,
+                };
+                weak.update(&mut *async_cx, |this, cx| {
+                    this.io_message = note;
+                    cx.notify();
+                })
+                .ok();
+            }
+            Ok(Ok(None)) => {
+                weak.update(&mut *async_cx, |this, cx| {
+                    this.io_message = "export cancelled".to_string();
+                    cx.notify();
+                })
+                .ok();
+            }
+            _ => {
+                weak.update(&mut *async_cx, |this, cx| {
+                    match file_io::write_text_file(&encoded, file_io::DOT_PATH) {
+                        Ok(()) => {
+                            this.io_message = format!(
+                                "exported dot with {count} nodes to {} (picker unavailable)",
+                                file_io::DOT_PATH
+                            );
+                        }
+                        Err(note) => this.io_message = note,
+                    }
+                    cx.notify();
+                })
+                .ok();
+            }
+        });
+        self.io_task = Some(task);
+        cx.notify();
+    }
+
+    /// Rebuilds the store from a document and restores its positions.
+    ///
+    /// Position restore is deferred past the effect flush, so the layout
+    /// reactions queued by the structural edits run first and cannot
+    /// overwrite the imported coordinates.
+    fn apply_document(&mut self, document: &GraphDocument, cx: &mut Context<Self>) {
+        let mut sorted: Vec<&NodeEntry> = document.nodes.iter().collect();
+        sorted.sort_by_key(|entry| entry.id);
+        let mut order: Vec<NodeIndex> = Vec::new();
+        self.store.update(cx, |graph, cx| {
+            graph.clear(cx);
+            for entry in &sorted {
+                order.push(graph.add_node(cx, entry.label.clone()));
+            }
+            let mut by_id: HashMap<usize, NodeIndex> = HashMap::new();
+            for (entry, node) in sorted.iter().zip(order.iter().copied()) {
+                by_id.insert(entry.id, node);
+            }
+            for edge in &document.edges {
+                if let (Some(source), Some(target)) =
+                    (by_id.get(&edge.source), by_id.get(&edge.target))
+                {
+                    graph.add_edge(cx, *source, *target, edge.weight);
+                }
+            }
+        });
+        let positions = remap_positions(document, &order);
+        let layout = self.layout.clone();
+        cx.defer(move |cx: &mut App| {
+            layout.update(cx, |driver, cx| {
+                driver.replace_positions(positions, cx);
+            });
+        });
+        self.clear_selection();
+        self.clear_algo_highlights();
+    }
+
+    fn cycle_start(&mut self, cx: &mut Context<Self>) {
+        let count = self.ordered_nodes(cx).len().max(1);
+        self.algo_start = (self.algo_start + 1) % count;
+        cx.notify();
+    }
+
+    fn cycle_goal(&mut self, cx: &mut Context<Self>) {
+        let count = self.ordered_nodes(cx).len().max(1);
+        self.algo_goal = (self.algo_goal + 1) % count;
+        cx.notify();
+    }
+
+    /// Points one endpoint slot at the single selected node.
+    ///
+    /// Algorithms run against the live graph, so the slot stores the node's
+    /// ordinal in the current order rather than the identifier itself.
+    fn set_endpoint_from_selection(&mut self, start: bool, cx: &mut Context<Self>) {
+        let ids = self.ordered_nodes(cx);
+        let mut selected = self.selection.iter();
+        let note = match (selected.next(), selected.next()) {
+            (Some(node), None) => match endpoint_slot(&ids, node) {
+                Some(slot) => {
+                    if start {
+                        self.algo_start = slot;
+                    } else {
+                        self.algo_goal = slot;
+                    }
+                    format!(
+                        "{} set to {}",
+                        if start { "start" } else { "goal" },
+                        self.endpoint_label(slot, cx)
+                    )
+                }
+                None => "selected node left the graph".to_string(),
+            },
+            _ => "select exactly one node first".to_string(),
+        };
+        self.algo_summary = note;
+        cx.notify();
+    }
+
+    fn shift_damping(&mut self, delta: f32, cx: &mut Context<Self>) {
+        self.damping = (self.damping + delta).clamp(0.0, 1.0);
+        cx.notify();
+    }
+
+    fn clear_highlights(&mut self, cx: &mut Context<Self>) {
+        self.clear_algo_highlights();
+        self.algo_summary = "highlights cleared".to_string();
         cx.notify();
     }
 }
@@ -120,98 +688,429 @@ impl Render for GraphWindow {
         let view: &dyn GraphView = store;
         let positions: &Positions = self.layout.read(cx).positions();
         self.spatial.rebuild(positions);
-        let selected = self.selection.selected();
-        let nodes = paint_nodes(view, positions, &self.camera, self.viewport, selected);
-        let edges = paint_edges(view, positions, &self.camera, self.viewport);
+        let mut labels: Vec<(NodeIndex, String, usize)> = Vec::new();
+        for node in view.node_ids() {
+            let label = store
+                .node_data(node)
+                .map(|data| data.label.clone())
+                .unwrap_or_default();
+            labels.push((node, label, view.degree(node)));
+        }
+        let sheet = &self.sheet;
+        let mapper = &self.mapper;
+        let edge_mapper = &self.edge_mapper;
+        let bypass = &self.bypass;
+        let style_of = |node: NodeIndex| {
+            let entry = labels
+                .iter()
+                .find(|(id, _, _)| *id == node)
+                .map(|(_, label, degree)| (label.as_str(), *degree));
+            let (label, degree) = entry.unwrap_or(("", 0));
+            bypass.resolve_node(sheet, mapper, node, Some(label), degree)
+        };
+        let nodes = paint_nodes(view, positions, &self.camera, self.viewport, style_of);
+        let edges = paint_edges(
+            view,
+            positions,
+            &self.camera,
+            self.viewport,
+            |source, target| bypass.resolve_edge(sheet, edge_mapper, source, target),
+        );
         let arrows = paint_arrows(&edges);
-        let engine_name = self.layout.read(cx).engine_name();
+        let rubber_band: Option<PaintedRubberBand> =
+            self.rubber.rect().map(|rect| PaintedRubberBand {
+                origin: rect.origin,
+                size: rect.size,
+            });
+        let engine_name = self.layout.read(cx).engine_name().to_string();
+        let last_ms = self.layout.read(cx).last_refine_ms();
+        let node_count = view.node_count();
+        let edge_count = view.edge_count();
+        let zoom = self.camera.zoom;
+        let selected_count = self.selection.len();
+        let hover_text = self.hover_label(cx);
+        let hover_anchor = self.hover_anchor;
+        let hovering = self.hovered.is_some() && !self.rubber.is_active();
+        let layouts = self.layouts.clone();
+        let menu_open = self.menu_open;
+        let current_layout = engine_name.clone();
+        let start_label = self.endpoint_label(self.algo_start, cx);
+        let goal_label = self.endpoint_label(self.algo_goal, cx);
+        let damping = self.damping;
+        let algo_busy = self.algo_busy;
+        let algo_summary = self.algo_summary.clone();
+        let io_message = self.io_message.clone();
+        let view = cx.entity();
         div()
             .size_full()
             .flex()
             .flex_col()
             .child(
                 div()
-                    .id("layout-switch")
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
                     .px_2()
                     .py_1()
-                    .child(format!("layout: {engine_name} (click to switch)"))
-                    .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
-                        this.cycle_layout(cx);
-                    })),
+                    .child(
+                        div()
+                            .id("layout-menu-toggle")
+                            .child(format!("layout: {engine_name}"))
+                            .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                                this.menu_open = !this.menu_open;
+                                cx.notify();
+                            })),
+                    )
+                    .when(menu_open, |bar| {
+                        let mut bar = bar;
+                        for (ordinal, name) in layouts.iter().enumerate() {
+                            let picked: &'static str = name;
+                            let label = if picked == current_layout.as_str() {
+                                format!("*{picked}")
+                            } else {
+                                picked.to_string()
+                            };
+                            bar = bar.child(
+                                div()
+                                    .id(("layout-pick", ordinal))
+                                    .px_2()
+                                    .py_1()
+                                    .child(label)
+                                    .on_click(cx.listener(move |this, _event: &ClickEvent, _window, cx| {
+                                        this.switch_layout(picked, cx);
+                                    })),
+                            );
+                        }
+                        bar
+                    })
+                    .child(
+                        div()
+                            .id("io-export-json")
+                            .px_2()
+                            .child("export json")
+                            .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                                this.export_json(cx);
+                            })),
+                    )
+                    .child(
+                        div()
+                            .id("io-import-json")
+                            .px_2()
+                            .child("import json")
+                            .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                                this.import_json(cx);
+                            })),
+                    )
+                    .child(
+                        div()
+                            .id("io-export-dot")
+                            .px_2()
+                            .child("export dot")
+                            .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                                this.export_dot(cx);
+                            })),
+                    ),
             )
             .child(
                 div()
                     .flex_1()
-                    .child(graph_view(nodes, edges, arrows))
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, event: &MouseDownEvent, _window, cx| {
-                            let viewport_point = Self::viewport_point(event.position);
-                            let world =
-                                this.camera.viewport_to_world(this.viewport, viewport_point);
-                            let positions = this.layout.read(cx).positions().clone();
-                            this.spatial.rebuild(&positions);
-                            match press_hit(world, &positions, &this.spatial, this.hit_radius()) {
-                                Some((node, offset)) => {
-                                    this.drag.begin(node, offset);
-                                    this.selection.select(node);
-                                    this.pan.end();
-                                }
-                                None => {
-                                    this.selection.clear();
-                                    this.pan.begin(viewport_point);
-                                }
-                            }
-                            cx.notify();
-                        }),
+                    .flex()
+                    .flex_row()
+                    .child(
+                        div()
+                            .flex_1()
+                            .relative()
+                            .track_focus(&self.focus)
+                            .child(graph_view(nodes, edges, arrows, rubber_band))
+                            .when(hovering && hover_text.is_some(), |canvas| {
+                                canvas.child(
+                                    div()
+                                        .absolute()
+                                        .left(px(hover_anchor.x + 12.0))
+                                        .top(px(hover_anchor.y + 12.0))
+                                        .px_2()
+                                        .py_1()
+                                        .child(hover_text.unwrap_or_default()),
+                                )
+                            })
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, event: &MouseDownEvent, _window, cx| {
+                                    let viewport_point = Self::viewport_point(event.position);
+                                    let additive = event.modifiers.shift;
+                                    let world = this
+                                        .camera
+                                        .viewport_to_world(this.viewport, viewport_point);
+                                    let positions =
+                                        this.layout.read(cx).positions().clone();
+                                    this.spatial.rebuild(&positions);
+                                    match press_hit(
+                                        world,
+                                        &positions,
+                                        &this.spatial,
+                                        this.hit_radius(),
+                                    ) {
+                                        Some((node, offset)) => {
+                                            this.drag.begin(node, offset);
+                                            if additive {
+                                                this.selection.toggle(node);
+                                            } else if !this.selection.contains(node) {
+                                                this.selection.select(node);
+                                            }
+                                            this.rubber.cancel();
+                                            this.rebuild_bypass();
+                                        }
+                                        None => {
+                                            if !additive {
+                                                this.clear_selection();
+                                            }
+                                            this.rubber.begin(viewport_point);
+                                        }
+                                    }
+                                    cx.notify();
+                                }),
+                            )
+                            .on_mouse_move(cx.listener(
+                                |this, event: &MouseMoveEvent, _window, cx| {
+                                    let viewport_point = Self::viewport_point(event.position);
+                                    if let Some(node) = this.drag.active_node() {
+                                        let offset = this
+                                            .drag
+                                            .active
+                                            .as_ref()
+                                            .map(|gesture| gesture.grab_offset)
+                                            .unwrap_or_default();
+                                        let world = this
+                                            .camera
+                                            .viewport_to_world(this.viewport, viewport_point);
+                                        let target = drag_position(world, offset);
+                                        this.layout.update(cx, |driver, cx| {
+                                            driver.move_pinned(node, target, cx);
+                                        });
+                                        cx.notify();
+                                    } else if this.rubber.is_active() {
+                                        this.rubber.update(viewport_point);
+                                        cx.notify();
+                                    } else {
+                                        let world = this
+                                            .camera
+                                            .viewport_to_world(this.viewport, viewport_point);
+                                        let positions =
+                                            this.layout.read(cx).positions().clone();
+                                        this.spatial.rebuild(&positions);
+                                        let hovered = hover_node(
+                                            world,
+                                            &positions,
+                                            &this.spatial,
+                                            this.hit_radius(),
+                                        );
+                                        if hovered != this.hovered {
+                                            this.hovered = hovered;
+                                            this.hover_anchor = viewport_point;
+                                            this.rebuild_bypass();
+                                            cx.notify();
+                                        } else if hovered.is_some() {
+                                            this.hover_anchor = viewport_point;
+                                            cx.notify();
+                                        }
+                                    }
+                                },
+                            ))
+                            .on_mouse_up(
+                                MouseButton::Left,
+                                cx.listener(|this, event: &MouseUpEvent, _window, cx| {
+                                    let dragged = this.drag.end().is_some();
+                                    if dragged {
+                                        this.rubber.cancel();
+                                        let store = this.store.clone();
+                                        this.layout.update(cx, |driver, cx| {
+                                            driver.request_refine(&store, cx);
+                                        });
+                                    } else if let Some(rect) = this.rubber.rect() {
+                                        this.rubber.cancel();
+                                        this.finish_rubber(rect, event.modifiers.shift, cx);
+                                    }
+                                    cx.notify();
+                                }),
+                            )
+                            .on_scroll_wheel(cx.listener(
+                                |this, event: &ScrollWheelEvent, _window, cx| {
+                                    let anchor = Self::viewport_point(event.position);
+                                    let lines = match &event.delta {
+                                        ScrollDelta::Pixels(pixels) => {
+                                            f32::from(pixels.y) / 16.0
+                                        }
+                                        ScrollDelta::Lines(lines) => lines.y,
+                                    };
+                                    this.camera.zoom_at(
+                                        this.viewport,
+                                        anchor,
+                                        wheel_zoom_factor(lines),
+                                    );
+                                    cx.notify();
+                                },
+                            ))
+                            .on_key_down(
+                                move |event: &KeyDownEvent, _window: &mut Window, cx: &mut App| {
+                                    if is_dismiss_key(event.keystroke.key.as_str()) {
+                                        view.update(cx, |this, cx| {
+                                            this.clear_selection();
+                                            cx.notify();
+                                        });
+                                    }
+                                },
+                            ),
                     )
-                    .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _window, cx| {
-                        let viewport_point = Self::viewport_point(event.position);
-                        if let Some(node) = this.drag.active_node() {
-                            let offset = this
-                                .drag
-                                .active
-                                .as_ref()
-                                .map(|gesture| gesture.grab_offset)
-                                .unwrap_or_default();
-                            let world =
-                                this.camera.viewport_to_world(this.viewport, viewport_point);
-                            let target = drag_position(world, offset);
-                            this.layout.update(cx, |driver, cx| {
-                                driver.move_pinned(node, target, cx);
-                            });
-                            cx.notify();
-                        } else if let Some(delta) = this.pan.advance(viewport_point) {
-                            let zoom = this.camera.zoom;
-                            this.camera
-                                .pan_by(Vec2::new(-delta.x / zoom, -delta.y / zoom));
-                            cx.notify();
-                        }
-                    }))
-                    .on_mouse_up(
-                        MouseButton::Left,
-                        cx.listener(|this, _event: &MouseUpEvent, _window, cx| {
-                            let dragged = this.drag.end().is_some();
-                            this.pan.end();
-                            if dragged {
-                                let store = this.store.clone();
-                                this.layout.update(cx, |driver, cx| {
-                                    driver.request_refine(&store, cx);
-                                });
-                            }
-                            cx.notify();
-                        }),
-                    )
-                    .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, _window, cx| {
-                        let anchor = Self::viewport_point(event.position);
-                        let lines = match &event.delta {
-                            ScrollDelta::Pixels(pixels) => f32::from(pixels.y) / 16.0,
-                            ScrollDelta::Lines(lines) => lines.y,
-                        };
-                        this.camera
-                            .zoom_at(this.viewport, anchor, wheel_zoom_factor(lines));
-                        cx.notify();
-                    })),
+                    .child(
+                        div()
+                            .w(px(240.0))
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .px_2()
+                            .py_1()
+                            .child("algorithms")
+                            .child(
+                                div()
+                                    .id(("algo-run", 0usize))
+                                    .child("shortest path")
+                                    .on_click(cx.listener(
+                                        |this, _event: &ClickEvent, _window, cx| {
+                                            this.run_shortest_path(cx);
+                                        },
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .id(("algo-run", 1usize))
+                                    .child("guided search")
+                                    .on_click(cx.listener(
+                                        |this, _event: &ClickEvent, _window, cx| {
+                                            this.run_heuristic_path(cx);
+                                        },
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .id(("algo-run", 2usize))
+                                    .child("components")
+                                    .on_click(cx.listener(
+                                        |this, _event: &ClickEvent, _window, cx| {
+                                            this.run_components(cx);
+                                        },
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .id(("algo-run", 3usize))
+                                    .child("pagerank")
+                                    .on_click(cx.listener(
+                                        |this, _event: &ClickEvent, _window, cx| {
+                                            this.run_pagerank(cx);
+                                        },
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .id(("algo-run", 4usize))
+                                    .child("spanning tree")
+                                    .on_click(cx.listener(
+                                        |this, _event: &ClickEvent, _window, cx| {
+                                            this.run_spanning_forest(cx);
+                                        },
+                                    )),
+                            )
+                            .child(format!("from: {start_label}"))
+                            .child(
+                                div()
+                                    .id("algo-start-next")
+                                    .child("next start")
+                                    .on_click(cx.listener(
+                                        |this, _event: &ClickEvent, _window, cx| {
+                                            this.cycle_start(cx);
+                                        },
+                                    )),
+                            )
+                            .child(format!("to: {goal_label}"))
+                            .child(
+                                div()
+                                    .id("algo-goal-next")
+                                    .child("next goal")
+                                    .on_click(cx.listener(
+                                        |this, _event: &ClickEvent, _window, cx| {
+                                            this.cycle_goal(cx);
+                                        },
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .id("algo-start-from-selection")
+                                    .child("selection as start")
+                                    .on_click(cx.listener(
+                                        |this, _event: &ClickEvent, _window, cx| {
+                                            this.set_endpoint_from_selection(true, cx);
+                                        },
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .id("algo-goal-from-selection")
+                                    .child("selection as goal")
+                                    .on_click(cx.listener(
+                                        |this, _event: &ClickEvent, _window, cx| {
+                                            this.set_endpoint_from_selection(false, cx);
+                                        },
+                                    )),
+                            )
+                            .child(format!("damping: {damping:.2}"))
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .id("algo-damp-down")
+                                            .child("-")
+                                            .on_click(cx.listener(
+                                                |this, _event: &ClickEvent, _window, cx| {
+                                                    this.shift_damping(-DAMPING_STEP, cx);
+                                                },
+                                            )),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("algo-damp-up")
+                                            .child("+")
+                                            .on_click(cx.listener(
+                                                |this, _event: &ClickEvent, _window, cx| {
+                                                    this.shift_damping(DAMPING_STEP, cx);
+                                                },
+                                            )),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .id("algo-clear")
+                                    .child("clear highlights")
+                                    .on_click(cx.listener(
+                                        |this, _event: &ClickEvent, _window, cx| {
+                                            this.clear_highlights(cx);
+                                        },
+                                    )),
+                            )
+                            .child(if algo_busy {
+                                "working...".to_string()
+                            } else {
+                                algo_summary
+                            }),
+                    ),
+            )
+            .child(
+                div().px_2().py_1().child(format!(
+                    "nodes: {node_count} edges: {edge_count} zoom: {zoom:.2} layout: {engine_name} {last_ms:.1}ms selected: {selected_count} {io_message}"
+                )),
             )
     }
 }
@@ -226,9 +1125,137 @@ fn main() {
             },
             |_, cx| cx.new(GraphWindow::new),
         );
-        if let Err(error) = opened {
-            eprintln!("failed to open graph window: {error}");
+        match opened {
+            Ok(window) => {
+                if window
+                    .update(cx, |view, window, cx| {
+                        window.focus(&view.focus, cx);
+                    })
+                    .is_err()
+                {
+                    eprintln!("failed to focus graph window");
+                }
+            }
+            Err(error) => {
+                eprintln!("failed to open graph window: {error}");
+            }
         }
         cx.activate(true);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+
+    #[test]
+    fn only_escape_dismisses_the_selection() {
+        assert!(is_dismiss_key("escape"));
+        assert!(!is_dismiss_key("Enter"));
+        assert!(!is_dismiss_key(""));
+    }
+
+    #[test]
+    fn endpoint_slot_resolves_ordinals_against_the_live_order() {
+        let ids = vec![NodeIndex::new(0), NodeIndex::new(1), NodeIndex::new(2)];
+        assert_eq!(endpoint_slot(&ids, NodeIndex::new(1)), Some(1));
+        assert_eq!(endpoint_slot(&ids, NodeIndex::new(9)), None);
+    }
+
+    #[gpui::test]
+    fn stale_algo_write_back_is_dropped(cx: &mut TestAppContext) {
+        let view = cx.update(|cx: &mut App| cx.new(GraphWindow::new));
+        cx.update(|cx| {
+            view.update(cx, |this, cx| {
+                this.run_shortest_path(cx);
+                this.run_components(cx);
+            })
+        });
+        cx.update(|cx| {
+            view.update(cx, |this, cx| {
+                assert_eq!(this.algo_generation, 2);
+                assert!(this.algo_busy);
+                let stale = AlgoOutcome {
+                    summary: "stale".to_string(),
+                    ..AlgoOutcome::default()
+                };
+                assert!(!this.commit_outcome(1, stale));
+                assert_ne!(this.algo_summary, "stale");
+                let current = AlgoOutcome {
+                    nodes: vec![(NodeIndex::new(0), NodeStylePatch::selected())],
+                    summary: "current".to_string(),
+                    ..AlgoOutcome::default()
+                };
+                assert!(this.commit_outcome(2, current));
+                assert_eq!(this.algo_summary, "current");
+                assert!(!this.algo_busy);
+                assert!(this.bypass.node_bypass(NodeIndex::new(0)).is_some());
+                cx.notify();
+            })
+        });
+    }
+
+    #[gpui::test]
+    fn selection_and_algo_highlights_share_the_bypass(cx: &mut TestAppContext) {
+        let view = cx.update(|cx: &mut App| cx.new(GraphWindow::new));
+        cx.update(|cx| {
+            view.update(cx, |this, cx| {
+                this.selection.select(NodeIndex::new(0));
+                let outcome = AlgoOutcome {
+                    nodes: vec![(NodeIndex::new(1), NodeStylePatch::selected())],
+                    ..AlgoOutcome::default()
+                };
+                this.algo_generation = 1;
+                assert!(this.commit_outcome(1, outcome));
+                assert!(this.bypass.node_bypass(NodeIndex::new(0)).is_some());
+                assert!(this.bypass.node_bypass(NodeIndex::new(1)).is_some());
+                this.clear_selection();
+                assert!(this.bypass.node_bypass(NodeIndex::new(0)).is_none());
+                assert!(this.bypass.node_bypass(NodeIndex::new(1)).is_some());
+                cx.notify();
+            })
+        });
+    }
+
+    #[gpui::test]
+    fn json_import_restores_positions_after_driver_reactions(cx: &mut TestAppContext) {
+        use cg_types::Point2;
+        let view = cx.update(|cx: &mut App| cx.new(GraphWindow::new));
+        let document = GraphDocument {
+            nodes: vec![
+                NodeEntry {
+                    id: 0,
+                    label: "a".to_string(),
+                    position: Some([11.0, 22.0]),
+                },
+                NodeEntry {
+                    id: 1,
+                    label: "b".to_string(),
+                    position: Some([33.0, 44.0]),
+                },
+            ],
+            edges: vec![cg_graph::EdgeEntry {
+                source: 0,
+                target: 1,
+                weight: 1.0,
+            }],
+        };
+        cx.update(|cx| {
+            view.update(cx, |this, cx| {
+                this.apply_document(&document, cx);
+            })
+        });
+        cx.update(|cx| {
+            view.update(cx, |this, cx| {
+                assert_eq!(this.store.read(cx).node_count(), 2);
+                let positions = this.layout.read(cx).positions().clone();
+                assert_eq!(positions.len(), 2);
+                let mut points: Vec<Point2> = positions.values().copied().collect();
+                points.sort_by(|a, b| a.x.partial_cmp(&b.x).unwrap_or(std::cmp::Ordering::Equal));
+                assert_eq!(points[0], Point2::new(11.0, 22.0));
+                assert_eq!(points[1], Point2::new(33.0, 44.0));
+            })
+        });
+    }
 }

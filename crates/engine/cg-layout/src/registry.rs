@@ -2,7 +2,18 @@
 
 use std::collections::HashMap;
 
+use crate::breadthfirst::{BreadthFirstLayout, BreadthFirstOptions};
+use crate::circle::{CircleLayout, CircleOptions};
+use crate::concentric::{ConcentricLayout, ConcentricOptions};
 use crate::engine::LayoutEngine;
+use crate::force::ForceLayout;
+use crate::grid::{GridLayout, GridOptions};
+use crate::hierarchical::{HierarchicalLayout, HierarchicalOptions};
+use crate::preset::PresetLayout;
+use crate::random::RandomLayout;
+
+/// Radius of the scatter fallback layouts in the default registry.
+pub const DEFAULT_DEMO_RADIUS: f32 = 220.0;
 
 /// Holds one engine per registered layout name.
 ///
@@ -22,6 +33,55 @@ impl LayoutRegistry {
     pub fn register(&mut self, engine: Box<dyn LayoutEngine>) {
         let name = engine.name();
         self.engines.insert(name, engine);
+    }
+
+    /// Registry holding every built-in layout engine.
+    ///
+    /// Discrete engines use their default bounding boxes and ignore previous
+    /// coordinates on placement; the force engine refines from them. Absent
+    /// layouts stay absent instead of using placeholders.
+    pub fn with_defaults() -> Self {
+        let mut registry = Self::new();
+        registry.register(Box::new(ForceLayout::new()));
+        registry.register(Box::new(RandomLayout::new(DEFAULT_DEMO_RADIUS)));
+        registry.register(Box::new(PresetLayout::new(DEFAULT_DEMO_RADIUS)));
+        registry.register(Box::new(GridLayout::with_options(GridOptions::default())));
+        registry.register(Box::new(CircleLayout::with_options(
+            CircleOptions::default(),
+        )));
+        registry.register(Box::new(BreadthFirstLayout::with_options(
+            BreadthFirstOptions::default(),
+        )));
+        registry.register(Box::new(ConcentricLayout::with_options(
+            ConcentricOptions::default(),
+        )));
+        registry.register(Box::new(HierarchicalLayout::with_options(
+            HierarchicalOptions::default(),
+        )));
+        registry
+    }
+
+    /// Builds one engine by name with default options, if registered.
+    pub fn engine_for(name: &str) -> Option<Box<dyn LayoutEngine>> {
+        match name {
+            "force" => Some(Box::new(ForceLayout::new())),
+            "random" => Some(Box::new(RandomLayout::new(DEFAULT_DEMO_RADIUS))),
+            "preset" => Some(Box::new(PresetLayout::new(DEFAULT_DEMO_RADIUS))),
+            "grid" => Some(Box::new(GridLayout::with_options(GridOptions::default()))),
+            "circle" => Some(Box::new(CircleLayout::with_options(
+                CircleOptions::default(),
+            ))),
+            "breadthfirst" => Some(Box::new(BreadthFirstLayout::with_options(
+                BreadthFirstOptions::default(),
+            ))),
+            "concentric" => Some(Box::new(ConcentricLayout::with_options(
+                ConcentricOptions::default(),
+            ))),
+            "hierarchical" => Some(Box::new(HierarchicalLayout::with_options(
+                HierarchicalOptions::default(),
+            ))),
+            _ => None,
+        }
     }
 
     pub fn get(&self, name: &str) -> Option<&dyn LayoutEngine> {
@@ -77,5 +137,28 @@ mod tests {
         assert_eq!(registry.names(), vec!["fixed", "preset"]);
         assert!(registry.get("preset").is_some());
         assert!(registry.get("missing").is_none());
+    }
+
+    #[test]
+    fn default_registry_lists_all_builtin_layouts() {
+        let registry = LayoutRegistry::with_defaults();
+        assert_eq!(
+            registry.names(),
+            vec![
+                "breadthfirst",
+                "circle",
+                "concentric",
+                "force",
+                "grid",
+                "hierarchical",
+                "preset",
+                "random",
+            ]
+        );
+        for name in registry.names() {
+            assert!(registry.get(name).is_some());
+            assert!(LayoutRegistry::engine_for(name).is_some());
+        }
+        assert!(LayoutRegistry::engine_for("missing").is_none());
     }
 }

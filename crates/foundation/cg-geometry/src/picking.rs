@@ -137,6 +137,23 @@ pub fn bezier_hit(start: Point2, ctrl: Point2, end: Point2, point: Point2, toler
     distance_to_bezier(start, ctrl, end, point) <= tolerance
 }
 
+/// True when the polyline through `points` touches `rect`.
+///
+/// A hit means either a sample point inside the rectangle or a segment
+/// crossing its border, so curved edges flattened into polylines reuse the
+/// same box-selection path as straight edges.
+pub fn polyline_intersects_rect(points: &[Point2], rect: Rect) -> bool {
+    if points.is_empty() {
+        return false;
+    }
+    if points.iter().any(|point| rect.contains(*point)) {
+        return true;
+    }
+    points
+        .windows(2)
+        .any(|pair| segment_intersects_rect(pair[0], pair[1], rect))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -235,5 +252,32 @@ mod tests {
             Point2::new(5.0, -10.0),
             EDGE_HIT_TOLERANCE
         ));
+    }
+
+    #[test]
+    fn polyline_rect_hit_covers_inside_crossing_and_empty() {
+        let rect = Rect::new(Point2::new(4.0, -1.0), Vec2::new(2.0, 2.0));
+        let crossing = vec![Point2::new(0.0, 0.0), Point2::new(10.0, 0.0)];
+        assert!(polyline_intersects_rect(&crossing, rect));
+        let inside = vec![Point2::new(4.5, 0.0), Point2::new(5.0, 0.5)];
+        assert!(polyline_intersects_rect(&inside, rect));
+        let outside = vec![Point2::new(0.0, 5.0), Point2::new(10.0, 5.0)];
+        assert!(!polyline_intersects_rect(&outside, rect));
+        assert!(!polyline_intersects_rect(&[], rect));
+    }
+
+    #[test]
+    fn self_loop_polyline_has_finite_hit_distance() {
+        use crate::curves::self_loop_polyline;
+
+        let center = Point2::new(0.0, 0.0);
+        let polyline = self_loop_polyline(center, 24.0, 0);
+        let near = distance_to_polyline(Point2::new(0.0, -20.0), &polyline);
+        assert!(near.map(|distance| distance.is_finite()).unwrap_or(false));
+        let far = distance_to_polyline(Point2::new(0.0, 200.0), &polyline);
+        assert!(
+            far.map(|distance| distance > EDGE_HIT_TOLERANCE)
+                .unwrap_or(false)
+        );
     }
 }

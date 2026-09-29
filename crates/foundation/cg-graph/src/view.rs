@@ -22,6 +22,18 @@ pub trait GraphView {
 
     /// Every directed edge as a (source, target) pair.
     fn edges(&self) -> Vec<(NodeIndex, NodeIndex)>;
+
+    /// Number of incident edges of `node`, counting both directions.
+    fn degree(&self, node: NodeIndex) -> usize;
+
+    /// Distinct neighbours of `node` in either direction, in index order.
+    fn neighbors(&self, node: NodeIndex) -> Vec<NodeIndex>;
+
+    /// Distinct out-neighbours of `node`, in index order.
+    fn successors(&self, node: NodeIndex) -> Vec<NodeIndex>;
+
+    /// Distinct in-neighbours of `node`, in index order.
+    fn predecessors(&self, node: NodeIndex) -> Vec<NodeIndex>;
 }
 
 /// In-memory graph used by headless layout tests.
@@ -99,6 +111,60 @@ impl GraphView for MockGraph {
             .map(|(source, target)| (NodeIndex::new(*source), NodeIndex::new(*target)))
             .collect()
     }
+
+    fn degree(&self, node: NodeIndex) -> usize {
+        let index = node.index();
+        self.edges
+            .iter()
+            .filter(|(source, target)| *source == index || *target == index)
+            .count()
+    }
+
+    fn neighbors(&self, node: NodeIndex) -> Vec<NodeIndex> {
+        let index = node.index();
+        let mut result: Vec<NodeIndex> = self
+            .edges
+            .iter()
+            .filter_map(|(source, target)| {
+                if *source == index {
+                    Some(NodeIndex::new(*target))
+                } else if *target == index {
+                    Some(NodeIndex::new(*source))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        result.sort_unstable_by_key(|node| node.index());
+        result.dedup_by_key(|node| node.index());
+        result
+    }
+
+    fn successors(&self, node: NodeIndex) -> Vec<NodeIndex> {
+        let index = node.index();
+        let mut result: Vec<NodeIndex> = self
+            .edges
+            .iter()
+            .filter(|(source, _)| *source == index)
+            .map(|(_, target)| NodeIndex::new(*target))
+            .collect();
+        result.sort_unstable_by_key(|node| node.index());
+        result.dedup_by_key(|node| node.index());
+        result
+    }
+
+    fn predecessors(&self, node: NodeIndex) -> Vec<NodeIndex> {
+        let index = node.index();
+        let mut result: Vec<NodeIndex> = self
+            .edges
+            .iter()
+            .filter(|(_, target)| *target == index)
+            .map(|(source, _)| NodeIndex::new(*source))
+            .collect();
+        result.sort_unstable_by_key(|node| node.index());
+        result.dedup_by_key(|node| node.index());
+        result
+    }
 }
 
 #[cfg(test)]
@@ -125,5 +191,34 @@ mod tests {
         graph.push_edge(2, 5);
         assert_eq!(graph.node_count(), 6);
         assert_eq!(graph.edges(), vec![(NodeIndex::new(2), NodeIndex::new(5))]);
+    }
+
+    #[test]
+    fn adjacency_queries_stay_sorted_and_directed() {
+        let mut graph = MockGraph::chain(3);
+        graph.push_edge(2, 0);
+        assert_eq!(graph.degree(NodeIndex::new(1)), 2);
+        assert_eq!(
+            graph.neighbors(NodeIndex::new(1)),
+            vec![NodeIndex::new(0), NodeIndex::new(2)]
+        );
+        assert_eq!(graph.successors(NodeIndex::new(1)), vec![NodeIndex::new(2)]);
+        assert_eq!(
+            graph.predecessors(NodeIndex::new(1)),
+            vec![NodeIndex::new(0)]
+        );
+        assert_eq!(graph.successors(NodeIndex::new(2)), vec![NodeIndex::new(0)]);
+        assert_eq!(
+            graph.predecessors(NodeIndex::new(0)),
+            vec![NodeIndex::new(2)]
+        );
+    }
+
+    #[test]
+    fn self_loops_count_towards_degree() {
+        let mut graph = MockGraph::isolated(1);
+        graph.push_edge(0, 0);
+        assert_eq!(graph.degree(NodeIndex::new(0)), 1);
+        assert_eq!(graph.neighbors(NodeIndex::new(0)), vec![NodeIndex::new(0)]);
     }
 }

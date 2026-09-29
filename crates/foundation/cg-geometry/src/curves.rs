@@ -46,6 +46,66 @@ pub fn bezier_control_for_edge(start: Point2, end: Point2, offset: f32) -> Point
     mid + normal * offset
 }
 
+/// Height of a self loop above the node top, as a multiple of `node_side`.
+pub const SELF_LOOP_HEIGHT_SCALE: f32 = 1.5;
+
+/// Half width of a self loop, as a multiple of `node_side`.
+pub const SELF_LOOP_HALF_WIDTH_SCALE: f32 = 0.75;
+
+/// Sample count used when flattening a self loop into a polyline.
+pub const SELF_LOOP_SAMPLES: usize = 24;
+
+/// Control points of the upward self loop anchored at `center`.
+///
+/// The loop leaves and returns to the node anchor and bulges upwards, so both
+/// control points sit above the node body. Overlapping loops are spread by
+/// `ordinal`, which scales the loop outward in whole steps.
+pub fn self_loop_controls(center: Point2, node_side: f32, ordinal: usize) -> [Point2; 2] {
+    let side = node_side.max(1.0);
+    let growth = 1.0 + ordinal as f32 / 3.0;
+    let half_width = side * SELF_LOOP_HALF_WIDTH_SCALE * growth;
+    let height = side * (0.5 + SELF_LOOP_HEIGHT_SCALE) * growth;
+    [
+        Point2::new(center.x - half_width, center.y - height),
+        Point2::new(center.x + half_width, center.y - height),
+    ]
+}
+
+/// Point on the cubic Bezier with controls `ctrl_a` and `ctrl_b`.
+pub fn cubic_bezier(start: Point2, ctrl_a: Point2, ctrl_b: Point2, end: Point2, t: f32) -> Point2 {
+    let u = 1.0 - t;
+    let a = u * u * u;
+    let b = 3.0 * u * u * t;
+    let c = 3.0 * u * t * t;
+    let d = t * t * t;
+    Point2::new(
+        a * start.x + b * ctrl_a.x + c * ctrl_b.x + d * end.x,
+        a * start.y + b * ctrl_a.y + c * ctrl_b.y + d * end.y,
+    )
+}
+
+/// Samples the cubic Bezier into `segments` straight pieces.
+pub fn sample_cubic_bezier(
+    start: Point2,
+    ctrl_a: Point2,
+    ctrl_b: Point2,
+    end: Point2,
+    segments: usize,
+) -> Vec<Point2> {
+    let segments = segments.max(1);
+    (0..=segments)
+        .map(|step| cubic_bezier(start, ctrl_a, ctrl_b, end, step as f32 / segments as f32))
+        .collect()
+}
+
+/// Polyline of the upward self loop anchored at `center`.
+///
+/// The first and last samples coincide at the anchor, matching the paint plan
+/// convention that a self loop starts and ends on the same node.
+pub fn self_loop_polyline(center: Point2, node_side: f32, ordinal: usize) -> Vec<Point2> {
+    let [ctrl_a, ctrl_b] = self_loop_controls(center, node_side, ordinal);
+    sample_cubic_bezier(center, ctrl_a, ctrl_b, center, SELF_LOOP_SAMPLES)
+}
 /// Symmetric perpendicular offsets for `count` parallel edges.
 ///
 /// A single edge stays straight at zero; pairs split evenly around the line;
@@ -111,5 +171,35 @@ mod tests {
         assert_eq!(parallel_offsets(1, 8.0), vec![0.0]);
         assert_eq!(parallel_offsets(2, 8.0), vec![-4.0, 4.0]);
         assert_eq!(parallel_offsets(3, 8.0), vec![-8.0, 0.0, 8.0]);
+    }
+
+    #[test]
+    fn self_loop_starts_and_ends_at_the_anchor() {
+        let center = Point2::new(10.0, 20.0);
+        let polyline = self_loop_polyline(center, 24.0, 0);
+        assert_eq!(polyline.first(), Some(&center));
+        assert_eq!(polyline.last(), Some(&center));
+        assert!(polyline.len() > 2);
+    }
+
+    #[test]
+    fn self_loop_controls_sit_above_the_node() {
+        let center = Point2::new(0.0, 0.0);
+        let [left, right] = self_loop_controls(center, 24.0, 0);
+        assert!(left.y < -12.0 && right.y < -12.0);
+        assert!(left.x < center.x && right.x > center.x);
+        let top = self_loop_polyline(center, 24.0, 0)
+            .iter()
+            .map(|point| point.y)
+            .fold(f32::INFINITY, f32::min);
+        assert!(top < -12.0);
+    }
+
+    #[test]
+    fn overlapping_self_loops_grow_outward() {
+        let center = Point2::ZERO;
+        let near = self_loop_controls(center, 24.0, 0);
+        let far = self_loop_controls(center, 24.0, 3);
+        assert!(far[0].y < near[0].y && far[1].y < near[1].y);
     }
 }

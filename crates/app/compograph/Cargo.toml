@@ -19,3 +19,8 @@ cg-render.workspace = true
 cg-types.workspace = true
 gpui.workspace = true
 gpui_platform.workspace = true
+
+[dev-dependencies]
+# The test-support feature pulls in gpui's TestAppContext, which the
+# background write-back tests need to drive the window without a display.
+gpui = { workspace = true, features = ["test-support"] }

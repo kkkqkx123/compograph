@@ -35,7 +35,9 @@ pub fn work_for(event: &GraphChangeEvent) -> LayoutWork {
     }
 }
 
-/// Filter used by layout drivers: positions only care about the node set.
+/// Filter used by layout drivers: edge edits still arrive so the driver can
+/// refresh edge-dependent geometry, while [`work_for`] keeps node positions
+/// stable for them.
 pub const LAYOUT_FILTER: ChangeFilter = ChangeFilter::ALL;
 
 #[cfg(test)]

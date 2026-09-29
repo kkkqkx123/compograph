@@ -1,6 +1,7 @@
 //! Owns layout state and keeps it current as the graph mutates.
 
 use std::collections::HashSet;
+use std::time::Instant;
 
 use cg_graph::{
     FixedNodes, GraphChangeEvent, GraphStore, GraphView, NodeIndex, Positions, subscribe_graph,
@@ -33,6 +34,8 @@ pub struct LayoutDriver {
     placements_since_full_run: u32,
     /// Counts background refinements; stale tasks check it before writing back.
     generation: u64,
+    /// Milliseconds of the latest refinement, updated on every write-back.
+    last_refine_ms: f64,
     /// Held so an in-flight refinement is cancelled when replaced or dropped.
     _task: Option<Task<()>>,
     _subscription: Subscription,
@@ -50,7 +53,9 @@ impl LayoutDriver {
     ) -> Self {
         let store_snapshot = store.read(cx);
         let view: &dyn GraphView = store_snapshot;
+        let started = Instant::now();
         let positions = engine.layout(view, &Positions::new(), &FixedNodes::default());
+        let last_refine_ms = started.elapsed().as_secs_f64() * 1000.0;
         let subscription = subscribe_graph(cx, store, LAYOUT_FILTER, {
             let store = store.clone();
             move |this, event, cx| this.react(&store, event, cx)
@@ -61,6 +66,7 @@ impl LayoutDriver {
             pinned: FixedNodes::default(),
             placements_since_full_run: 0,
             generation: 0,
+            last_refine_ms,
             _task: None,
             _subscription: subscription,
         }
@@ -69,6 +75,15 @@ impl LayoutDriver {
     /// Current model-space placement of every node.
     pub fn positions(&self) -> &Positions {
         &self.positions
+    }
+
+    /// Milliseconds of the latest refinement, for status display.
+    ///
+    /// Synchronous engines report the dispatch cost; force-directed engines
+    /// update this on every background write-back, so it settles with the
+    /// layout.
+    pub fn last_refine_ms(&self) -> f64 {
+        self.last_refine_ms
     }
 
     /// Nodes held in place by the user; layouts move around them.
@@ -100,6 +115,18 @@ impl LayoutDriver {
         self.positions = engine.layout(view, &self.positions, &self.pinned);
         self.engine = engine;
         self.placements_since_full_run = 0;
+    }
+
+    /// Replaces every position at once, for example after a file import.
+    ///
+    /// Any in-flight background refinement is abandoned so its late
+    /// write-back cannot overwrite the restored coordinates.
+    pub fn replace_positions(&mut self, positions: Positions, cx: &mut Context<Self>) {
+        self.generation += 1;
+        self._task = None;
+        self.positions = positions;
+        self.placements_since_full_run = 0;
+        cx.notify();
     }
 
     /// Holds `node` at its current coordinates during future layouts.
@@ -141,7 +168,9 @@ impl LayoutDriver {
             let store_snapshot = store.read(cx);
             let view: &dyn GraphView = store_snapshot;
             let previous = std::mem::take(&mut self.positions);
+            let started = Instant::now();
             self.positions = self.engine.layout(view, &previous, &self.pinned);
+            self.last_refine_ms = started.elapsed().as_secs_f64() * 1000.0;
             self.placements_since_full_run = 0;
             return;
         };
@@ -158,6 +187,7 @@ impl LayoutDriver {
             }
         }
         let pinned = self.pinned.clone();
+        let started = Instant::now();
         let task = cx.spawn(
             async move |weak: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
                 let mut simulation = ForceSimulation::new(options);
@@ -187,6 +217,7 @@ impl LayoutDriver {
                                 return true;
                             }
                             this.positions = working.clone();
+                            this.last_refine_ms = started.elapsed().as_secs_f64() * 1000.0;
                             cx.notify();
                             false
                         })

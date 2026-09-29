@@ -1,5 +1,8 @@
 //! Editable graph storage built on petgraph's stable index graph.
 
+use std::cmp::Ordering;
+use std::fmt;
+
 use petgraph::stable_graph::{EdgeIndex, NodeIndex, StableGraph};
 use petgraph::visit::{EdgeRef, IntoEdgeReferences, IntoNodeIdentifiers};
 use petgraph::{Directed, Direction};
@@ -15,10 +18,28 @@ pub struct NodeData {
     pub label: String,
 }
 
+impl fmt::Display for NodeData {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.label)
+    }
+}
+
 /// Application-level payload attached to an edge.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct EdgeData {
     pub weight: f32,
+}
+
+impl PartialOrd for EdgeData {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.weight.partial_cmp(&other.weight)
+    }
+}
+
+impl fmt::Display for EdgeData {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.weight.fmt(formatter)
+    }
 }
 
 /// Owns the graph structure behind the application.
@@ -166,6 +187,47 @@ impl GraphView for GraphStore {
             .map(|edge| (edge.source(), edge.target()))
             .collect()
     }
+
+    fn degree(&self, node: NodeIndex) -> usize {
+        let outgoing = self.graph.edges(node).count();
+        let incoming = self.graph.edges_directed(node, Direction::Incoming).count();
+        let loops = self
+            .graph
+            .edges(node)
+            .filter(|edge| edge.source() == node && edge.target() == node)
+            .count();
+        outgoing + incoming - loops
+    }
+
+    fn neighbors(&self, node: NodeIndex) -> Vec<NodeIndex> {
+        let mut result: Vec<NodeIndex> = self
+            .graph
+            .edges(node)
+            .map(|edge| edge.target())
+            .chain(
+                self.graph
+                    .edges_directed(node, Direction::Incoming)
+                    .map(|edge| edge.source()),
+            )
+            .collect();
+        result.sort_unstable_by_key(|neighbour| neighbour.index());
+        result.dedup_by_key(|neighbour| neighbour.index());
+        result
+    }
+
+    fn successors(&self, node: NodeIndex) -> Vec<NodeIndex> {
+        GraphStore::successors(self, node)
+            .into_iter()
+            .map(|(neighbour, _)| neighbour)
+            .collect()
+    }
+
+    fn predecessors(&self, node: NodeIndex) -> Vec<NodeIndex> {
+        GraphStore::predecessors(self, node)
+            .into_iter()
+            .map(|(neighbour, _)| neighbour)
+            .collect()
+    }
 }
 
 impl Default for GraphStore {
@@ -233,6 +295,18 @@ mod tests {
             Some("a")
         );
         assert!(store.node_data(NodeIndex::new(99)).is_none());
+    }
+
+    #[test]
+    fn view_adjacency_covers_both_directions() {
+        let (graph, [a, b, c, d]) = diamond();
+        let store = GraphStore { graph };
+        let view: &dyn GraphView = &store;
+        assert_eq!(view.degree(a), 2);
+        assert_eq!(view.degree(d), 2);
+        assert_eq!(view.successors(a), vec![b, c]);
+        assert_eq!(view.predecessors(d).len(), 2);
+        assert_eq!(view.neighbors(d).len(), 2);
     }
 
     #[test]
