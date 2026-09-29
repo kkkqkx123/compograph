@@ -27,7 +27,12 @@ disallowed_methods = "deny"
 # docs/dev/branch-sync.md), so the paths below are all this workspace needs:
 # there is no gpui workspace table to restate here.
 [workspace.dependencies]
-petgraph = "0.8"
+cg-geometry = { path = "crates/foundation/cg-geometry" }
+cg-graph = { path = "crates/foundation/cg-graph" }
+cg-interact = { path = "crates/render/cg-interact" }
+cg-layout = { path = "crates/engine/cg-layout" }
+cg-render = { path = "crates/render/cg-render" }
+cg-types = { path = "crates/foundation/cg-types" }
 
 gpui = { path = "crates/vendor/zed-gpui/crates/gpui", default-features = false }
 gpui_macros = { path = "crates/vendor/zed-gpui/crates/gpui_macros" }
@@ -35,9 +40,4 @@ gpui_platform = { path = "crates/vendor/zed-gpui/crates/gpui_platform", default-
 gpui_shared_string = { path = "crates/vendor/zed-gpui/crates/gpui_shared_string" }
 gpui_util = { path = "crates/vendor/zed-gpui/crates/gpui_util" }
 
-cg-types = { path = "crates/foundation/cg-types" }
-cg-geometry = { path = "crates/foundation/cg-geometry" }
-cg-graph = { path = "crates/foundation/cg-graph" }
-cg-layout = { path = "crates/engine/cg-layout" }
-cg-render = { path = "crates/render/cg-render" }
-cg-interact = { path = "crates/render/cg-interact" }
+petgraph = "0.8"

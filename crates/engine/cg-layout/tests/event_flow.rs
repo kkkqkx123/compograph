@@ -11,7 +11,6 @@ use cg_layout::driver::LayoutDriver;
 use cg_layout::random::RandomLayout;
 use cg_layout::reaction::{LayoutWork, work_for};
 use gpui::{App, AppContext, Context, Entity, Subscription, TestAppContext};
-use petgraph::visit::IntoNodeIdentifiers;
 
 /// Records every event a subscriber observes, so tests can assert on the exact
 /// sequence a consumer would see.
@@ -127,11 +126,7 @@ fn node_removal_keeps_the_remaining_node_count_consistent(cx: &mut TestAppContex
 
     cx.update(|cx| {
         store.update(cx, |graph, cx| {
-            let a = graph
-                .graph()
-                .node_identifiers()
-                .next()
-                .expect("node exists");
+            let a = graph.node_ids().next().expect("node exists");
             graph.remove_node(cx, a);
         });
     });

@@ -26,7 +26,7 @@
 | 根 Cargo.toml | members 只列自建 crate 四段 glob（统一分层，上游不再作为成员）；workspace.dependencies 只保留自建依赖 + 指向 submodule 的 `path`（如 `gpui = { path = "crates/vendor/zed-gpui/crates/gpui" }`） | `cargo metadata` 解析通过 |
 | 自研 crate 骨架 | `cg-types`/`cg-geometry`/`cg-graph`/`cg-layout`/`cg-render`/`cg-interact`/`compograph` 共 7 个 | 编译 + 单测 + clippy 全绿（见下） |
 | 演示主程序 | `crates/app/compograph/src/main.rs`：gpui 引导 + 12 节点链式演示图 + RandomLayout + canvas 绘制 | `cargo check --all-targets` 通过 |
-| 工具链验证（沙箱实测，1.98.1） | `cargo metadata`（submodule 展开后）✅ · `cargo test -p cg-types -p cg-geometry -p cg-graph -p cg-layout` 19/19 ✅ · clippy 自研 crate 0 警告（上游警告不修）✅ · `cargo fmt` 已格式化 ✅ | 命令行实测 2026-09-28 |
+| 工具链验证（沙箱实测，1.98.1） | `cargo check -p <自建 crate> --all-targets`（submodule 展开后）✅ · `cargo test -p cg-types -p cg-geometry -p cg-graph -p cg-layout -p cg-render -p cg-interact` 33/33 ✅ · clippy 自研 crate 0 警告（上游警告不修）✅ · `cargo fmt --all --check` 通过 ✅ | 命令行实测 |
 | submodule 自包含验证 | 未展开的 `lean` → `error inheriting 'accesskit' from workspace root manifest's 'workspace.dependencies.accesskit'`；展开后的 `lean` → 通过 | 同一根清单两种 submodule 内容对比实测 |
 
 > 注：`cargo test --workspace` 在本沙箱会因 gpui 自带 example 链接缺 `-lxkbcommon-x11` 而失败（缺 X11 开发库，非代码问题）；自建 crate 已全部编译并通过测试。
@@ -65,11 +65,11 @@
 | 层 | 已有 | 缺口 |
 |---|---|---|
 | workspace/上游源码 | 结构、展开、解析与编译验证完成 | 沙箱无图形环境，窗口显示需目标机验证 |
-| foundation | cg-types 几何原语+单测；cg-geometry 命中/曲线骨架+单测；cg-graph 存储 + 变更事件广播 + 订阅过滤（`binding.rs`） | 算法桥模块；只读视图 trait |
+| foundation | cg-types 几何原语+单测；cg-geometry 命中/曲线骨架+单测；cg-graph 存储 + 变更事件广播 + 订阅过滤（`binding.rs`）+ 算法桥（`algo.rs`） | 只读视图 trait |
 | engine | LayoutEngine trait、注册表、preset/random 布局+单测；LayoutDriver 订阅驱动的位置增量维护（`driver.rs`、`reaction.rs`） | 力导向（CoSE 移植）与布局族 |
-| render | Camera 仿射+单测；canvas 节点绘制+视口剔除 | 边/箭头绘制、标签、拾取接线、LOD、保留模式 |
+| render | Camera 仿射+单测；canvas 节点绘制+视口剔除；结构变更订阅重绘（`refresh.rs`） | 边/箭头绘制、标签、拾取接线、LOD、保留模式 |
 | interact | DragState 状态机+单测 | 与 gpui 指针事件的对接、框选、平移缩放 |
-| app | 引导+演示场景 | 窗口 resize 视口、布局切换 UI、算法面板、文件 I/O |
+| app | 引导+演示场景（已接线结构变更重绘） | 窗口 resize 视口、布局切换 UI、算法面板、文件 I/O |
 | 文档 | architecture/plan 三件套 + AGENTS.md | 随代码落地持续回改 |
 
 ## 4. 总体阶段划分
@@ -94,14 +94,15 @@
    - `cg-graph/src/binding.rs`：`ChangeFilter`（`ALL`/`NODES`/`EDGES`）把「哪些变更与我相关」抽成可测的值；`subscribe_graph` 统一订阅入口。
    - `cg-layout/src/reaction.rs`：`work_for(event) -> LayoutWork` 映射变更到所需工作量（新增节点→`PlaceNew`，边改/删点→`RefreshEdgeGeometry`，清空→`Full`）。
    - `cg-layout/src/driver.rs`：`LayoutDriver` 自持订阅，位置随变更增量维护；连续单点新增累计 64 次后回落全量重算，约束环形摆放的漂移。
+4. **算法桥**（`cg-graph/src/algo.rs`）：以薄封装暴露 petgraph 算法，返回普通 owned 数据、不泄漏 petgraph 泛型到调用方。首批函数：`shortest_paths` / `shortest_path_cost`（dijkstra）、`strongly_connected_components`（tarjan_scc）、`rank_nodes`（page_rank）。纯 headless，5 个单测覆盖。注意 petgraph 0.8 的 `dijkstra` 返回 `hashbrown::HashMap`，封装层转为 `std::HashMap`。
+5. **渲染订阅**（`cg-render/src/refresh.rs`）：`subscribe_repaint(cx, store)` 让画布视图直接订阅 `GraphStore` 的结构变更并 `notify` 自身，结构变更不再只依赖 `LayoutDriver` 的位置变化间接触发重绘。因 gpui `Context::subscribe` 订阅的是**调用方自身**实体，该接线必须在画布视图的 `Context<T>` 内调用（`crates/render/cg-render/tests/refresh_flow.rs` 以 `App::observe` 计数验证 2 例）。
+6. **petgraph 依赖收敛**（详见 [petgraph 引入方式与设计评审](../architecture/petgraph-integration-review.md)）：`cg-graph` 成为唯一直接依赖 petgraph 的 crate，re-export `NodeIndex`/`EdgeIndex`；`GraphStore` 新增语义化查询方法（`node_ids`/`node_count`/`edge_count`/`node_data`/`edge_endpoints`/`successors`/`predecessors`）。下游 `cg-layout`/`cg-render`/`cg-interact`/`app` 的 petgraph 直接引用（原 7 处）全部移除，对应 `Cargo.toml` 依赖一并删除；`cg-interact` 改依赖 `cg-graph`。
 
 **剩余工作**
 
-1. 目标机运行验证：`cargo run -p compograph` 打开窗口并显示 12 节点演示图。
-2. cg-graph 增加算法桥模块：将 petgraph 算法以薄封装暴露（首批：dijkstra、tarjan_scc、page_rank），保持纯 headless 可测。
-3. `cg-render` 增加对 `GraphStore::notify` 的订阅，使结构变更直接触发重绘（当前依赖 `LayoutDriver` 的位置变化间接触发）。
+1. 目标机运行验证：`cargo run -p compograph` 打开窗口并显示 12 节点演示图（唯一需真实桌面环境的收尾项）。
 
-**验收**：窗口出现 12 节点链式演示图；`cargo test -p cg-types -p cg-geometry -p cg-graph -p cg-layout` 全绿（19/19）；自研 crate 无 clippy 告警（上游警告不在修复范围）。
+**验收**：窗口出现 12 节点链式演示图；`cargo test -p cg-types -p cg-geometry -p cg-graph -p cg-layout -p cg-render -p cg-interact` 全绿（33/33）；自研 crate 无 clippy 告警（上游警告不在修复范围）；`cargo fmt --all --check` 通过。
 
 > 本沙箱内 `cargo test --workspace` 会因 gpui 自带 example 缺 `-lxkbcommon-x11` 链接失败（环境缺 X11 开发库）。在装有 X11/Wayland 开发库的目标机上应全绿；若仍失败，先确认 submodule 已展开（`error inheriting ...` 即表示未展开）。
 

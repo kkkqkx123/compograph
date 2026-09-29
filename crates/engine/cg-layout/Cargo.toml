@@ -11,7 +11,6 @@ workspace = true
 cg-graph.workspace = true
 cg-types.workspace = true
 gpui.workspace = true
-petgraph.workspace = true
 
 [dev-dependencies]
 # The test-support feature pulls in gpui's TestAppContext, which the

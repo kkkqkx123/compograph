@@ -2,7 +2,6 @@
 
 use cg_graph::{GraphStore, Positions};
 use cg_types::Point2;
-use petgraph::visit::IntoNodeIdentifiers;
 
 use crate::engine::LayoutEngine;
 
@@ -23,9 +22,9 @@ impl RandomLayout {
 
 impl LayoutEngine for RandomLayout {
     fn layout(&self, store: &GraphStore, _previous: &Positions) -> Positions {
-        let node_count = store.graph().node_count().max(1) as f32;
+        let node_count = store.node_count().max(1) as f32;
         let mut result: Positions = Positions::new();
-        for (ordinal, node) in store.graph().node_identifiers().enumerate() {
+        for (ordinal, node) in store.node_ids().enumerate() {
             let ordinal = ordinal as f32;
             let angle = ordinal * GOLDEN_ANGLE;
             let radius = self.radius * (ordinal / node_count).sqrt();

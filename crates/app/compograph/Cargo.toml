@@ -18,4 +18,3 @@ cg-render.workspace = true
 cg-types.workspace = true
 gpui.workspace = true
 gpui_platform.workspace = true
-petgraph.workspace = true

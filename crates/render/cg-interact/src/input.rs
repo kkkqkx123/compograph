@@ -1,7 +1,7 @@
 //! Pointer-driven manipulation state: dragging, panning and selection.
 
+use cg_graph::NodeIndex;
 use cg_types::Vec2;
-use petgraph::stable_graph::NodeIndex;
 
 /// A node currently held by the pointer.
 pub struct DragGesture {

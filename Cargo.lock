@@ -1053,9 +1053,9 @@ dependencies = [
 name = "cg-interact"
 version = "0.1.0"
 dependencies = [
+ "cg-graph",
  "cg-render",
  "cg-types",
- "petgraph",
 ]
 
 [[package]]
@@ -1065,7 +1065,6 @@ dependencies = [
  "cg-graph",
  "cg-types",
  "gpui",
- "petgraph",
 ]
 
 [[package]]
@@ -1077,7 +1076,6 @@ dependencies = [
  "cg-layout",
  "cg-types",
  "gpui",
- "petgraph",
 ]
 
 [[package]]
@@ -1322,7 +1320,6 @@ dependencies = [
  "cg-types",
  "gpui",
  "gpui_platform",
- "petgraph",
 ]
 
 [[package]]

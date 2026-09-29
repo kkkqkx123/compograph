@@ -40,7 +40,7 @@ pub const LAYOUT_FILTER: ChangeFilter = ChangeFilter::ALL;
 
 #[cfg(test)]
 mod tests {
-    use petgraph::stable_graph::{EdgeIndex, NodeIndex};
+    use cg_graph::{EdgeIndex, NodeIndex};
 
     use super::*;
 

@@ -3,7 +3,6 @@
 use cg_graph::{GraphStore, Positions};
 use cg_types::{Point2, Vec2};
 use gpui::{App, Bounds, IntoElement, Pixels, Window, canvas, fill, rgb};
-use petgraph::visit::IntoNodeIdentifiers;
 
 use crate::camera::Camera;
 
@@ -28,7 +27,7 @@ pub fn paint_nodes(
     viewport: Vec2,
 ) -> Vec<PaintedNode> {
     let mut painted = Vec::new();
-    for node in store.graph().node_identifiers() {
+    for node in store.node_ids() {
         if let Some(world) = positions.get(&node) {
             let screen = camera.world_to_viewport(viewport, *world);
             let visible = screen.x >= -NODE_SIDE

@@ -2,14 +2,13 @@
 
 use cg_graph::{GraphStore, Positions};
 use cg_layout::{LayoutDriver, RandomLayout};
-use cg_render::{Camera, graph_view, paint_nodes};
+use cg_render::{Camera, graph_view, paint_nodes, subscribe_repaint};
 use cg_types::{Point2, Vec2};
 use gpui::{
-    App, AppContext, Bounds, Context, Entity, IntoElement, Render, Window, WindowBounds,
-    WindowOptions, px, size,
+    App, AppContext, Bounds, Context, Entity, IntoElement, Render, Subscription, Window,
+    WindowBounds, WindowOptions, px, size,
 };
 use gpui_platform::application;
-use petgraph::visit::IntoNodeIdentifiers;
 
 /// Node count of the built-in smoke scene.
 const DEMO_NODE_COUNT: usize = 12;
@@ -24,6 +23,8 @@ const DEMO_LAYOUT_RADIUS: f32 = 220.0;
 struct GraphWindow {
     store: Entity<GraphStore>,
     layout: Entity<LayoutDriver>,
+    /// Kept alive so structural edits keep repainting the window.
+    _refresh: Subscription,
     camera: Camera,
 }
 
@@ -36,7 +37,7 @@ impl GraphWindow {
             for ordinal in 0..DEMO_NODE_COUNT {
                 graph.add_node(cx, format!("n{ordinal}"));
             }
-            let node_ids: Vec<_> = graph.graph().node_identifiers().collect();
+            let node_ids: Vec<_> = graph.node_ids().collect();
             for pair in node_ids.windows(2) {
                 graph.add_edge(cx, pair[0], pair[1], 1.0);
             }
@@ -44,9 +45,13 @@ impl GraphWindow {
         let layout = cx.new(|cx| {
             LayoutDriver::new(cx, &store, Box::new(RandomLayout::new(DEMO_LAYOUT_RADIUS)))
         });
+        // Structural edits repaint the window directly, independently of the
+        // position changes the layout driver reports.
+        let refresh = subscribe_repaint(cx, &store);
         Self {
             store,
             layout,
+            _refresh: refresh,
             camera: Camera::new(Point2::ZERO, 1.0),
         }
     }

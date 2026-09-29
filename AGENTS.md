@@ -30,11 +30,14 @@ compograph 是纯 Rust 桌面图可视化应用：图模型与算法内核基于
 foundation:  cg-types ← cg-geometry
              cg-types ← cg-graph（另依赖 petgraph 与 gpui 的 EventEmitter 标记）
 engine:      cg-graph + cg-types ← cg-layout（订阅驱动需要 gpui 的 Context，故同级依赖 gpui）
-render:      cg-graph + cg-layout + cg-geometry + cg-types ← cg-render ← cg-interact
+render:      cg-graph + cg-layout + cg-geometry + cg-types ← cg-render
+             cg-graph + cg-render + cg-types ← cg-interact
 app:         上述全部 ← compograph（另依赖 gpui_platform）
 upstream:    crates/vendor/zed-gpui 内 27 个上游 crate 互依，
              绝不反向依赖任何 cg-* crate
 ```
+
+`petgraph` 只被 `cg-graph` 直接依赖；其余自建 crate 经 `cg-graph` 暴露的标识类型（`NodeIndex`/`EdgeIndex`）与查询方法访问图，不直接引用 petgraph。
 
 严格 DAG，禁止任何形式的循环依赖。`cg-graph` 依赖 gpui 是因为 `EventEmitter` 标记 trait 必须在类型定义侧实现（孤儿规则）；`cg-layout` 依赖它是为了用 `Context`/`App` 建立变更订阅。两者都不依赖任何 gpui 平台后端，因此仍可 headless 单测。
 

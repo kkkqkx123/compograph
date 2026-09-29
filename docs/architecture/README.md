@@ -9,6 +9,7 @@
 | [architecture-design.md](./architecture-design.md) | **总体架构设计**：分层架构、模块划分与依赖方向、核心数据模型（`Entity<GraphStore>` + `StableGraph` + 坐标外挂）、布局引擎、渲染三路线选型（A/B/C）、交互、性能策略、开放点、实施路线 P0–P3 |
 | [feature-list.md](./feature-list.md) | **功能清单**：按 L1 数据/算法（含 petgraph 算法桥接全表）、L2 布局、L3 渲染、L3 交互、应用壳逐项列出，标注来源（`[petgraph]` 直接复用 / `[cy→移植]` 数学直译 / `[cy→模式]` 模式借鉴 / `[自研]` / `[gpui]` 平台能力）与阶段映射 |
 | [borrowing-design.md](./borrowing-design.md) | **借鉴设计说明**：从 cytoscape.js / petgraph / zed-gpui(gpui) 各借什么、借鉴程度（整段移植/数学直译/模式借鉴/架构参考/不借鉴）、23 项借鉴总表、明确不借鉴清单及原因、源文件→模块落地映射、行号核验记录 |
+| [petgraph-integration-review.md](./petgraph-integration-review.md) | **petgraph 引入方式与设计评审**：workspace 版本集中 + 各层直接依赖的事实描述、`StableGraph` 选型与算法桥的合理性评审、4 项可商榷点与改进建议 |
 
 ## 上游参考分析（`docs/ref/`）
 

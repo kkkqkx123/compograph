@@ -13,4 +13,8 @@ cg-graph.workspace = true
 cg-layout.workspace = true
 cg-types.workspace = true
 gpui.workspace = true
-petgraph.workspace = true
+
+[dev-dependencies]
+# The test-support feature pulls in gpui's TestAppContext, which the
+# subscription tests need to drive an application without a window.
+gpui = { workspace = true, features = ["test-support"] }
