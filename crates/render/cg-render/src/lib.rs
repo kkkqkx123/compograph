@@ -5,6 +5,8 @@ pub mod camera;
 pub mod export;
 pub mod lod;
 pub mod metrics;
+pub mod png;
+pub mod raster;
 pub mod refresh;
 pub mod retained;
 pub mod shapes;
@@ -17,9 +19,11 @@ pub mod view;
 pub use arrows::ArrowKind;
 pub use camera::{Camera, MAX_ZOOM, MIN_ZOOM};
 pub use export::{
-    ExportRequest, ExportScope, ExportSnapshot, encode_png, export_pixels, graph_bounds, rasterize,
-    scale_arrows, scale_edges, scale_nodes, solid_background,
+    ExportRequest, ExportScope, ExportSnapshot, export_pixels, graph_bounds, scale_arrows,
+    scale_edges, scale_nodes,
 };
+pub use png::encode_png;
+pub use raster::{rasterize, solid_background};
 pub use lod::{DetailLevel, LodParams};
 pub use metrics::{FrameMetrics, FrameSample, PlanCounts, measure_ms};
 pub use refresh::subscribe_repaint;

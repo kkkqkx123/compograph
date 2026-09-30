@@ -6,22 +6,25 @@
 
 use std::collections::HashMap;
 
-use cg_geometry::{
-    BEZIER_HIT_SAMPLES, bezier_control_for_edge, haystack_endpoints, manhattan_route,
-    parallel_offsets, polyline_intersects_rect, sample_cubic_bezier, sample_quadratic_bezier,
-    segment_intersects_rect, segmented_polyline, self_loop_controls, use_haystack,
-};
+use cg_geometry::segmented_polyline;
 use cg_graph::{GraphView, NodeIndex, Positions};
-use cg_types::{Point2, Rect, Vec2};
+use cg_types::Vec2;
 
 use crate::camera::Camera;
 use crate::style::EdgeStyle;
 
+pub use super::bundles::{bundle_slot, edge_ordinals_for, loop_ordinal};
+pub use super::hits::painted_edge_hits;
+use super::bundles::BundleContext;
 use super::culling::{
     edge_visible, loop_visible, point_in_grown_rect, polyline_visible, segment_in_grown_rect,
     spread_for, unordered_key, world_margin_for, world_viewport_rect,
 };
-use super::plans::{EdgePaintOptions, NODE_SIDE, PARALLEL_STEP, PaintedEdge};
+use super::plans::{EdgePaintOptions, NODE_SIDE, PaintedEdge};
+use super::routing::{
+    bezier_control, haystack_edge, haystack_span, loop_edge, manhattan_bends, manhattan_edge,
+    curved_edge, should_use_haystack, should_use_manhattan,
+};
 
 /// Transforms edges into a paint plan with parallel edges spread as curves.
 ///
@@ -87,15 +90,7 @@ pub fn paint_edges_for(
     options: EdgePaintOptions,
     edge_style: impl Fn(NodeIndex, NodeIndex) -> EdgeStyle,
 ) -> Vec<PaintedEdge> {
-    let mut bundle_of: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
-    for (ordinal, (source, target)) in pairs.iter().enumerate() {
-        let key = unordered_key(*source, *target);
-        bundle_of.entry(key).or_default().push(ordinal);
-    }
-    let mut offsets_of: HashMap<(usize, usize), Vec<f32>> = HashMap::new();
-    for (key, members) in &bundle_of {
-        offsets_of.insert(*key, parallel_offsets(members.len(), PARALLEL_STEP));
-    }
+    let context = BundleContext::build(pairs);
     let world_rect = world_viewport_rect(camera, viewport);
     let margin = world_margin_for(camera);
     let mut loops_seen: HashMap<usize, usize> = HashMap::new();
@@ -110,26 +105,11 @@ pub fn paint_edges_for(
                 continue;
             }
             let screen = camera.world_to_viewport(viewport, *anchor);
-            let loop_ordinal = loops_seen.get(&source.index()).copied().unwrap_or(0);
-            loops_seen.insert(source.index(), loop_ordinal + 1);
-            let ctrls = self_loop_controls(screen, NODE_SIDE, loop_ordinal);
-            if loop_visible(screen, ctrls, viewport) {
-                painted.push(PaintedEdge {
-                    source: *source,
-                    target: *target,
-                    start: screen,
-                    end: screen,
-                    ctrl: None,
-                    loop_ctrls: Some(ctrls),
-                    bend_a: None,
-                    bend_b: None,
-                    aggregated: false,
-                    tint: style.tint,
-                    width: style.width,
-                    opacity: style.opacity,
-                    arrow: style.arrow,
-                    arrow_scale: style.arrow_scale,
-                });
+            let stack = loops_seen.get(&source.index()).copied().unwrap_or(0);
+            loops_seen.insert(source.index(), stack + 1);
+            let entry = loop_edge(*source, *target, screen, stack, style);
+            if loop_visible(screen, entry.loop_ctrls.unwrap_or([screen; 2]), viewport) {
+                painted.push(entry);
             }
             continue;
         }
@@ -137,52 +117,21 @@ pub fn paint_edges_for(
             continue;
         };
         let key = unordered_key(*source, *target);
-        let bundle_len = bundle_of.get(&key).map(Vec::len).unwrap_or(1);
+        let bundle_len = context.bundle_len(key);
         if !segment_in_grown_rect(*a, *b, world_rect, margin + spread_for(bundle_len)) {
             continue;
         }
-        let mut start = camera.world_to_viewport(viewport, *a);
-        let mut end = camera.world_to_viewport(viewport, *b);
-        let bundle = bundle_of.get(&key).map(Vec::as_slice).unwrap_or(&[]);
-        let slot = bundle
-            .iter()
-            .position(|member| *member == ordinal)
-            .unwrap_or(0);
-        let haystack = options.ortho.is_none()
-            && options.taxi.is_none()
-            && if options.force_haystack {
-                use_haystack(bundle.len(), true)
-            } else {
-                bundle.len() >= options.aggregate_threshold.max(1)
-            };
-        if haystack {
-            let (fanned_a, fanned_b) = haystack_endpoints(
-                start,
-                end,
-                source.index() as u32,
-                target.index() as u32,
-                slot as u32,
-                NODE_SIDE,
-            );
-            start = fanned_a;
-            end = fanned_b;
-            if edge_visible(start, end, None, viewport) {
-                let mut edge = PaintedEdge::straight(
-                    *source,
-                    *target,
-                    start,
-                    end,
-                    style.tint,
-                    style.width,
-                    style.opacity,
-                )
-                .with_arrow(style.arrow, style.arrow_scale);
-                edge.aggregated = true;
-                painted.push(edge);
+        let start = camera.world_to_viewport(viewport, *a);
+        let end = camera.world_to_viewport(viewport, *b);
+        let slot = context.slot(key, ordinal);
+        if should_use_haystack(options, bundle_len) {
+            let (fanned_a, fanned_b) = haystack_span(start, end, *source, *target, slot);
+            if edge_visible(fanned_a, fanned_b, None, viewport) {
+                painted.push(haystack_edge(*source, *target, fanned_a, fanned_b, style));
             }
             continue;
         }
-        if options.ortho.is_some() || options.taxi.is_some() {
+        if should_use_manhattan(options) {
             let (bend_a, bend_b) = manhattan_bends(start, end, options);
             let mut via = Vec::new();
             if let Some(bend) = bend_a {
@@ -193,94 +142,18 @@ pub fn paint_edges_for(
             }
             let line = segmented_polyline(start, &via, end);
             if polyline_visible(&line, viewport) {
-                painted.push(PaintedEdge {
-                    source: *source,
-                    target: *target,
-                    start,
-                    end,
-                    ctrl: None,
-                    loop_ctrls: None,
-                    bend_a,
-                    bend_b,
-                    aggregated: false,
-                    tint: style.tint,
-                    width: style.width,
-                    opacity: style.opacity,
-                    arrow: style.arrow,
-                    arrow_scale: style.arrow_scale,
-                });
+                painted.push(manhattan_edge(
+                    *source, *target, start, end, bend_a, bend_b, style,
+                ));
             }
             continue;
         }
-        let offsets = offsets_of.get(&key).map(Vec::as_slice).unwrap_or(&[]);
-        let mut offset = offsets.get(slot).copied().unwrap_or(0.0);
-        if source.index() > target.index() {
-            offset = -offset;
-        }
-        let ctrl = if offset == 0.0 || !options.level.draws_curves() {
-            None
-        } else {
-            Some(bezier_control_for_edge(start, end, offset))
-        };
+        let ctrl = bezier_control(start, end, *source, *target, slot, bundle_len, options);
         if edge_visible(start, end, ctrl, viewport) {
-            painted.push(PaintedEdge {
-                source: *source,
-                target: *target,
-                start,
-                end,
-                ctrl,
-                loop_ctrls: None,
-                bend_a: None,
-                bend_b: None,
-                aggregated: false,
-                tint: style.tint,
-                width: style.width,
-                opacity: style.opacity,
-                arrow: style.arrow,
-                arrow_scale: style.arrow_scale,
-            });
+            painted.push(curved_edge(*source, *target, start, end, ctrl, style));
         }
     }
     painted
-}
-
-/// Bundle slot and size of `pairs[ordinal]` within its unordered bundle.
-///
-/// The retained cache uses this to rebuild one edge exactly as the bulk path
-/// would; unknown ordinals report a lone edge instead of failing.
-pub fn bundle_slot(pairs: &[(NodeIndex, NodeIndex)], ordinal: usize) -> (usize, usize) {
-    let (source, target) = match pairs.get(ordinal) {
-        Some(pair) => *pair,
-        None => return (0, 1),
-    };
-    let key = unordered_key(source, target);
-    let mut slot = 0usize;
-    let mut len = 0usize;
-    for (member, pair) in pairs.iter().enumerate() {
-        if unordered_key(pair.0, pair.1) == key {
-            if member == ordinal {
-                slot = len;
-            }
-            len += 1;
-        }
-    }
-    (slot, len.max(1))
-}
-
-/// Count of earlier self loops on the same node before `pairs[ordinal]`.
-pub fn loop_ordinal(pairs: &[(NodeIndex, NodeIndex)], ordinal: usize) -> usize {
-    let (source, target) = match pairs.get(ordinal) {
-        Some(pair) => *pair,
-        None => return 0,
-    };
-    if source != target {
-        return 0;
-    }
-    pairs
-        .iter()
-        .take(ordinal)
-        .filter(|(a, b)| *a == source && *b == target)
-        .count()
 }
 
 /// Edge plan for one pair-list entry, or nothing when it is missing or culled.
@@ -306,26 +179,15 @@ pub fn paint_single_edge(
             return None;
         }
         let screen = camera.world_to_viewport(viewport, *anchor);
-        let ctrls = self_loop_controls(screen, NODE_SIDE, loop_ordinal(pairs, ordinal));
-        if !loop_visible(screen, ctrls, viewport) {
+        let entry = loop_edge(source, target, screen, loop_ordinal(pairs, ordinal), style);
+        if !loop_visible(
+            screen,
+            entry.loop_ctrls.unwrap_or([screen; 2]),
+            viewport,
+        ) {
             return None;
         }
-        return Some(PaintedEdge {
-            source,
-            target,
-            start: screen,
-            end: screen,
-            ctrl: None,
-            loop_ctrls: Some(ctrls),
-            bend_a: None,
-            bend_b: None,
-            aggregated: false,
-            tint: style.tint,
-            width: style.width,
-            opacity: style.opacity,
-            arrow: style.arrow,
-            arrow_scale: style.arrow_scale,
-        });
+        return Some(entry);
     }
     let (a, b) = match (positions.get(&source), positions.get(&target)) {
         (Some(a), Some(b)) => (*a, *b),
@@ -335,43 +197,16 @@ pub fn paint_single_edge(
     if !segment_in_grown_rect(a, b, world_rect, margin + spread_for(bundle_len)) {
         return None;
     }
-    let mut start = camera.world_to_viewport(viewport, a);
-    let mut end = camera.world_to_viewport(viewport, b);
-    let haystack = options.ortho.is_none()
-        && options.taxi.is_none()
-        && if options.force_haystack {
-            use_haystack(bundle_len, true)
-        } else {
-            bundle_len >= options.aggregate_threshold.max(1)
-        };
-    if haystack {
-        let (fanned_a, fanned_b) = haystack_endpoints(
-            start,
-            end,
-            source.index() as u32,
-            target.index() as u32,
-            slot as u32,
-            NODE_SIDE,
-        );
-        start = fanned_a;
-        end = fanned_b;
-        if !edge_visible(start, end, None, viewport) {
+    let start = camera.world_to_viewport(viewport, a);
+    let end = camera.world_to_viewport(viewport, b);
+    if should_use_haystack(options, bundle_len) {
+        let (fanned_a, fanned_b) = haystack_span(start, end, source, target, slot);
+        if !edge_visible(fanned_a, fanned_b, None, viewport) {
             return None;
         }
-        let mut edge = PaintedEdge::straight(
-            source,
-            target,
-            start,
-            end,
-            style.tint,
-            style.width,
-            style.opacity,
-        )
-        .with_arrow(style.arrow, style.arrow_scale);
-        edge.aggregated = true;
-        return Some(edge);
+        return Some(haystack_edge(source, target, fanned_a, fanned_b, style));
     }
-    if options.ortho.is_some() || options.taxi.is_some() {
+    if should_use_manhattan(options) {
         let (bend_a, bend_b) = manhattan_bends(start, end, options);
         let mut via = Vec::new();
         if let Some(bend) = bend_a {
@@ -384,126 +219,22 @@ pub fn paint_single_edge(
         if !polyline_visible(&line, viewport) {
             return None;
         }
-        return Some(PaintedEdge {
-            source,
-            target,
-            start,
-            end,
-            ctrl: None,
-            loop_ctrls: None,
-            bend_a,
-            bend_b,
-            aggregated: false,
-            tint: style.tint,
-            width: style.width,
-            opacity: style.opacity,
-            arrow: style.arrow,
-            arrow_scale: style.arrow_scale,
-        });
+        return Some(manhattan_edge(
+            source, target, start, end, bend_a, bend_b, style,
+        ));
     }
-    let offsets = parallel_offsets(bundle_len, PARALLEL_STEP);
-    let mut offset = offsets.get(slot).copied().unwrap_or(0.0);
-    if source.index() > target.index() {
-        offset = -offset;
-    }
-    let ctrl = if offset == 0.0 || !options.level.draws_curves() {
-        None
-    } else {
-        Some(bezier_control_for_edge(start, end, offset))
-    };
+    let ctrl = bezier_control(start, end, source, target, slot, bundle_len, options);
     if !edge_visible(start, end, ctrl, viewport) {
         return None;
     }
-    Some(PaintedEdge {
-        source,
-        target,
-        start,
-        end,
-        ctrl,
-        loop_ctrls: None,
-        bend_a: None,
-        bend_b: None,
-        aggregated: false,
-        tint: style.tint,
-        width: style.width,
-        opacity: style.opacity,
-        arrow: style.arrow,
-        arrow_scale: style.arrow_scale,
-    })
-}
-
-/// Pair-list ordinals behind `edges`, in plan order.
-///
-/// The bulk builder preserves pair order, so the k-th painted edge of one
-/// directed pair maps to the k-th pair entry. Used to key retained entries
-/// without changing the plan functions' return shapes.
-pub fn edge_ordinals_for(edges: &[PaintedEdge], pairs: &[(NodeIndex, NodeIndex)]) -> Vec<usize> {
-    let mut ordinal_of: HashMap<(usize, usize, usize), usize> = HashMap::new();
-    let mut occurrence: HashMap<(usize, usize), usize> = HashMap::new();
-    for (ordinal, (source, target)) in pairs.iter().enumerate() {
-        let key = (source.index(), target.index());
-        let seen = occurrence.get(&key).copied().unwrap_or(0);
-        occurrence.insert(key, seen + 1);
-        ordinal_of.insert((key.0, key.1, seen), ordinal);
-    }
-    let mut next: HashMap<(usize, usize), usize> = HashMap::new();
-    edges
-        .iter()
-        .map(|edge| {
-            let key = (edge.source.index(), edge.target.index());
-            let seen = next.get(&key).copied().unwrap_or(0);
-            next.insert(key, seen + 1);
-            ordinal_of
-                .get(&(key.0, key.1, seen))
-                .copied()
-                .unwrap_or(usize::MAX)
-        })
-        .collect()
-}
-
-/// True when the painted edge touches the screen-space selection `rect`.
-///
-/// Straight edges use the segment test; curved edges and self loops are
-/// flattened with the shared sampling, so box selection matches the paint.
-pub fn painted_edge_hits(edge: &PaintedEdge, rect: Rect) -> bool {
-    if let Some([ctrl_a, ctrl_b]) = edge.loop_ctrls {
-        let samples = sample_cubic_bezier(edge.start, ctrl_a, ctrl_b, edge.end, BEZIER_HIT_SAMPLES);
-        return polyline_intersects_rect(&samples, rect);
-    }
-    if edge.bend_a.is_some() || edge.bend_b.is_some() {
-        return polyline_intersects_rect(&edge.polyline(), rect);
-    }
-    match edge.ctrl {
-        None => segment_intersects_rect(edge.start, edge.end, rect),
-        Some(mid) => {
-            let samples = sample_quadratic_bezier(edge.start, mid, edge.end, BEZIER_HIT_SAMPLES);
-            polyline_intersects_rect(&samples, rect)
-        }
-    }
-}
-
-/// Bends of the Manhattan route selected by `options`, if any.
-///
-/// Taxi routes carry their single corner in the first bend; two-bend
-/// orthogonal routes fill both. The shared route selector also feeds hit
-/// testing, so the plan and box selection flatten identical points.
-/// Degenerate axes fall back to no bends, leaving the edge straight.
-fn manhattan_bends(
-    start: Point2,
-    end: Point2,
-    options: EdgePaintOptions,
-) -> (Option<Point2>, Option<Point2>) {
-    match manhattan_route(start, end, options.ortho, options.taxi).as_slice() {
-        [_, mid_a, mid_b, _] => (Some(*mid_a), Some(*mid_b)),
-        [_, mid, _] => (Some(*mid), None),
-        _ => (None, None),
-    }
+    Some(curved_edge(source, target, start, end, ctrl, style))
 }
 
 #[cfg(test)]
 mod tests {
     use cg_geometry::OrthoDirection;
     use cg_graph::MockGraph;
+    use cg_types::{Point2, Rect};
 
     use super::*;
     use crate::lod::DetailLevel;
