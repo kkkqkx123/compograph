@@ -6,7 +6,8 @@ pub mod picking;
 
 pub use aggregation::{
     HAYSTACK_BUNDLE_THRESHOLD, HAYSTACK_RADIUS_SCALE, HAYSTACK_SPREAD, ORTHO_MAX_BENDS,
-    OrthoDirection, haystack_angle, haystack_endpoints, ortho_polyline, use_haystack,
+    OrthoDirection, haystack_angle, haystack_endpoints, manhattan_route, ortho_polyline,
+    segmented_polyline, taxi_polyline, use_haystack,
 };
 pub use curves::{
     SELF_LOOP_HALF_WIDTH_SCALE, SELF_LOOP_HEIGHT_SCALE, SELF_LOOP_SAMPLES, bezier_control_for_edge,

@@ -132,13 +132,7 @@ mod tests {
     fn bar_rotates_with_the_edge() {
         let tip = Point2::new(10.0, 5.0);
         let east = arrow_polygon(ArrowKind::Tee, tip, 0.0, 10.0, 4.0);
-        let north = arrow_polygon(
-            ArrowKind::Tee,
-            tip,
-            std::f32::consts::FRAC_PI_2,
-            10.0,
-            4.0,
-        );
+        let north = arrow_polygon(ArrowKind::Tee, tip, std::f32::consts::FRAC_PI_2, 10.0, 4.0);
         assert_eq!(east.len(), 4);
         assert_eq!(north.len(), 4);
         assert_ne!(east, north);

@@ -120,6 +120,84 @@ pub fn use_haystack(count: usize, forced: bool) -> bool {
     forced || count >= HAYSTACK_BUNDLE_THRESHOLD
 }
 
+/// Single-corner Manhattan route from `start` to `end`.
+///
+/// Returns `start`, one axis-aligned corner, and `end`; degenerate axes fall
+/// back to a straight segment. Auto mode leaves along the longer delta,
+/// matching [`ortho_polyline`]. The paint plan stores the corner as its first
+/// bend and hit testing flattens the same points, so drawing and selection
+/// share one sampling.
+pub fn taxi_polyline(start: Point2, end: Point2, direction: OrthoDirection) -> Vec<Point2> {
+    let dx = end.x - start.x;
+    let dy = end.y - start.y;
+    if dx == 0.0 || dy == 0.0 {
+        return vec![start, end];
+    }
+    let horizontal_first = match direction {
+        OrthoDirection::HorizontalFirst => true,
+        OrthoDirection::VerticalFirst => false,
+        OrthoDirection::Auto => dx.abs() >= dy.abs(),
+    };
+    let corner = if horizontal_first {
+        Point2::new(end.x, start.y)
+    } else {
+        Point2::new(start.x, end.y)
+    };
+    vec![start, corner, end]
+}
+
+/// Manhattan route points selected by the paint options, cleaned for flattening.
+///
+/// Taxi wins when both directions are set, matching the paint plan. Returns
+/// an empty vector when neither route is selected so callers keep their
+/// default straight or curved path. The paint plan and box selection both run
+/// through this selector, so drawing and selection flatten identical points.
+pub fn manhattan_route(
+    start: Point2,
+    end: Point2,
+    ortho: Option<OrthoDirection>,
+    taxi: Option<OrthoDirection>,
+) -> Vec<Point2> {
+    let line = if let Some(direction) = taxi {
+        taxi_polyline(start, end, direction)
+    } else if let Some(direction) = ortho {
+        ortho_polyline(start, end, direction)
+    } else {
+        return Vec::new();
+    };
+    let via: Vec<Point2> = line
+        .iter()
+        .skip(1)
+        .take(line.len().saturating_sub(2))
+        .copied()
+        .collect();
+    segmented_polyline(start, &via, end)
+}
+
+/// Polyline through `start`, cleaned `via` points, and `end`.
+///
+/// Non-finite waypoints are dropped and consecutive duplicates collapse, so
+/// callers can forward raw waypoint lists without pre-scrubbing. Both
+/// endpoints are always kept; an empty waypoint list yields the straight
+/// segment. The paint plan runs its taxi and orthogonal bends through this
+/// builder and hit testing flattens the same output.
+pub fn segmented_polyline(start: Point2, via: &[Point2], end: Point2) -> Vec<Point2> {
+    let mut line = Vec::with_capacity(via.len() + 2);
+    line.push(start);
+    for point in via {
+        if !point.x.is_finite() || !point.y.is_finite() {
+            continue;
+        }
+        if *point != line[line.len() - 1] {
+            line.push(*point);
+        }
+    }
+    if end != line[line.len() - 1] {
+        line.push(end);
+    }
+    line
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -185,5 +263,78 @@ mod tests {
         assert!(!use_haystack(3, false));
         assert!(use_haystack(4, false));
         assert!(use_haystack(1, true));
+    }
+
+    #[test]
+    fn taxi_corners_stay_axis_aligned() {
+        let start = Point2::new(0.0, 0.0);
+        let end = Point2::new(100.0, 40.0);
+        assert_eq!(
+            taxi_polyline(start, end, OrthoDirection::HorizontalFirst),
+            vec![start, Point2::new(100.0, 0.0), end]
+        );
+        assert_eq!(
+            taxi_polyline(start, end, OrthoDirection::VerticalFirst),
+            vec![start, Point2::new(0.0, 40.0), end]
+        );
+        assert_eq!(
+            taxi_polyline(start, end, OrthoDirection::Auto),
+            vec![start, Point2::new(100.0, 0.0), end]
+        );
+        let tall = taxi_polyline(start, Point2::new(10.0, 90.0), OrthoDirection::Auto);
+        assert_eq!(tall[1], Point2::new(0.0, 90.0));
+    }
+
+    #[test]
+    fn taxi_degenerate_axes_stay_straight() {
+        let line = taxi_polyline(
+            Point2::new(0.0, 0.0),
+            Point2::new(0.0, 50.0),
+            OrthoDirection::Auto,
+        );
+        assert_eq!(line.len(), 2);
+    }
+
+    #[test]
+    fn manhattan_route_prefers_taxi_and_stays_empty_without_options() {
+        let start = Point2::new(0.0, 0.0);
+        let end = Point2::new(100.0, 40.0);
+        assert!(manhattan_route(start, end, None, None).is_empty());
+        assert_eq!(
+            manhattan_route(start, end, None, Some(OrthoDirection::HorizontalFirst)),
+            vec![start, Point2::new(100.0, 0.0), end]
+        );
+        assert_eq!(
+            manhattan_route(
+                start,
+                end,
+                Some(OrthoDirection::VerticalFirst),
+                Some(OrthoDirection::HorizontalFirst)
+            ),
+            vec![start, Point2::new(100.0, 0.0), end]
+        );
+        let ortho = manhattan_route(start, end, Some(OrthoDirection::Auto), None);
+        assert_eq!(ortho.len(), 4);
+    }
+
+    #[test]
+    fn segmented_polyline_cleans_waypoints_but_keeps_endpoints() {
+        let start = Point2::new(0.0, 0.0);
+        let end = Point2::new(100.0, 0.0);
+        assert_eq!(segmented_polyline(start, &[], end), vec![start, end]);
+        let cleaned = segmented_polyline(
+            start,
+            &[
+                Point2::new(10.0, 0.0),
+                Point2::new(10.0, 0.0),
+                Point2::new(f32::NAN, 0.0),
+                Point2::new(50.0, 10.0),
+            ],
+            end,
+        );
+        assert_eq!(
+            cleaned,
+            vec![start, Point2::new(10.0, 0.0), Point2::new(50.0, 10.0), end]
+        );
     }
 }

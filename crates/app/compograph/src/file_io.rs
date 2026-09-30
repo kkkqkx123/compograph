@@ -37,7 +37,7 @@ pub fn write_text_file(content: &str, path: &str) -> Result<(), String> {
     write_text_to_path(content, Path::new(path))
 }
 
-/// Writes caller-rendered bytes such as exported PPM images.
+/// Writes caller-rendered bytes such as exported PNG images.
 pub fn write_bytes_file(content: &[u8], path: &str) -> Result<(), String> {
     write_bytes_to_path(content, Path::new(path))
 }
@@ -74,7 +74,7 @@ pub fn write_text_to_path(content: &str, path: &Path) -> Result<(), String> {
         .map_err(|error| format!("cannot write {}: {error}", path.display()))
 }
 
-/// Writes caller-rendered bytes such as PPM output to a dialog-chosen path.
+/// Writes caller-rendered bytes such as PNG output to a dialog-chosen path.
 pub fn write_bytes_to_path(content: &[u8], path: &Path) -> Result<(), String> {
     std::fs::write(path, content)
         .map_err(|error| format!("cannot write {}: {error}", path.display()))

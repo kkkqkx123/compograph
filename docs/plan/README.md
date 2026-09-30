@@ -10,6 +10,7 @@
 | [compograph-p0-plan.md](./compograph-p0-plan.md) | **P0 阶段方案**：节点标签文本渲染、DOT 导入、应用接线、文档回改的实施设计与验证 |
 | [compograph-p1-plan.md](./compograph-p1-plan.md) | **P1 阶段方案**：算法桥补齐、中心性三件套、Radial 布局、节点形状族、箭头形状族的实施设计与验证（0/5 未开工） |
 | [compograph-p2-plan.md](./compograph-p2-plan.md) | **P2 与远期方案**：边标签、界面接线、换行、曲线、样式扩展、PNG，以及聚类/复合节点/动画链/实例化后端的归属与拍板条件 |
+| [compograph-p3-plan.md](./compograph-p3-plan.md) | **P3 设计决策**：聚类、欧拉路、最小割、复合节点、扩展机制、动画链、实例化后端的是否做、前置条件、落点与验收口径 |
 
 ## 约定
 

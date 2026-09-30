@@ -4,13 +4,14 @@ use std::collections::HashMap;
 
 use cg_geometry::{
     BEZIER_HIT_SAMPLES, OrthoDirection, bezier_control_for_edge, haystack_endpoints,
-    ortho_polyline, parallel_offsets, polyline_intersects_rect, sample_cubic_bezier,
-    sample_quadratic_bezier, segment_intersects_rect, self_loop_controls, use_haystack,
+    manhattan_route, parallel_offsets, polyline_intersects_rect, sample_cubic_bezier,
+    sample_quadratic_bezier, segment_intersects_rect, segmented_polyline, self_loop_controls,
+    use_haystack,
 };
 
 use crate::lod::DetailLevel;
 use crate::spatial::SpatialIndex;
-use crate::text::PaintedLabel;
+use crate::text::{PaintedEdgeLabel, PaintedLabel};
 use cg_graph::{GraphView, NodeIndex, Positions};
 use cg_types::{Point2, Rect, Vec2};
 use gpui::{
@@ -55,13 +56,16 @@ pub const RUBBER_BAND_STROKE: u32 = 0x4a9eff;
 ///
 /// Squares keep the fast rectangle path through `origin` and `side`; every
 /// shape also carries its screen pixel polygon in `points` so drawing, export
-/// and tests share one vertex table.
+/// and tests share one vertex table. The stroke outline reuses the resolved
+/// style border so the canvas and the export raster agree.
 #[derive(Clone, Debug)]
 pub struct PaintedNode {
     pub id: NodeIndex,
     pub origin: Point2,
     pub side: f32,
     pub fill: u32,
+    pub stroke: u32,
+    pub stroke_width: f32,
     pub opacity: f32,
     pub shape: NodeShape,
     pub points: Vec<Point2>,
@@ -82,10 +86,13 @@ pub struct PaintedEdge {
     pub bend_a: Option<Point2>,
     /// Second orthogonal bend, if the route needs two turns.
     pub bend_b: Option<Point2>,
-    /// True when the edge was simplified for dense bundles.
+    /// True when the edge was simplified as a haystack fan-out for dense bundles.
+    /// Explicit orthogonal and taxi routes keep this false; they carry bends
+    /// instead of a bundle simplification.
     pub aggregated: bool,
     pub tint: u32,
     pub width: f32,
+    pub opacity: f32,
     pub arrow: ArrowKind,
     pub arrow_scale: f32,
 }
@@ -98,6 +105,7 @@ impl PaintedEdge {
         end: Point2,
         tint: u32,
         width: f32,
+        opacity: f32,
     ) -> Self {
         Self {
             source,
@@ -111,6 +119,7 @@ impl PaintedEdge {
             aggregated: false,
             tint,
             width,
+            opacity,
             arrow: ArrowKind::Triangle,
             arrow_scale: 1.0,
         }
@@ -156,6 +165,8 @@ pub struct EdgePaintOptions {
     pub aggregate_threshold: usize,
     pub force_haystack: bool,
     pub ortho: Option<OrthoDirection>,
+    /// Single-corner taxi route; wins over `ortho` when both are set.
+    pub taxi: Option<OrthoDirection>,
 }
 
 impl Default for EdgePaintOptions {
@@ -165,7 +176,26 @@ impl Default for EdgePaintOptions {
             aggregate_threshold: EDGE_AGGREGATION_THRESHOLD,
             force_haystack: false,
             ortho: None,
+            taxi: None,
         }
+    }
+}
+
+/// Bends of the Manhattan route selected by `options`, if any.
+///
+/// Taxi routes carry their single corner in the first bend; two-bend
+/// orthogonal routes fill both. The shared route selector also feeds hit
+/// testing, so the plan and box selection flatten identical points.
+/// Degenerate axes fall back to no bends, leaving the edge straight.
+fn manhattan_bends(
+    start: Point2,
+    end: Point2,
+    options: EdgePaintOptions,
+) -> (Option<Point2>, Option<Point2>) {
+    match manhattan_route(start, end, options.ortho, options.taxi).as_slice() {
+        [_, mid_a, mid_b, _] => (Some(*mid_a), Some(*mid_b)),
+        [_, mid, _] => (Some(*mid), None),
+        _ => (None, None),
     }
 }
 
@@ -193,9 +223,11 @@ pub struct PaintedRubberBand {
 ///
 /// The spatial index narrows candidates and each body is tested with its
 /// effective shape, so plan generation iterates only visible nodes on large
-/// graphs. Callers pass the painted shape: squares under the minimal detail
-/// level, true shapes otherwise. Callers keep the index versioned: viewport
-/// motion reuses it, position write-backs rebuild it.
+/// graphs. The query grows by the body extent because the index keys on
+/// centers; the exact shape test still rejects off-screen bodies, so growth
+/// only adds candidates. Callers pass the painted shape: squares under the
+/// minimal detail level, true shapes otherwise. Callers keep the index
+/// versioned: viewport motion reuses it, position write-backs rebuild it.
 pub fn visible_node_ids(
     positions: &Positions,
     index: &SpatialIndex,
@@ -203,8 +235,15 @@ pub fn visible_node_ids(
     half_extent: f32,
     shape_of: impl Fn(NodeIndex) -> NodeShape,
 ) -> Vec<NodeIndex> {
+    let grown = Rect::new(
+        Point2::new(rect.origin.x - half_extent, rect.origin.y - half_extent),
+        Vec2::new(
+            rect.size.x + half_extent * 2.0,
+            rect.size.y + half_extent * 2.0,
+        ),
+    );
     let mut found: Vec<NodeIndex> = index
-        .query_rect(rect)
+        .query_rect(grown)
         .into_iter()
         .filter(|node| {
             positions
@@ -326,6 +365,8 @@ pub fn paint_single_node_for_level(
         origin: Point2::new(screen.x - side / 2.0, screen.y - side / 2.0),
         side,
         fill: style.fill,
+        stroke: style.stroke,
+        stroke_width: style.stroke_width,
         opacity: style.opacity,
         shape,
         points,
@@ -363,9 +404,10 @@ pub fn paint_edges(
 /// Transforms edges with detail and aggregation options applied.
 ///
 /// Simplified and minimal levels drop Bezier controls to straight segments;
-/// dense bundles fan out as haystack lines; an explicit orthogonal direction
-/// routes edges as polylines with at most two bends. Hit testing stays on the
-/// full-precision path so visual downgrades never change selection.
+/// dense bundles fan out as haystack lines; an explicit orthogonal or taxi
+/// direction routes edges as polylines with at most two bends. Hit testing
+/// stays on the full-precision path so visual downgrades never change
+/// selection.
 ///
 /// Edges fully outside the world viewport are rejected before any control
 /// point math, so dense off-screen bundles cost only a bounding-box test.
@@ -434,6 +476,7 @@ pub fn paint_edges_for(
                     aggregated: false,
                     tint: style.tint,
                     width: style.width,
+                    opacity: style.opacity,
                     arrow: style.arrow,
                     arrow_scale: style.arrow_scale,
                 });
@@ -456,6 +499,7 @@ pub fn paint_edges_for(
             .position(|member| *member == ordinal)
             .unwrap_or(0);
         let haystack = options.ortho.is_none()
+            && options.taxi.is_none()
             && if options.force_haystack {
                 use_haystack(bundle.len(), true)
             } else {
@@ -473,21 +517,31 @@ pub fn paint_edges_for(
             start = fanned_a;
             end = fanned_b;
             if edge_visible(start, end, None, viewport) {
-                let mut edge =
-                    PaintedEdge::straight(*source, *target, start, end, style.tint, style.width)
-                        .with_arrow(style.arrow, style.arrow_scale);
+                let mut edge = PaintedEdge::straight(
+                    *source,
+                    *target,
+                    start,
+                    end,
+                    style.tint,
+                    style.width,
+                    style.opacity,
+                )
+                .with_arrow(style.arrow, style.arrow_scale);
                 edge.aggregated = true;
                 painted.push(edge);
             }
             continue;
         }
-        if let Some(direction) = options.ortho {
-            let line = ortho_polyline(start, end, direction);
-            let (bend_a, bend_b) = match line.as_slice() {
-                [_, mid_a, mid_b, _] => (Some(*mid_a), Some(*mid_b)),
-                [_, mid, _] => (Some(*mid), None),
-                _ => (None, None),
-            };
+        if options.ortho.is_some() || options.taxi.is_some() {
+            let (bend_a, bend_b) = manhattan_bends(start, end, options);
+            let mut via = Vec::new();
+            if let Some(bend) = bend_a {
+                via.push(bend);
+            }
+            if let Some(bend) = bend_b {
+                via.push(bend);
+            }
+            let line = segmented_polyline(start, &via, end);
             if polyline_visible(&line, viewport) {
                 painted.push(PaintedEdge {
                     source: *source,
@@ -498,9 +552,10 @@ pub fn paint_edges_for(
                     loop_ctrls: None,
                     bend_a,
                     bend_b,
-                    aggregated: true,
+                    aggregated: false,
                     tint: style.tint,
                     width: style.width,
+                    opacity: style.opacity,
                     arrow: style.arrow,
                     arrow_scale: style.arrow_scale,
                 });
@@ -530,6 +585,7 @@ pub fn paint_edges_for(
                 aggregated: false,
                 tint: style.tint,
                 width: style.width,
+                opacity: style.opacity,
                 arrow: style.arrow,
                 arrow_scale: style.arrow_scale,
             });
@@ -616,6 +672,7 @@ pub fn paint_single_edge(
             aggregated: false,
             tint: style.tint,
             width: style.width,
+            opacity: style.opacity,
             arrow: style.arrow,
             arrow_scale: style.arrow_scale,
         });
@@ -631,6 +688,7 @@ pub fn paint_single_edge(
     let mut start = camera.world_to_viewport(viewport, a);
     let mut end = camera.world_to_viewport(viewport, b);
     let haystack = options.ortho.is_none()
+        && options.taxi.is_none()
         && if options.force_haystack {
             use_haystack(bundle_len, true)
         } else {
@@ -650,18 +708,29 @@ pub fn paint_single_edge(
         if !edge_visible(start, end, None, viewport) {
             return None;
         }
-        let mut edge = PaintedEdge::straight(source, target, start, end, style.tint, style.width)
-            .with_arrow(style.arrow, style.arrow_scale);
+        let mut edge = PaintedEdge::straight(
+            source,
+            target,
+            start,
+            end,
+            style.tint,
+            style.width,
+            style.opacity,
+        )
+        .with_arrow(style.arrow, style.arrow_scale);
         edge.aggregated = true;
         return Some(edge);
     }
-    if let Some(direction) = options.ortho {
-        let line = ortho_polyline(start, end, direction);
-        let (bend_a, bend_b) = match line.as_slice() {
-            [_, mid_a, mid_b, _] => (Some(*mid_a), Some(*mid_b)),
-            [_, mid, _] => (Some(*mid), None),
-            _ => (None, None),
-        };
+    if options.ortho.is_some() || options.taxi.is_some() {
+        let (bend_a, bend_b) = manhattan_bends(start, end, options);
+        let mut via = Vec::new();
+        if let Some(bend) = bend_a {
+            via.push(bend);
+        }
+        if let Some(bend) = bend_b {
+            via.push(bend);
+        }
+        let line = segmented_polyline(start, &via, end);
         if !polyline_visible(&line, viewport) {
             return None;
         }
@@ -674,9 +743,10 @@ pub fn paint_single_edge(
             loop_ctrls: None,
             bend_a,
             bend_b,
-            aggregated: true,
+            aggregated: false,
             tint: style.tint,
             width: style.width,
+            opacity: style.opacity,
             arrow: style.arrow,
             arrow_scale: style.arrow_scale,
         });
@@ -706,6 +776,7 @@ pub fn paint_single_edge(
         aggregated: false,
         tint: style.tint,
         width: style.width,
+        opacity: style.opacity,
         arrow: style.arrow,
         arrow_scale: style.arrow_scale,
     })
@@ -908,13 +979,15 @@ fn bounds_visible(min_x: f32, min_y: f32, max_x: f32, max_y: f32, viewport: Vec2
 ///
 /// Each edge carries its own tint and width, so strokes are built per edge
 /// instead of sharing one path. Labels are shaped through the window text
-/// system and centered on their anchor. The closure receives owned plans so
-/// the element stays `'static`.
+/// system and centered on their anchor; edge labels paint above node labels
+/// so weight text stays readable on dense bundles. The closure receives owned
+/// plans so the element stays `'static`.
 pub fn graph_view(
     nodes: Vec<PaintedNode>,
     edges: Vec<PaintedEdge>,
     arrows: Vec<PaintedArrow>,
     labels: Vec<PaintedLabel>,
+    edge_labels: Vec<PaintedEdgeLabel>,
     rubber_band: Option<PaintedRubberBand>,
 ) -> impl IntoElement {
     canvas(
@@ -938,7 +1011,7 @@ pub fn graph_view(
                     strokes.line_to(to_pixels(edge.end));
                 }
                 if let Ok(path) = strokes.build() {
-                    window.paint_path(path, rgb(edge.tint));
+                    window.paint_path(path, with_opacity(edge.tint, edge.opacity));
                 }
             }
             if !arrows.is_empty() {
@@ -973,6 +1046,7 @@ pub fn graph_view(
                         with_opacity(node.fill, node.opacity),
                     );
                     window.paint_quad(quad);
+                    paint_node_stroke(&node_stroke_loop(node), node, window);
                     continue;
                 }
                 let mut body = gpui::PathBuilder::fill();
@@ -982,9 +1056,13 @@ pub fn graph_view(
                 if let Ok(path) = body.build() {
                     window.paint_path(path, with_opacity(node.fill, node.opacity));
                 }
+                paint_node_stroke(&node.points, node, window);
             }
             for label in &labels {
                 paint_label(label, window, cx);
+            }
+            for label in &edge_labels {
+                paint_edge_label(label, window, cx);
             }
             if let Some(band) = rubber_band {
                 let quad = fill(
@@ -1016,6 +1094,39 @@ fn with_opacity(tint: u32, opacity: f32) -> Rgba {
     color
 }
 
+/// Corners of a square node body in paint order for stroking.
+///
+/// The fill keeps the fast quad path; only the border goes through the stroke
+/// path builder, sharing the resolved stroke with the export raster.
+fn node_stroke_loop(node: &PaintedNode) -> [Point2; 4] {
+    [
+        node.origin,
+        Point2::new(node.origin.x + node.side, node.origin.y),
+        Point2::new(node.origin.x + node.side, node.origin.y + node.side),
+        Point2::new(node.origin.x, node.origin.y + node.side),
+    ]
+}
+
+/// Strokes the closed `outline` of one node body.
+///
+/// Zero or negative widths skip painting so borderless styles cost nothing.
+/// The stroke shares the node opacity with the fill, keeping translucent
+/// nodes uniformly faded.
+fn paint_node_stroke(outline: &[Point2], node: &PaintedNode, window: &mut Window) {
+    if node.stroke_width <= 0.0 || outline.len() < 3 {
+        return;
+    }
+    let mut border = gpui::PathBuilder::stroke(gpui::px(node.stroke_width.max(0.5)));
+    border.move_to(to_pixels(outline[0]));
+    for corner in &outline[1..] {
+        border.line_to(to_pixels(*corner));
+    }
+    border.line_to(to_pixels(outline[0]));
+    if let Ok(path) = border.build() {
+        window.paint_path(path, with_opacity(node.stroke, node.opacity));
+    }
+}
+
 /// Shapes and paints one node label centered on its anchor.
 ///
 /// Shaping and painting both report errors rather than panicking; a failed
@@ -1023,24 +1134,73 @@ fn with_opacity(tint: u32, opacity: f32) -> Rgba {
 /// tracks the font size, and the label is centered over the node width so the
 /// text stays under its body regardless of length.
 fn paint_label(label: &PaintedLabel, window: &mut Window, cx: &mut App) {
-    let size = gpui::px(label.size.max(1.0));
-    let color: Hsla = rgb(label.color).into();
-    let run = TextRun {
-        len: label.text.len(),
-        font: Font::default(),
-        color,
-        ..TextRun::default()
-    };
-    let line =
-        window
-            .text_system()
-            .shape_line(SharedString::from(label.text.clone()), size, &[run], None);
-    let width = line.width();
-    let origin = gpui::point(
-        gpui::px(label.origin.x - f32::from(width) / 2.0),
-        gpui::px(label.origin.y),
+    paint_text_at(
+        &label.text,
+        label.size,
+        label.color,
+        label.origin,
+        window,
+        cx,
     );
-    let _ = line.paint(origin, size, TextAlign::Left, None, window, cx);
+}
+
+/// Shapes and paints one edge label centered on its anchor.
+///
+/// Edge labels reuse the node label shaping path so weight text and node text
+/// share one rendering behavior; only the plan source differs.
+fn paint_edge_label(label: &PaintedEdgeLabel, window: &mut Window, cx: &mut App) {
+    paint_text_at(
+        &label.text,
+        label.size,
+        label.color,
+        label.origin,
+        window,
+        cx,
+    );
+}
+
+/// Shapes label text centered on `origin` and paints it line by line.
+///
+/// Text is split on newlines with overlong lines hard-wrapped, and each line
+/// is shaped independently with its byte length as the run length, so
+/// multi-byte glyphs never slice inside a code point. Lines stack downward by
+/// the line height. Failures are skipped silently so one bad label never
+/// blanks the frame.
+fn paint_text_at(
+    text: &str,
+    size: f32,
+    color: u32,
+    origin: Point2,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    use crate::text::{line_height, split_label_lines};
+    let size_px = gpui::px(size.max(1.0));
+    let tint: Hsla = rgb(color).into();
+    let step = line_height(size);
+    for (row, line) in split_label_lines(text).iter().enumerate() {
+        if line.is_empty() {
+            continue;
+        }
+        let run = TextRun {
+            len: line.len(),
+            font: Font::default(),
+            color: tint,
+            ..TextRun::default()
+        };
+        let shaped = window.text_system().shape_line(
+            SharedString::from(line.clone()),
+            size_px,
+            &[run],
+            None,
+        );
+        let width = shaped.width();
+        let at = gpui::point(
+            gpui::px(origin.x - f32::from(width) / 2.0),
+            gpui::px(origin.y + row as f32 * step),
+        );
+        let _ = shaped.paint(at, size_px, TextAlign::Left, None, window, cx);
+    }
 }
 
 fn to_pixels(point: Point2) -> gpui::Point<Pixels> {
@@ -1160,6 +1320,32 @@ mod tests {
     }
 
     #[test]
+    fn plans_carry_stroke_and_opacity_from_styles() {
+        let graph = MockGraph::chain(2);
+        let mut positions = Positions::new();
+        positions.insert(NodeIndex::new(0), Point2::new(-400.0, 0.0));
+        positions.insert(NodeIndex::new(1), Point2::new(-300.0, 0.0));
+        let nodes = paint_nodes(&graph, &positions, &camera(), viewport(), |_| NodeStyle {
+            stroke: 0x112233,
+            stroke_width: 2.5,
+            opacity: 0.5,
+            ..NodeStyle::default()
+        });
+        assert_eq!(nodes.len(), 2);
+        assert!(nodes.iter().all(|node| node.stroke == 0x112233));
+        assert!(nodes.iter().all(|node| node.stroke_width == 2.5));
+        assert!(nodes.iter().all(|node| node.opacity == 0.5));
+        let edges = paint_edges(&graph, &positions, &camera(), viewport(), |_, _| {
+            EdgeStyle {
+                opacity: 0.25,
+                ..EdgeStyle::default()
+            }
+        });
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].opacity, 0.25);
+    }
+
+    #[test]
     fn painted_edge_hit_covers_straight_curved_and_loop() {
         let straight = PaintedEdge {
             source: NodeIndex::new(0),
@@ -1173,6 +1359,7 @@ mod tests {
             aggregated: false,
             tint: 0,
             width: 1.0,
+            opacity: 1.0,
             arrow: ArrowKind::Triangle,
             arrow_scale: 1.0,
         };
@@ -1271,9 +1458,38 @@ mod tests {
         );
         assert_eq!(edges.len(), 1);
         assert!(edges[0].bends().len() <= 2);
-        assert!(edges[0].aggregated);
+        assert!(!edges[0].aggregated);
         let rect = Rect::from_corners(edges[0].start, edges[0].end);
         assert!(painted_edge_hits(&edges[0], rect));
+    }
+
+    #[test]
+    fn taxi_option_routes_through_a_single_corner() {
+        let graph = MockGraph::chain(2);
+        let mut positions = Positions::new();
+        positions.insert(NodeIndex::new(0), Point2::new(-400.0, 0.0));
+        positions.insert(NodeIndex::new(1), Point2::new(-300.0, 40.0));
+        let options = EdgePaintOptions {
+            taxi: Some(OrthoDirection::HorizontalFirst),
+            ..EdgePaintOptions::default()
+        };
+        let edges = paint_edges_with_options(
+            &graph,
+            &positions,
+            &camera(),
+            viewport(),
+            options,
+            edge_style,
+        );
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].bends().len(), 1);
+        assert!(!edges[0].aggregated);
+        let corner = edges[0].bends()[0];
+        assert_eq!(corner, Point2::new(edges[0].end.x, edges[0].start.y));
+        assert!(painted_edge_hits(
+            &edges[0],
+            Rect::from_corners(edges[0].start, corner)
+        ));
     }
 
     #[test]

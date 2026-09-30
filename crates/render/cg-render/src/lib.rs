@@ -17,8 +17,8 @@ pub mod view;
 pub use arrows::ArrowKind;
 pub use camera::{Camera, MAX_ZOOM, MIN_ZOOM};
 pub use export::{
-    ExportRequest, ExportScope, ExportSnapshot, encode_ppm, export_pixels, graph_bounds, rasterize,
-    scale_arrows, scale_edges, scale_nodes, solid_background,
+    ExportRequest, ExportScope, ExportSnapshot, encode_png, export_pixels,
+    graph_bounds, rasterize, scale_arrows, scale_edges, scale_nodes, solid_background,
 };
 pub use lod::{DetailLevel, LodParams};
 pub use metrics::{FrameMetrics, FrameSample, PlanCounts, measure_ms};
@@ -36,13 +36,16 @@ pub use style::{
 };
 pub use synth::{SynthGraph, chain_with_cross_edges, grid_with_random_edges};
 pub use text::{
-    DEFAULT_LABEL_COLOR, DEFAULT_LABEL_SIZE, LABEL_GAP, PaintedLabel, draws_labels,
-    paint_labels_for,
+    DEFAULT_EDGE_LABEL_COLOR, DEFAULT_EDGE_LABEL_SIZE, DEFAULT_LABEL_COLOR, DEFAULT_LABEL_SIZE,
+    EDGE_LABEL_GAP, LABEL_GAP, LABEL_LINE_HEIGHT_SCALE, MAX_LABEL_CHARS_PER_LINE, PaintedEdgeLabel,
+    PaintedLabel, draws_labels, edge_label_anchor, line_height, paint_edge_labels_for,
+    paint_labels_for, split_label_lines,
 };
 pub use view::{
     ARROW_HALF_WIDTH, ARROW_LENGTH, EDGE_AGGREGATION_THRESHOLD, EdgePaintOptions, NODE_SIDE,
     PARALLEL_STEP, PaintedArrow, PaintedEdge, PaintedNode, PaintedRubberBand, bundle_slot,
-    edge_ordinals_for, graph_view, loop_ordinal, paint_arrows, paint_arrows_for_level, paint_edges, paint_edges_for, paint_edges_with_options, paint_nodes, paint_nodes_for,
-    paint_nodes_for_level, paint_single_arrow, paint_single_edge, paint_single_node,
-    paint_single_node_for_level, painted_edge_hits, visible_node_ids, world_viewport_rect,
+    edge_ordinals_for, graph_view, loop_ordinal, paint_arrows, paint_arrows_for_level, paint_edges,
+    paint_edges_for, paint_edges_with_options, paint_nodes, paint_nodes_for, paint_nodes_for_level,
+    paint_single_arrow, paint_single_edge, paint_single_node, paint_single_node_for_level,
+    painted_edge_hits, visible_node_ids, world_viewport_rect,
 };

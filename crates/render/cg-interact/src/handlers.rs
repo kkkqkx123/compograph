@@ -7,11 +7,13 @@
 use std::collections::HashMap;
 
 use cg_geometry::{
-    BEZIER_HIT_SAMPLES, bezier_control_for_edge, parallel_offsets, polyline_intersects_rect,
-    sample_quadratic_bezier, segment_intersects_rect, self_loop_polyline,
+    BEZIER_HIT_SAMPLES, OrthoDirection, bezier_control_for_edge, manhattan_route, parallel_offsets,
+    polyline_intersects_rect, sample_quadratic_bezier, segment_intersects_rect, self_loop_polyline,
 };
 use cg_graph::{GraphView, NodeIndex, Positions};
-use cg_render::{NODE_SIDE, NodeShape, PARALLEL_STEP, SpatialIndex, point_hits_shape, shape_hits_rect};
+use cg_render::{
+    NODE_SIDE, NodeShape, PARALLEL_STEP, SpatialIndex, point_hits_shape, shape_hits_rect,
+};
 use cg_types::{Point2, Rect, Vec2};
 
 /// Half extent of a node body in model units, derived from the paint plan.
@@ -85,7 +87,9 @@ pub fn normalize_drag(start: Point2, current: Point2) -> Rect {
 ///
 /// The spatial index narrows candidates and each body is tested with its own
 /// shape, so box selection agrees with pointer hit testing: corners a tap
-/// rejects stay unselected here as well.
+/// rejects stay unselected here as well. The query grows by the body extent
+/// because the index keys on centers; the exact shape test still rejects
+/// non-overlapping bodies, so growth only adds candidates.
 pub fn nodes_in_rect(
     positions: &Positions,
     index: &SpatialIndex,
@@ -93,8 +97,15 @@ pub fn nodes_in_rect(
     half_extent: f32,
     shape_of: impl Fn(NodeIndex) -> NodeShape,
 ) -> Vec<NodeIndex> {
+    let grown = Rect::new(
+        Point2::new(rect.origin.x - half_extent, rect.origin.y - half_extent),
+        Vec2::new(
+            rect.size.x + half_extent * 2.0,
+            rect.size.y + half_extent * 2.0,
+        ),
+    );
     let mut found: Vec<NodeIndex> = index
-        .query_rect(rect)
+        .query_rect(grown)
         .into_iter()
         .filter(|node| {
             positions
@@ -140,6 +151,23 @@ pub fn edges_in_rect(
     rect: Rect,
     node_side: f32,
 ) -> Vec<(NodeIndex, NodeIndex)> {
+    edges_in_rect_with_options(graph, positions, rect, node_side, None, None)
+}
+
+/// Directed edges touching `rect` under explicit Manhattan routing.
+///
+/// The route selector is the same one the paint plan uses, so taxi and
+/// orthogonal edges test their routed polylines instead of the straight
+/// chord. Callers pass the options the canvas paints with; the default entry
+/// above covers the common unset case.
+pub fn edges_in_rect_with_options(
+    graph: &dyn GraphView,
+    positions: &Positions,
+    rect: Rect,
+    node_side: f32,
+    ortho: Option<OrthoDirection>,
+    taxi: Option<OrthoDirection>,
+) -> Vec<(NodeIndex, NodeIndex)> {
     let mut edges = graph.edges();
     edges.sort_unstable_by_key(|(source, target)| (source.index(), target.index()));
     let mut bundle_of: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
@@ -166,6 +194,13 @@ pub fn edges_in_rect(
         let (Some(start), Some(end)) = (positions.get(source), positions.get(target)) else {
             continue;
         };
+        let routed = manhattan_route(*start, *end, ortho, taxi);
+        if !routed.is_empty() {
+            if polyline_intersects_rect(&routed, rect) {
+                found.push((*source, *target));
+            }
+            continue;
+        }
         let bundle = bundle_of
             .get(&bundle_key(*source, *target))
             .map(Vec::as_slice)
@@ -227,13 +262,9 @@ mod tests {
         positions.insert(NodeIndex::new(0), Point2::new(0.0, 0.0));
         positions.insert(NodeIndex::new(1), Point2::new(100.0, 0.0));
         let index = indexed(&positions);
-        let hit = press_hit_shaped(
-            Point2::new(103.0, 1.0),
-            &positions,
-            &index,
-            24.0,
-            |_| NodeShape::Square,
-        );
+        let hit = press_hit_shaped(Point2::new(103.0, 1.0), &positions, &index, 24.0, |_| {
+            NodeShape::Square
+        });
         assert!(hit.map(|(node, _)| node) == Some(NodeIndex::new(1)));
     }
 
@@ -245,13 +276,9 @@ mod tests {
         positions.insert(NodeIndex::new(0), Point2::new(0.0, 0.0));
         let index = indexed(&positions);
         assert!(
-            press_hit_shaped(
-                Point2::new(200.0, 200.0),
-                &positions,
-                &index,
-                24.0,
-                |_| NodeShape::Square
-            )
+            press_hit_shaped(Point2::new(200.0, 200.0), &positions, &index, 24.0, |_| {
+                NodeShape::Square
+            })
             .is_none()
         );
     }
@@ -373,6 +400,30 @@ mod tests {
     }
 
     #[test]
+    fn routed_box_select_follows_the_taxi_corner() {
+        use cg_graph::MockGraph;
+
+        let graph = MockGraph::chain(2);
+        let mut positions = Positions::new();
+        positions.insert(NodeIndex::new(0), Point2::new(0.0, 0.0));
+        positions.insert(NodeIndex::new(1), Point2::new(100.0, 40.0));
+        let taxi = Some(OrthoDirection::HorizontalFirst);
+        let corner = Rect::from_corners(Point2::new(90.0, -10.0), Point2::new(110.0, 10.0));
+        assert_eq!(
+            edges_in_rect_with_options(&graph, &positions, corner, NODE_SIDE, None, taxi),
+            vec![(NodeIndex::new(0), NodeIndex::new(1))]
+        );
+        let chord = Rect::from_corners(Point2::new(45.0, 15.0), Point2::new(55.0, 25.0));
+        assert!(
+            edges_in_rect_with_options(&graph, &positions, chord, NODE_SIDE, None, taxi).is_empty()
+        );
+        assert_eq!(
+            edges_in_rect_with_options(&graph, &positions, chord, NODE_SIDE, None, None),
+            vec![(NodeIndex::new(0), NodeIndex::new(1))]
+        );
+    }
+
+    #[test]
     fn shaped_press_rejects_triangle_corners() {
         use cg_render::NodeShape;
 
@@ -407,7 +458,13 @@ mod tests {
             Some(NodeIndex::new(0))
         );
         assert_eq!(
-            hover_node_shaped(Point2::new(200.0, 200.0), &positions, &index, 24.0, shape_of),
+            hover_node_shaped(
+                Point2::new(200.0, 200.0),
+                &positions,
+                &index,
+                24.0,
+                shape_of
+            ),
             None
         );
     }

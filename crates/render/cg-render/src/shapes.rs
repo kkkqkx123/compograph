@@ -6,7 +6,9 @@
 //! and its hit test doubles as the conservative outer envelope for the other
 //! shapes.
 
-use cg_geometry::{distance_to_segment, point_hits_node, point_in_polygon, polygon_intersects_rect};
+use cg_geometry::{
+    distance_to_segment, point_hits_node, point_in_polygon, polygon_intersects_rect,
+};
 use cg_types::{Point2, Rect, Vec2};
 
 /// Body shape of a node.
@@ -251,7 +253,11 @@ mod tests {
             assert!(shape_hits_rect(shape, center, 12.0, over));
             assert!(!shape_hits_rect(shape, center, 12.0, far));
         }
-        let corner = Rect::from_corners(Point2::new(-12.0, -12.0), Point2::new(-8.0, -8.0));
+        // The tight corner misses the circle arc: the inscribed outline passes
+        // through (-8.49, -8.49), so a wider rect would overlap the painted
+        // body and selecting it would be correct. The square still covers the
+        // corner, matching the tap behavior the test mirrors.
+        let corner = Rect::from_corners(Point2::new(-12.0, -12.0), Point2::new(-11.0, -11.0));
         assert!(shape_hits_rect(NodeShape::Square, center, 12.0, corner));
         assert!(!shape_hits_rect(NodeShape::Triangle, center, 12.0, corner));
         assert!(!shape_hits_rect(NodeShape::Circle, center, 12.0, corner));

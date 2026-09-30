@@ -98,6 +98,17 @@ impl GraphStore {
         self.graph.edge_endpoints(edge)
     }
 
+    /// Weight of the first edge from `source` to `target`, if one exists.
+    ///
+    /// Parallel edges share one label slot in the paint plan, so the plan
+    /// reads the first match in index order rather than tracking identities.
+    pub fn edge_weight(&self, source: NodeIndex, target: NodeIndex) -> Option<f32> {
+        self.graph
+            .edge_references()
+            .find(|edge| edge.source() == source && edge.target() == target)
+            .map(|edge| edge.weight().weight)
+    }
+
     /// Sorted out-neighbours of `node`, carrying the connecting edge indices.
     pub fn successors(&self, node: NodeIndex) -> Vec<(NodeIndex, EdgeIndex)> {
         sort_neighbours(
@@ -295,6 +306,14 @@ mod tests {
             Some("a")
         );
         assert!(store.node_data(NodeIndex::new(99)).is_none());
+    }
+
+    #[test]
+    fn edge_weight_reads_the_first_match_in_index_order() {
+        let (graph, [a, b, _, _]) = diamond();
+        let store = GraphStore { graph };
+        assert_eq!(store.edge_weight(a, b), Some(1.0));
+        assert_eq!(store.edge_weight(b, a), None);
     }
 
     #[test]

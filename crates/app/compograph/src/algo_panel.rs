@@ -141,6 +141,90 @@ pub fn pagerank_outcome(order: &[NodeIndex], scores: &[f32], elapsed_ms: f64) ->
     centrality_outcome(order, scores, "pagerank", elapsed_ms)
 }
 
+/// Highlights nodes in traversal order without implying a path.
+pub fn traversal_outcome(order: &[NodeIndex], label: &str, elapsed_ms: f64) -> AlgoOutcome {
+    AlgoOutcome {
+        nodes: order
+            .iter()
+            .map(|node| (*node, NodeStylePatch::selected()))
+            .collect(),
+        edges: Vec::new(),
+        summary: format!("{label}: {} nodes reached ({elapsed_ms:.1}ms)", order.len()),
+    }
+}
+
+/// Highlights a topological order, or reports the cycle member.
+pub fn topo_outcome(order: &Result<Vec<NodeIndex>, NodeIndex>, elapsed_ms: f64) -> AlgoOutcome {
+    match order {
+        Ok(sequence) => traversal_outcome(sequence, "topological order", elapsed_ms),
+        Err(member) => AlgoOutcome {
+            summary: format!(
+                "topological order: cycle at node {} ({elapsed_ms:.1}ms)",
+                member.index()
+            ),
+            ..AlgoOutcome::default()
+        },
+    }
+}
+
+/// Thickens every kept edge of a transitive reduction.
+pub fn reduction_outcome(
+    kept: &Result<Vec<(NodeIndex, NodeIndex)>, NodeIndex>,
+    elapsed_ms: f64,
+) -> AlgoOutcome {
+    match kept {
+        Ok(edges) => AlgoOutcome {
+            nodes: Vec::new(),
+            edges: edges
+                .iter()
+                .map(|(source, target)| ((*source, *target), EdgeStylePatch::widened()))
+                .collect(),
+            summary: format!(
+                "transitive reduction: {} edges ({elapsed_ms:.1}ms)",
+                edges.len()
+            ),
+        },
+        Err(member) => AlgoOutcome {
+            summary: format!(
+                "transitive reduction: cycle at node {} ({elapsed_ms:.1}ms)",
+                member.index()
+            ),
+            ..AlgoOutcome::default()
+        },
+    }
+}
+
+/// Reports all-pairs reachability without highlighting.
+///
+/// Reachability is a dense matrix property, so the panel shows counts while
+/// the canvas keeps its current highlights.
+pub fn pairs_outcome(reachable: usize, possible: usize, elapsed_ms: f64) -> AlgoOutcome {
+    AlgoOutcome {
+        summary: format!("all pairs: {reachable} of {possible} reachable ({elapsed_ms:.1}ms)"),
+        ..AlgoOutcome::default()
+    }
+}
+
+/// Highlights every node dominated from the root.
+pub fn dominators_outcome(
+    dominated: &[NodeIndex],
+    root: NodeIndex,
+    elapsed_ms: f64,
+) -> AlgoOutcome {
+    AlgoOutcome {
+        nodes: dominated
+            .iter()
+            .map(|node| (*node, NodeStylePatch::selected()))
+            .collect(),
+        edges: Vec::new(),
+        summary: format!(
+            "dominators from {}: {} nodes ({elapsed_ms:.1}ms)",
+            root.index(),
+            dominated.len()
+        ),
+    }
+}
+
 /// Thickens every edge of a spanning forest and totals its weight.
 pub fn forest_outcome(edges: &[(NodeIndex, NodeIndex, f32)], elapsed_ms: f64) -> AlgoOutcome {
     let total: f32 = edges.iter().map(|(_, _, weight)| weight).sum();
@@ -220,6 +304,25 @@ mod tests {
         assert_eq!(outcome.nodes.len(), 2);
         assert!(outcome.summary.contains("degree"));
         assert!(outcome.summary.contains("2 nodes"));
+    }
+
+    #[test]
+    fn traversal_topo_reduction_pairs_and_dominators_cover_remaining_bridges() {
+        let order = vec![NodeIndex::new(0), NodeIndex::new(1)];
+        let walked = traversal_outcome(&order, "bfs", 0.5);
+        assert_eq!(walked.nodes.len(), 2);
+        assert!(walked.summary.contains("bfs"));
+        let topo = topo_outcome(&Ok(order.clone()), 0.5);
+        assert_eq!(topo.nodes.len(), 2);
+        let cyclic = topo_outcome(&Err(NodeIndex::new(3)), 0.5);
+        assert!(cyclic.nodes.is_empty() && cyclic.summary.contains("cycle"));
+        let kept = reduction_outcome(&Ok(vec![(NodeIndex::new(0), NodeIndex::new(1))]), 0.5);
+        assert_eq!(kept.edges.len(), 1);
+        let pairs = pairs_outcome(3, 4, 0.5);
+        assert!(pairs.nodes.is_empty() && pairs.summary.contains("3 of 4"));
+        let dominated = dominators_outcome(&order, NodeIndex::new(0), 0.5);
+        assert_eq!(dominated.nodes.len(), 2);
+        assert!(dominated.summary.contains("from 0"));
     }
 
     #[test]

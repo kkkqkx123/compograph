@@ -356,6 +356,7 @@ mod tests {
             aggregated: false,
             tint: 0,
             width: 1.0,
+            opacity: 1.0,
             arrow: crate::arrows::ArrowKind::Triangle,
             arrow_scale: 1.0,
         }
@@ -512,13 +513,14 @@ mod tests {
             arrows: vec![],
         };
         let mut cache = RetainedCache::new(true);
-        cache.store(plans(), versions, EdgePaintOptions::default(), &camera, viewport);
-        assert!(cache.is_reusable(
+        cache.store(
+            plans(),
             versions,
             EdgePaintOptions::default(),
             &camera,
-            viewport
-        ));
+            viewport,
+        );
+        assert!(cache.is_reusable(versions, EdgePaintOptions::default(), &camera, viewport));
         let haystack = EdgePaintOptions {
             force_haystack: true,
             ..EdgePaintOptions::default()
@@ -542,14 +544,15 @@ mod tests {
             edge_style,
         ));
         let mut disabled = RetainedCache::new(false);
-        disabled.store(plans(), versions, EdgePaintOptions::default(), &camera, viewport);
-        disabled.mark_moved([NodeIndex::new(9)]);
-        assert!(!disabled.is_reusable(
+        disabled.store(
+            plans(),
             versions,
             EdgePaintOptions::default(),
             &camera,
-            viewport
-        ));
+            viewport,
+        );
+        disabled.mark_moved([NodeIndex::new(9)]);
+        assert!(!disabled.is_reusable(versions, EdgePaintOptions::default(), &camera, viewport));
         assert!(!disabled.refresh_moved(
             RefreshInput {
                 pairs: &pairs,

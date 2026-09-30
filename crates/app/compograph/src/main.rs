@@ -10,9 +10,12 @@ use std::time::Instant;
 use algo_panel::{AlgoOutcome, EdgePair};
 use cg_graph::{
     ChangeFilter, GraphDocument, GraphStore, GraphView, NodeEntry, NodeIndex, Positions,
-    articulation_points, bridges, degree_centrality, export_dot, heuristic_shortest_path,
-    minimum_spanning_forest, node_order, rank_nodes, remap_positions, shortest_path,
-    strongly_connected_components, subscribe_graph,
+    all_pairs_shortest_paths, articulation_points, bellman_ford_paths, betweenness_centrality,
+    breadth_first_order, bridges, closeness_centrality, degree_centrality, depth_first_order,
+    export_dot, heuristic_shortest_path, immediate_dominators, minimum_spanning_forest,
+    minimum_spanning_tree_single, negative_cycle_path, node_order, rank_nodes, remap_positions,
+    shortest_path, strongly_connected_components, subscribe_graph, topological_order,
+    transitive_reduction,
 };
 use cg_interact::{
     BoxSelectState, DragState, NODE_HALF_EXTENT, SelectionState, drag_position, edges_in_rect,
@@ -22,11 +25,11 @@ use cg_layout::{LayoutDriver, LayoutRegistry};
 use cg_render::{
     BypassStore, CacheVersions, Camera, DetailLevel, EdgeMapper, EdgePaintOptions, EdgeStylePatch,
     ExportRequest, ExportScope, ExportSnapshot, FrameMetrics, FrameSample, LodParams, NODE_SIDE,
-    NodeShape, NodeStylePatch, PaintedArrow, PaintedEdge, PaintedNode, PaintedRubberBand, PlanCounts,
-    RefreshInput, RetainedCache, SpatialIndex, StoredPlans, StyleMapper, StyleSheet,
-    edge_ordinals_for, encode_ppm, export_pixels, graph_view, paint_arrows_for_level,
-    paint_edges_for, paint_labels_for, paint_nodes_for_level, subscribe_repaint, visible_node_ids,
-    world_viewport_rect,
+    NodeShape, NodeStylePatch, PaintedArrow, PaintedEdge, PaintedNode, PaintedRubberBand,
+    PlanCounts, RefreshInput, RetainedCache, SpatialIndex, StoredPlans, StyleMapper, StyleSheet,
+    edge_ordinals_for, encode_png, export_pixels, graph_view, paint_arrows_for_level,
+    paint_edge_labels_for, paint_edges_for, paint_labels_for, paint_nodes_for_level,
+    subscribe_repaint, visible_node_ids, world_viewport_rect,
 };
 use cg_types::{Point2, Rect, Vec2};
 use gpui::{
@@ -543,6 +546,183 @@ impl GraphWindow {
         });
     }
 
+    fn run_all_pairs(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.store.read(cx).graph().clone();
+        let generation = self.begin_algo_run();
+        self.spawn_algo_task(cx, generation, move || {
+            let started = Instant::now();
+            let count = snapshot.node_count();
+            match all_pairs_shortest_paths(&snapshot) {
+                Ok(matrix) => algo_panel::pairs_outcome(
+                    matrix.len(),
+                    count * count,
+                    started.elapsed().as_secs_f64() * 1000.0,
+                ),
+                Err(member) => AlgoOutcome {
+                    summary: format!(
+                        "all pairs: negative cycle at node {} ({:.1}ms)",
+                        member.index(),
+                        started.elapsed().as_secs_f64() * 1000.0
+                    ),
+                    ..AlgoOutcome::default()
+                },
+            }
+        });
+    }
+
+    fn run_bellman_ford(&mut self, cx: &mut Context<Self>) {
+        let Some((start, goal)) = self.algo_endpoints(cx) else {
+            self.algo_summary = "bellman-ford needs at least one node".to_string();
+            cx.notify();
+            return;
+        };
+        let snapshot = self.store.read(cx).graph().clone();
+        let generation = self.begin_algo_run();
+        self.spawn_algo_task(cx, generation, move || {
+            let started = Instant::now();
+            let elapsed = || started.elapsed().as_secs_f64() * 1000.0;
+            match bellman_ford_paths(&snapshot, start) {
+                Ok((distances, predecessors)) => {
+                    let cost = distances.get(&goal).copied().unwrap_or(f32::INFINITY);
+                    if !cost.is_finite() {
+                        return algo_panel::path_outcome(&[], 0.0, elapsed(), "bellman-ford");
+                    }
+                    let mut path = vec![goal];
+                    while let Some(parent) = predecessors.get(&path.last().copied().unwrap_or(goal)).copied().flatten() {
+                        path.push(parent);
+                        if parent == start || path.len() > snapshot.node_count() + 1 {
+                            break;
+                        }
+                    }
+                    path.reverse();
+                    if path.first() != Some(&start) {
+                        return algo_panel::path_outcome(&[], 0.0, elapsed(), "bellman-ford");
+                    }
+                    algo_panel::path_outcome(&path, cost, elapsed(), "bellman-ford")
+                }
+                Err(member) => {
+                    let cycle_len = negative_cycle_path(&snapshot, start).map(|cycle| cycle.len()).unwrap_or(0);
+                    AlgoOutcome {
+                        summary: format!(
+                            "bellman-ford: negative cycle at node {0} ({cycle_len} nodes, {1:.1}ms)",
+                            member.index(),
+                            elapsed()
+                        ),
+                        ..AlgoOutcome::default()
+                    }
+                }
+            }
+        });
+    }
+
+    fn run_traversals(&mut self, cx: &mut Context<Self>) {
+        let Some((start, _)) = self.algo_endpoints(cx) else {
+            self.algo_summary = "traversals need at least one node".to_string();
+            cx.notify();
+            return;
+        };
+        let snapshot = self.store.read(cx).graph().clone();
+        let generation = self.begin_algo_run();
+        self.spawn_algo_task(cx, generation, move || {
+            let started = Instant::now();
+            let breadth = breadth_first_order(&snapshot, start);
+            let depth = depth_first_order(&snapshot, start);
+            let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+            let mut outcome = algo_panel::traversal_outcome(&breadth, "bfs", elapsed_ms);
+            outcome.summary = format!(
+                "traversals from {}: bfs {}, dfs {} ({elapsed_ms:.1}ms)",
+                start.index(),
+                breadth.len(),
+                depth.len()
+            );
+            outcome
+        });
+    }
+
+    fn run_topo_reduction(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.store.read(cx).graph().clone();
+        let generation = self.begin_algo_run();
+        self.spawn_algo_task(cx, generation, move || {
+            let started = Instant::now();
+            let order = topological_order(&snapshot);
+            let kept = transitive_reduction(&snapshot);
+            let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+            let topo = algo_panel::topo_outcome(&order, elapsed_ms);
+            let reduced = algo_panel::reduction_outcome(&kept, elapsed_ms);
+            let summary = match (&order, &kept) {
+                (Ok(sequence), Ok(edges)) => format!(
+                    "topo+reduction: order {}, kept {} ({elapsed_ms:.1}ms)",
+                    sequence.len(),
+                    edges.len()
+                ),
+                (Err(member), _) | (_, Err(member)) => format!(
+                    "topo+reduction: cycle at node {} ({elapsed_ms:.1}ms)",
+                    member.index()
+                ),
+            };
+            AlgoOutcome {
+                nodes: topo.nodes,
+                edges: reduced.edges,
+                summary,
+            }
+        });
+    }
+
+    fn run_closeness(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.store.read(cx).graph().clone();
+        let generation = self.begin_algo_run();
+        self.spawn_algo_task(cx, generation, move || {
+            let started = Instant::now();
+            let order = node_order(&snapshot);
+            let scores = closeness_centrality(&snapshot);
+            let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+            algo_panel::centrality_outcome(&order, &scores, "closeness", elapsed_ms)
+        });
+    }
+
+    fn run_betweenness(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.store.read(cx).graph().clone();
+        let generation = self.begin_algo_run();
+        self.spawn_algo_task(cx, generation, move || {
+            let started = Instant::now();
+            let order = node_order(&snapshot);
+            let scores = betweenness_centrality(&snapshot);
+            let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+            algo_panel::centrality_outcome(&order, &scores, "betweenness", elapsed_ms)
+        });
+    }
+
+    fn run_mst_single(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.store.read(cx).graph().clone();
+        let generation = self.begin_algo_run();
+        self.spawn_algo_task(cx, generation, move || {
+            let started = Instant::now();
+            let edges = minimum_spanning_tree_single(&snapshot);
+            let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+            let mut outcome = algo_panel::forest_outcome(&edges, elapsed_ms);
+            outcome.summary = outcome.summary.replace("spanning forest", "spanning tree");
+            outcome
+        });
+    }
+
+    fn run_dominators(&mut self, cx: &mut Context<Self>) {
+        let Some((start, _)) = self.algo_endpoints(cx) else {
+            self.algo_summary = "dominators need at least one node".to_string();
+            cx.notify();
+            return;
+        };
+        let snapshot = self.store.read(cx).graph().clone();
+        let generation = self.begin_algo_run();
+        self.spawn_algo_task(cx, generation, move || {
+            let started = Instant::now();
+            let parents = immediate_dominators(&snapshot, start);
+            let mut dominated: Vec<NodeIndex> = parents.keys().copied().collect();
+            dominated.sort_unstable_by_key(|node| node.index());
+            let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+            algo_panel::dominators_outcome(&dominated, start, elapsed_ms)
+        });
+    }
+
     fn export_json(&mut self, cx: &mut Context<Self>) {
         let store = self.store.read(cx);
         let positions = self.layout.read(cx).positions().clone();
@@ -837,8 +1017,8 @@ impl GraphWindow {
             viewport: self.viewport,
         };
         let default_name = match scope {
-            ExportScope::Viewport => "compograph-viewport.ppm",
-            ExportScope::FullGraph => "compograph-full.ppm",
+            ExportScope::Viewport => "compograph-viewport.png",
+            ExportScope::FullGraph => "compograph-full.png",
         };
         let receiver = cx.prompt_for_new_path(&working_directory(), Some(default_name));
         let task = cx.spawn(async move |weak, async_cx| {
@@ -861,7 +1041,7 @@ impl GraphWindow {
                     else {
                         return "nothing to export".to_string();
                     };
-                    let encoded = encode_ppm(width, height, &pixels);
+                    let encoded = encode_png(width, height, &pixels);
                     match picked {
                         Some(path) => match file_io::write_bytes_to_path(&encoded, &path) {
                             Ok(()) => format!("exported {width}x{height} to {}", path.display()),
@@ -869,8 +1049,8 @@ impl GraphWindow {
                         },
                         None => {
                             let fallback = match scope {
-                                ExportScope::Viewport => "/tmp/compograph-viewport.ppm",
-                                ExportScope::FullGraph => "/tmp/compograph-full.ppm",
+                                ExportScope::Viewport => "/tmp/compograph-viewport.png",
+                                ExportScope::FullGraph => "/tmp/compograph-full.png",
                             };
                             match file_io::write_bytes_file(&encoded, fallback) {
                                 Ok(()) => format!(
@@ -1013,9 +1193,13 @@ impl Render for GraphWindow {
                     )
                 })
                 .collect();
-            visible_node_ids(positions, &self.spatial, world_rect, NODE_HALF_EXTENT, |node| {
-                shapes.get(&node).copied().unwrap_or_default()
-            })
+            visible_node_ids(
+                positions,
+                &self.spatial,
+                world_rect,
+                NODE_HALF_EXTENT,
+                |node| shapes.get(&node).copied().unwrap_or_default(),
+            )
         };
         self.lod = self
             .lod_params
@@ -1026,6 +1210,7 @@ impl Render for GraphWindow {
             aggregate_threshold: cg_render::EDGE_AGGREGATION_THRESHOLD,
             force_haystack: self.aggregate,
             ortho: None,
+            taxi: None,
         };
         let versions = CacheVersions {
             structure: self.structure_version,
@@ -1097,6 +1282,20 @@ impl Render for GraphWindow {
         };
         let label_size_of = |node: NodeIndex| style_of(node).label_size;
         let painted_labels = paint_labels_for(&nodes, lod, label_of, label_size_of);
+        let painted_edge_labels = paint_edge_labels_for(
+            &edges,
+            lod,
+            |source, target| {
+                store
+                    .edge_weight(source, target)
+                    .map(|weight| weight.to_string())
+            },
+            |source, target| {
+                bypass
+                    .resolve_edge(sheet, edge_mapper, source, target)
+                    .label_size
+            },
+        );
         let plan_ms = plan_started.elapsed().as_secs_f64() * 1000.0;
         self.metrics.push(FrameSample {
             counts: PlanCounts {
@@ -1282,7 +1481,14 @@ impl Render for GraphWindow {
                             .flex_1()
                             .relative()
                             .track_focus(&self.focus)
-                            .child(graph_view(nodes, edges, arrows, painted_labels, rubber_band))
+                            .child(graph_view(
+                                nodes,
+                                edges,
+                                arrows,
+                                painted_labels,
+                                painted_edge_labels,
+                                rubber_band,
+                            ))
                             .when(hovering && hover_text.is_some(), |canvas| {
                                 canvas.child(
                                     div()
@@ -1505,6 +1711,86 @@ impl Render for GraphWindow {
                                     .on_click(cx.listener(
                                         |this, _event: &ClickEvent, _window, cx| {
                                             this.run_cuts(cx);
+                                        },
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .id(("algo-run", 7usize))
+                                    .child("all pairs")
+                                    .on_click(cx.listener(
+                                        |this, _event: &ClickEvent, _window, cx| {
+                                            this.run_all_pairs(cx);
+                                        },
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .id(("algo-run", 8usize))
+                                    .child("bellman-ford")
+                                    .on_click(cx.listener(
+                                        |this, _event: &ClickEvent, _window, cx| {
+                                            this.run_bellman_ford(cx);
+                                        },
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .id(("algo-run", 9usize))
+                                    .child("traversals")
+                                    .on_click(cx.listener(
+                                        |this, _event: &ClickEvent, _window, cx| {
+                                            this.run_traversals(cx);
+                                        },
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .id(("algo-run", 10usize))
+                                    .child("topo+reduction")
+                                    .on_click(cx.listener(
+                                        |this, _event: &ClickEvent, _window, cx| {
+                                            this.run_topo_reduction(cx);
+                                        },
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .id(("algo-run", 11usize))
+                                    .child("closeness")
+                                    .on_click(cx.listener(
+                                        |this, _event: &ClickEvent, _window, cx| {
+                                            this.run_closeness(cx);
+                                        },
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .id(("algo-run", 12usize))
+                                    .child("betweenness")
+                                    .on_click(cx.listener(
+                                        |this, _event: &ClickEvent, _window, cx| {
+                                            this.run_betweenness(cx);
+                                        },
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .id(("algo-run", 13usize))
+                                    .child("mst single")
+                                    .on_click(cx.listener(
+                                        |this, _event: &ClickEvent, _window, cx| {
+                                            this.run_mst_single(cx);
+                                        },
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .id(("algo-run", 14usize))
+                                    .child("dominators")
+                                    .on_click(cx.listener(
+                                        |this, _event: &ClickEvent, _window, cx| {
+                                            this.run_dominators(cx);
                                         },
                                     )),
                             )
