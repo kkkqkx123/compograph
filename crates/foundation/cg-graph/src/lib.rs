@@ -3,8 +3,10 @@
 pub mod algo;
 pub mod binding;
 pub mod centrality;
+pub mod euler;
 pub mod events;
 pub mod io;
+pub mod min_cut;
 pub mod positions;
 pub mod store;
 pub mod view;
@@ -18,7 +20,9 @@ pub use algo::{
 };
 pub use binding::{ChangeFilter, subscribe_graph};
 pub use centrality::{betweenness_centrality, closeness_centrality, degree_centrality, node_order};
+pub use euler::{eulerian_path_directed, eulerian_path_undirected};
 pub use events::GraphChangeEvent;
+pub use min_cut::{MinCut, global_min_cut};
 pub use io::{
     EdgeEntry, GraphDocument, IoError, NodeEntry, export_dot, import_dot, remap_positions,
 };
