@@ -104,6 +104,49 @@ impl BoxSelectState {
     }
 }
 
+/// Point selection semantics without modifier keys.
+///
+/// Single replaces the set on tap; additive accumulates. Box selection always
+/// replaces, with the modifier key adding instead. The modifier toggle path
+/// stays unchanged in both modes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SelectMode {
+    #[default]
+    Single,
+    Additive,
+}
+
+/// Independent interaction locks, all released by default.
+///
+/// Each flag blocks one pointer behavior without affecting the others, so any
+/// combination reads as the intersection of its interceptions.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct InteractLocks {
+    /// Blocks node drag gestures while keeping selection and hover alive.
+    pub lock_drag: bool,
+    /// Skips node picking on press, sending the gesture to box select or pan.
+    pub no_grab: bool,
+    /// Keeps the selection when blank canvas is pressed.
+    pub no_deselect: bool,
+}
+
+impl InteractLocks {
+    /// True when a node drag gesture may start and move.
+    pub fn can_drag(&self) -> bool {
+        !self.lock_drag
+    }
+
+    /// True when a press may run shaped hit testing for nodes.
+    pub fn can_grab(&self) -> bool {
+        !self.no_grab
+    }
+
+    /// True when a blank press may clear the current selection.
+    pub fn can_deselect(&self) -> bool {
+        !self.no_deselect
+    }
+}
+
 /// Multi-node selection state; empty selection carries no nodes.
 ///
 /// The set stays ordered by node index so iteration is reproducible. The
@@ -240,6 +283,27 @@ mod tests {
         selection.remove(NodeIndex::new(3));
         assert!(selection.contains(NodeIndex::new(7)));
         assert!(!selection.is_empty());
+    }
+
+    #[test]
+    fn locks_release_everything_by_default() {
+        let locks = InteractLocks::default();
+        assert!(locks.can_drag());
+        assert!(locks.can_grab());
+        assert!(locks.can_deselect());
+        let held = InteractLocks {
+            lock_drag: true,
+            no_grab: true,
+            no_deselect: true,
+        };
+        assert!(!held.can_drag());
+        assert!(!held.can_grab());
+        assert!(!held.can_deselect());
+    }
+
+    #[test]
+    fn select_mode_defaults_to_single() {
+        assert_eq!(SelectMode::default(), SelectMode::Single);
     }
 
     #[test]

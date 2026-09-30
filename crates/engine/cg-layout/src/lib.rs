@@ -1,5 +1,6 @@
 //! Graph layout engines.
 
+pub mod anim;
 pub mod breadthfirst;
 pub mod circle;
 pub mod compound;
@@ -17,6 +18,7 @@ pub mod registry;
 pub mod ring;
 pub mod static_view;
 
+pub use anim::{Easing, PositionTransition, apply_easing, blend_positions, lerp_point, tween_scalar};
 pub use breadthfirst::{BfsDirection, BreadthFirstLayout, BreadthFirstOptions};
 pub use circle::{CircleLayout, CircleOptions};
 pub use compound::{
@@ -26,7 +28,10 @@ pub use compound::{
 pub use concentric::{ConcentricLayout, ConcentricOptions, ConcentricScoring};
 pub use driver::{LayoutDriver, LayoutProgress, SYNC_LAYOUT_NODE_LIMIT};
 pub use engine::LayoutEngine;
-pub use force::{ForceLayout, ForceOptions, ForceSimulation, ForceSnapshot, snapshot_of};
+pub use force::{
+    ForceLayout, ForceOptions, ForceSimulation, ForceSnapshot, boxes_overlap, has_overlaps,
+    snapshot_of,
+};
 pub use grid::{GridLayout, GridOptions};
 pub use hierarchical::{HierarchicalLayout, HierarchicalOptions};
 pub use preset::PresetLayout;

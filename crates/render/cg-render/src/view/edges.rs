@@ -22,9 +22,10 @@ use super::culling::{
 pub use super::hits::painted_edge_hits;
 use super::plans::{EdgePaintOptions, NODE_SIDE, PaintedEdge};
 use super::routing::{
-    bezier_control, curved_edge, haystack_edge, haystack_span, loop_edge, manhattan_bends,
-    manhattan_edge, should_use_haystack, should_use_manhattan,
+    bezier_control, clean_waypoints, curved_edge, haystack_edge, haystack_span, loop_edge,
+    manhattan_bends, manhattan_edge, should_use_haystack, should_use_manhattan, waypoint_edge,
 };
+use crate::waypoints::WaypointStore;
 
 /// Transforms edges into a paint plan with parallel edges spread as curves.
 ///
@@ -90,13 +91,43 @@ pub fn paint_edges_for(
     options: EdgePaintOptions,
     edge_style: impl Fn(NodeIndex, NodeIndex) -> EdgeStyle,
 ) -> Vec<PaintedEdge> {
+    paint_edges_for_with_waypoints(
+        pairs,
+        positions,
+        camera,
+        viewport,
+        options,
+        &WaypointStore::new(),
+        edge_style,
+    )
+}
+
+/// Edge plan honoring user waypoints in world coordinates.
+///
+/// Edges with a stored waypoint sequence route directly through the cleaned
+/// screen points, skipping parallel offsets, haystack simplification and
+/// Manhattan derivation. Self loops ignore waypoints and keep loop geometry.
+/// Edges without waypoints follow the default derivation unchanged.
+pub fn paint_edges_for_with_waypoints(
+    pairs: &[(NodeIndex, NodeIndex)],
+    positions: &Positions,
+    camera: &Camera,
+    viewport: Vec2,
+    options: EdgePaintOptions,
+    waypoints: &WaypointStore,
+    edge_style: impl Fn(NodeIndex, NodeIndex) -> EdgeStyle,
+) -> Vec<PaintedEdge> {
     let context = BundleContext::build(pairs);
     let world_rect = world_viewport_rect(camera, viewport);
     let margin = world_margin_for(camera);
     let mut loops_seen: HashMap<usize, usize> = HashMap::new();
+    let mut occurrence: HashMap<(usize, usize), usize> = HashMap::new();
     let mut painted = Vec::new();
     for (ordinal, (source, target)) in pairs.iter().enumerate() {
         let style = edge_style(*source, *target);
+        let directed = (source.index(), target.index());
+        let seen = occurrence.get(&directed).copied().unwrap_or(0);
+        occurrence.insert(directed, seen + 1);
         if source == target {
             let Some(anchor) = positions.get(source) else {
                 continue;
@@ -116,6 +147,24 @@ pub fn paint_edges_for(
         let (Some(a), Some(b)) = (positions.get(source), positions.get(target)) else {
             continue;
         };
+        let raw = waypoints.get(*source, *target, seen);
+        if !raw.is_empty() {
+            let start = camera.world_to_viewport(viewport, *a);
+            let end = camera.world_to_viewport(viewport, *b);
+            let screen_raw: Vec<cg_types::Point2> = raw
+                .iter()
+                .map(|point| camera.world_to_viewport(viewport, *point))
+                .collect();
+            let bends = clean_waypoints(start, &screen_raw, end);
+            let mut line = Vec::with_capacity(bends.len() + 2);
+            line.push(start);
+            line.extend_from_slice(&bends);
+            line.push(end);
+            if polyline_visible(&line, viewport) {
+                painted.push(waypoint_edge(*source, *target, start, end, bends, style));
+            }
+            continue;
+        }
         let key = unordered_key(*source, *target);
         let bundle_len = context.bundle_len(key);
         if !segment_in_grown_rect(*a, *b, world_rect, margin + spread_for(bundle_len)) {
@@ -142,9 +191,7 @@ pub fn paint_edges_for(
             }
             let line = segmented_polyline(start, &via, end);
             if polyline_visible(&line, viewport) {
-                painted.push(manhattan_edge(
-                    *source, *target, start, end, bend_a, bend_b, style,
-                ));
+                painted.push(manhattan_edge(*source, *target, start, end, via, style));
             }
             continue;
         }
@@ -169,6 +216,33 @@ pub fn paint_single_edge(
     options: EdgePaintOptions,
     edge_style: impl Fn(NodeIndex, NodeIndex) -> EdgeStyle,
 ) -> Option<PaintedEdge> {
+    paint_single_edge_with_waypoints(
+        pairs,
+        ordinal,
+        positions,
+        camera,
+        viewport,
+        options,
+        &WaypointStore::new(),
+        edge_style,
+    )
+}
+
+/// Single-edge plan honoring user waypoints.
+///
+/// The result agrees with [`paint_edges_for_with_waypoints`] for the same
+/// ordinal, so the retained cache can refresh moved nodes without rebuilding
+/// every edge.
+pub fn paint_single_edge_with_waypoints(
+    pairs: &[(NodeIndex, NodeIndex)],
+    ordinal: usize,
+    positions: &Positions,
+    camera: &Camera,
+    viewport: Vec2,
+    options: EdgePaintOptions,
+    waypoints: &WaypointStore,
+    edge_style: impl Fn(NodeIndex, NodeIndex) -> EdgeStyle,
+) -> Option<PaintedEdge> {
     let (source, target) = *pairs.get(ordinal)?;
     let style = edge_style(source, target);
     let world_rect = world_viewport_rect(camera, viewport);
@@ -189,6 +263,29 @@ pub fn paint_single_edge(
         (Some(a), Some(b)) => (*a, *b),
         _ => return None,
     };
+    let occurrence = pairs
+        .iter()
+        .take(ordinal)
+        .filter(|(a, b)| *a == source && *b == target)
+        .count();
+    let raw = waypoints.get(source, target, occurrence);
+    if !raw.is_empty() {
+        let start = camera.world_to_viewport(viewport, a);
+        let end = camera.world_to_viewport(viewport, b);
+        let screen_raw: Vec<cg_types::Point2> = raw
+            .iter()
+            .map(|point| camera.world_to_viewport(viewport, *point))
+            .collect();
+        let bends = clean_waypoints(start, &screen_raw, end);
+        let mut line = Vec::with_capacity(bends.len() + 2);
+        line.push(start);
+        line.extend_from_slice(&bends);
+        line.push(end);
+        if !polyline_visible(&line, viewport) {
+            return None;
+        }
+        return Some(waypoint_edge(source, target, start, end, bends, style));
+    }
     let (slot, bundle_len) = bundle_slot(pairs, ordinal);
     if !segment_in_grown_rect(a, b, world_rect, margin + spread_for(bundle_len)) {
         return None;
@@ -215,9 +312,7 @@ pub fn paint_single_edge(
         if !polyline_visible(&line, viewport) {
             return None;
         }
-        return Some(manhattan_edge(
-            source, target, start, end, bend_a, bend_b, style,
-        ));
+        return Some(manhattan_edge(source, target, start, end, via, style));
     }
     let ctrl = bezier_control(start, end, source, target, slot, bundle_len, options);
     if !edge_visible(start, end, ctrl, viewport) {
@@ -326,8 +421,7 @@ mod tests {
             end: Point2::new(10.0, 0.0),
             ctrl: None,
             loop_ctrls: None,
-            bend_a: None,
-            bend_b: None,
+            bends: Vec::new(),
             aggregated: false,
             tint: 0,
             width: 1.0,
@@ -501,7 +595,7 @@ mod tests {
             let from_bulk = bulk
                 .iter()
                 .find(|edge| edge.source == pair.0 && edge.target == pair.1)
-                .copied()
+                .cloned()
                 .unwrap_or_else(|| panic!("bulk keeps {pair:?}"));
             assert_eq!(single.start, from_bulk.start);
             assert_eq!(single.end, from_bulk.end);
@@ -567,5 +661,133 @@ mod tests {
         assert!(painted_edge_hits(&loops[0], above));
         let below = Rect::new(Point2::new(412.0, 500.0), Vec2::new(200.0, 80.0));
         assert!(!painted_edge_hits(&loops[0], below));
+    }
+
+    #[test]
+    fn waypoint_edge_routes_directly_and_hits_consistently() {
+        use crate::waypoints::WaypointStore;
+
+        let graph = MockGraph::chain(2);
+        let mut positions = Positions::new();
+        positions.insert(NodeIndex::new(0), Point2::new(-400.0, 0.0));
+        positions.insert(NodeIndex::new(1), Point2::new(-300.0, 40.0));
+        let mut pairs = graph.edges();
+        pairs.sort_unstable_by_key(|(source, target)| (source.index(), target.index()));
+        let plain = paint_edges_for(
+            &pairs,
+            &positions,
+            &camera(),
+            viewport(),
+            EdgePaintOptions::default(),
+            edge_style,
+        );
+        assert_eq!(plain.len(), 1);
+        assert!(plain[0].bends().is_empty());
+        let mut store = WaypointStore::new();
+        store.set_single(
+            NodeIndex::new(0),
+            NodeIndex::new(1),
+            vec![Point2::new(-370.0, -30.0), Point2::new(-330.0, 60.0)],
+        );
+        let routed = paint_edges_for_with_waypoints(
+            &pairs,
+            &positions,
+            &camera(),
+            viewport(),
+            EdgePaintOptions::default(),
+            &store,
+            edge_style,
+        );
+        assert_eq!(routed.len(), 1);
+        assert_eq!(routed[0].bends().len(), 2);
+        assert!(routed[0].ctrl.is_none());
+        assert!(painted_edge_hits(
+            &routed[0],
+            Rect::from_corners(routed[0].start, routed[0].bends()[0])
+        ));
+        let single = paint_single_edge_with_waypoints(
+            &pairs,
+            0,
+            &positions,
+            &camera(),
+            viewport(),
+            EdgePaintOptions::default(),
+            &store,
+            edge_style,
+        )
+        .expect("waypoint edge stays visible");
+        assert_eq!(single.bends(), routed[0].bends());
+    }
+
+    #[test]
+    fn waypoint_cleaning_degrades_to_straight() {
+        use crate::waypoints::WaypointStore;
+
+        let graph = MockGraph::chain(2);
+        let mut positions = Positions::new();
+        positions.insert(NodeIndex::new(0), Point2::new(-400.0, 0.0));
+        positions.insert(NodeIndex::new(1), Point2::new(-300.0, 0.0));
+        let mut pairs = graph.edges();
+        pairs.sort_unstable_by_key(|(source, target)| (source.index(), target.index()));
+        let mut store = WaypointStore::new();
+        store.set_single(
+            NodeIndex::new(0),
+            NodeIndex::new(1),
+            vec![Point2::new(f32::NAN, 0.0), Point2::new(-400.0, 0.0)],
+        );
+        let routed = paint_edges_for_with_waypoints(
+            &pairs,
+            &positions,
+            &camera(),
+            viewport(),
+            EdgePaintOptions::default(),
+            &store,
+            edge_style,
+        );
+        assert_eq!(routed.len(), 1);
+        assert!(routed[0].bends().is_empty());
+    }
+
+    #[test]
+    fn waypoints_skip_haystack_and_manhattan_derivation() {
+        use crate::waypoints::WaypointStore;
+
+        let mut graph = MockGraph::isolated(2);
+        for _ in 0..6 {
+            graph.push_edge(0, 1);
+        }
+        let mut positions = Positions::new();
+        positions.insert(NodeIndex::new(0), Point2::new(-400.0, 0.0));
+        positions.insert(NodeIndex::new(1), Point2::new(-300.0, 40.0));
+        let mut pairs = graph.edges();
+        pairs.sort_unstable_by_key(|(source, target)| (source.index(), target.index()));
+        let mut store = WaypointStore::new();
+        store.set(
+            NodeIndex::new(0),
+            NodeIndex::new(1),
+            0,
+            vec![Point2::new(-350.0, -40.0)],
+        );
+        let options = EdgePaintOptions {
+            force_haystack: true,
+            ortho: Some(OrthoDirection::Auto),
+            ..EdgePaintOptions::default()
+        };
+        let routed = paint_edges_for_with_waypoints(
+            &pairs,
+            &positions,
+            &camera(),
+            viewport(),
+            options,
+            &store,
+            edge_style,
+        );
+        assert_eq!(routed.len(), 6);
+        let first = routed
+            .iter()
+            .find(|edge| !edge.bends().is_empty())
+            .expect("first parallel edge keeps waypoints");
+        assert_eq!(first.bends().len(), 1);
+        assert!(!first.aggregated);
     }
 }

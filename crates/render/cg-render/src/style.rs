@@ -11,6 +11,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use cg_graph::{DataValue, NodeIndex};
 
 use crate::arrows::ArrowKind;
+use crate::image::NodeImage;
 use crate::shapes::NodeShape;
 
 /// Fill of nodes carrying no mapping or bypass.
@@ -118,7 +119,7 @@ fn lerp_rgb(start: u32, end: u32, t: f32) -> u32 {
 }
 
 /// Resolved appearance of one node.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct NodeStyle {
     pub fill: NodeFill,
     pub stroke: u32,
@@ -127,6 +128,7 @@ pub struct NodeStyle {
     pub label_size: f32,
     pub scale: f32,
     pub shape: NodeShape,
+    pub image: Option<NodeImage>,
 }
 
 impl Default for NodeStyle {
@@ -139,6 +141,7 @@ impl Default for NodeStyle {
             label_size: 12.0,
             scale: 1.0,
             shape: NodeShape::Square,
+            image: None,
         }
     }
 }
@@ -177,6 +180,7 @@ pub struct NodeStylePatch {
     pub label_size: Option<f32>,
     pub scale: Option<f32>,
     pub shape: Option<NodeShape>,
+    pub image: Option<Option<NodeImage>>,
 }
 
 impl NodeStylePatch {
@@ -189,6 +193,7 @@ impl NodeStylePatch {
             && self.label_size.is_none()
             && self.scale.is_none()
             && self.shape.is_none()
+            && self.image.is_none()
     }
 
     /// Patch selecting a node through the bypass channel.
@@ -239,6 +244,22 @@ impl NodeStylePatch {
         }
     }
 
+    /// Patch showing a local background image on a node.
+    pub fn with_image(image: NodeImage) -> Self {
+        Self {
+            image: Some(Some(image)),
+            ..Self::default()
+        }
+    }
+
+    /// Patch clearing any background image from a node.
+    pub fn without_image() -> Self {
+        Self {
+            image: Some(None),
+            ..Self::default()
+        }
+    }
+
     pub fn apply_to(&self, base: &NodeStyle) -> NodeStyle {
         NodeStyle {
             fill: self.fill.unwrap_or(base.fill),
@@ -248,6 +269,7 @@ impl NodeStylePatch {
             label_size: self.label_size.unwrap_or(base.label_size),
             scale: self.scale.unwrap_or(base.scale),
             shape: self.shape.unwrap_or(base.shape),
+            image: self.image.clone().unwrap_or_else(|| base.image.clone()),
         }
     }
 
@@ -474,7 +496,7 @@ impl StyleMapper {
         attrs: &HashMap<String, DataValue>,
         classes: &BTreeSet<String>,
     ) -> NodeStyle {
-        let mut resolved = *base;
+        let mut resolved = base.clone();
         for rule in &self.rules {
             match rule {
                 NodeStyleRule::Predicate(entry) => {
@@ -1171,5 +1193,26 @@ mod tests {
         let resolved = patch.apply_to(&base);
         assert_eq!(resolved.fill.start, 0x111111);
         assert_eq!(resolved.fill.end, 0x222222);
+    }
+
+    #[test]
+    fn image_defaults_to_none_and_patch_sets_and_clears() {
+        use crate::image::{ImageFit, NodeImage};
+
+        assert!(NodeStyle::default().image.is_none());
+        assert!(NodeStylePatch::default().is_empty());
+        let base = NodeStyle::default();
+        let spec = NodeImage::new("/tmp/a.png", ImageFit::Cover);
+        let set = NodeStylePatch::with_image(spec.clone()).apply_to(&base);
+        assert_eq!(set.image, Some(spec));
+        assert!(
+            !NodeStylePatch::with_image(NodeImage::new("/tmp/a.png", ImageFit::Contain)).is_empty()
+        );
+        let mut with_image = base.clone();
+        with_image.image = set.image;
+        let cleared = NodeStylePatch::without_image().apply_to(&with_image);
+        assert!(cleared.image.is_none());
+        let untouched = NodeStylePatch::default().apply_to(&base);
+        assert!(untouched.image.is_none());
     }
 }

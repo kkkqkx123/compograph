@@ -1,11 +1,13 @@
 //! Editable graph model with change notifications.
 
+pub mod affinity;
 pub mod algo;
 pub mod attrs;
 pub mod binding;
 pub mod centrality;
 pub mod classes;
 pub mod compound;
+pub mod distances;
 pub mod euler;
 pub mod events;
 pub mod hierarchical;
@@ -17,6 +19,7 @@ pub mod positions;
 pub mod store;
 pub mod view;
 
+pub use affinity::affinity_clusters;
 pub use algo::{
     all_pairs_shortest_paths, articulation_points, bellman_ford_paths, breadth_first_order,
     bridges, depth_first_order, heuristic_shortest_path, immediate_dominators,
@@ -31,6 +34,7 @@ pub use centrality::{
 };
 pub use classes::valid_class_name;
 pub use compound::{CompoundError, MAX_COMPOUND_DEPTH, visible_members};
+pub use distances::{ClusterMetric, metric_clusters, point_distance};
 pub use euler::{eulerian_path_directed, eulerian_path_undirected};
 pub use events::GraphChangeEvent;
 pub use hierarchical::hierarchical_clusters;

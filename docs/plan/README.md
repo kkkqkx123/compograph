@@ -16,6 +16,8 @@
 | [cytoscape-gap-supplement-design.md](./cytoscape-gap-supplement-design.md) | **差距补充功能设计**：基于差距分析与参照清单的自由属性、选择器、复合节点、渲染填充、交互、动画、算法补齐的设计与交付顺序 |
 | [cytoscape-tasks-1-3-refinement.md](./cytoscape-tasks-1-3-refinement.md) | **任务 1-3 细化修改方案**：自由属性与数据映射、类集合与轻量选择器、复合节点的落点模块、行为契约、跨层影响与验收口径 |
 | [cytoscape-tasks-4-6-refinement.md](./cytoscape-tasks-4-6-refinement.md) | **任务 4-6 细化修改方案**：节点形状与箭头扩充、渐变填充、标签增强的落点模块、行为契约、跨层影响与验收口径 |
+| [cytoscape-tasks-7-9-refinement.md](./cytoscape-tasks-7-9-refinement.md) | **任务 7-9 细化修改方案**：节点背景图、用户拐点边、力导向补强的落点模块、行为契约、跨层影响与验收口径 |
+| [cytoscape-tasks-10-12-refinement.md](./cytoscape-tasks-10-12-refinement.md) | **任务 10-12 细化修改方案**：邻域高亮锁定与选择模式、元素动画、算法补齐的落点模块、行为契约、跨层影响与验收口径 |
 
 ## 约定
 

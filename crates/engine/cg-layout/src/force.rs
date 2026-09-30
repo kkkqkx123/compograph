@@ -434,6 +434,30 @@ fn clamp_offset(offset: Vec2, temperature: f32) -> Vec2 {
     }
 }
 
+/// True when two square node boxes centered at `a` and `b` overlap.
+pub fn boxes_overlap(a: Point2, b: Point2, size: f32) -> bool {
+    let extent = size.max(1.0);
+    (a.x - b.x).abs() < extent && (a.y - b.y).abs() < extent
+}
+
+/// True when any pair of placed nodes overlaps at `size`.
+pub fn has_overlaps(positions: &Positions, size: f32) -> bool {
+    let mut points: Vec<Point2> = positions.values().copied().collect();
+    points.sort_by(|a, b| {
+        a.x.partial_cmp(&b.x)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.y.partial_cmp(&b.y).unwrap_or(std::cmp::Ordering::Equal))
+    });
+    for (index, a) in points.iter().enumerate() {
+        for b in points.iter().skip(index + 1) {
+            if boxes_overlap(*a, *b, size) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use cg_graph::MockGraph;
@@ -538,5 +562,45 @@ mod tests {
         let layout = ForceLayout::with_options(quiet_options());
         let result = layout.layout(&graph, &Positions::new(), &FixedNodes::default());
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn overlap_helper_detects_touching_boxes() {
+        assert!(boxes_overlap(
+            Point2::new(0.0, 0.0),
+            Point2::new(10.0, 10.0),
+            24.0
+        ));
+        assert!(!boxes_overlap(
+            Point2::new(0.0, 0.0),
+            Point2::new(30.0, 0.0),
+            24.0
+        ));
+        let mut crowded = Positions::new();
+        crowded.insert(NodeIndex::new(0), Point2::new(0.0, 0.0));
+        crowded.insert(NodeIndex::new(1), Point2::new(5.0, 5.0));
+        assert!(has_overlaps(&crowded, 24.0));
+        let mut spread = Positions::new();
+        spread.insert(NodeIndex::new(0), Point2::new(0.0, 0.0));
+        spread.insert(NodeIndex::new(1), Point2::new(100.0, 0.0));
+        assert!(!has_overlaps(&spread, 24.0));
+        assert!(!has_overlaps(&Positions::new(), 24.0));
+    }
+
+    #[test]
+    fn small_graph_converges_without_overlaps() {
+        let graph = MockGraph::chain(4);
+        let layout = ForceLayout::with_options(ForceOptions {
+            iterations: 400,
+            initial_temp: 32.0,
+            cooling: 0.98,
+            ..ForceOptions::default()
+        });
+        let result = layout.layout(&graph, &spread_start(&graph), &FixedNodes::default());
+        assert_eq!(result.len(), 4);
+        assert!(!has_overlaps(&result, ForceOptions::default().node_size));
+        for point in result.values() {
+            assert!(point.x.is_finite() && point.y.is_finite());
+        }
     }
 }

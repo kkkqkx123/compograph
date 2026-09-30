@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 
 use cg_graph::{GraphStore, NodeIndex, Positions};
-use cg_types::{Point2, Rect, Vec2};
+use cg_types::{Point2, Rect};
 
 /// Gap kept between separated top-level groups, in model units.
 pub const GROUP_GAP: f32 = 80.0;
@@ -142,12 +142,6 @@ pub fn group_centers(store: &GraphStore, positions: &Positions) -> HashMap<NodeI
     centers
 }
 
-/// Size of the viewport helper; keeps the Vec2 import used.
-#[allow(dead_code)]
-fn _keep_vec2(size: Vec2) -> Vec2 {
-    size
-}
-
 /// Snapshot of the compound hierarchy for background write-backs.
 ///
 /// Background tasks cannot read the live store, so the driver captures the
@@ -262,5 +256,37 @@ mod tests {
         apply_compound_postprocess(&store, &mut positions, 12.0);
         assert!(positions.is_empty());
         assert!(group_centers(&store, &positions).is_empty());
+    }
+
+    #[test]
+    fn separated_groups_no_longer_overlap() {
+        let first = vec![NodeIndex::new(0), NodeIndex::new(1)];
+        let second = vec![NodeIndex::new(2), NodeIndex::new(3)];
+        let groups = vec![first, second];
+        let mut positions = Positions::new();
+        positions.insert(NodeIndex::new(0), Point2::new(0.0, 0.0));
+        positions.insert(NodeIndex::new(1), Point2::new(10.0, 0.0));
+        positions.insert(NodeIndex::new(2), Point2::new(5.0, 0.0));
+        positions.insert(NodeIndex::new(3), Point2::new(15.0, 0.0));
+        separate_groups_with(&groups, &mut positions, 12.0);
+        let left = group_bounds(&groups[0], &positions, 12.0).expect("left bounds exist");
+        let right = group_bounds(&groups[1], &positions, 12.0).expect("right bounds exist");
+        assert!(left.origin.x + left.size.x + GROUP_GAP - 1.0 <= right.origin.x);
+    }
+
+    #[test]
+    fn containers_snap_to_their_leaf_centers() {
+        let container = NodeIndex::new(9);
+        let leaves = vec![NodeIndex::new(10), NodeIndex::new(11)];
+        let mut positions = Positions::new();
+        positions.insert(NodeIndex::new(10), Point2::new(0.0, 0.0));
+        positions.insert(NodeIndex::new(11), Point2::new(20.0, 10.0));
+        positions.insert(container, Point2::new(-100.0, -100.0));
+        snap_containers_with(&[(container, leaves)], &mut positions);
+        assert_eq!(positions.get(&container), Some(&Point2::new(10.0, 5.0)));
+        let mut empty = Positions::new();
+        empty.insert(container, Point2::new(7.0, 7.0));
+        snap_containers_with(&[(container, Vec::new())], &mut empty);
+        assert_eq!(empty.get(&container), Some(&Point2::new(7.0, 7.0)));
     }
 }

@@ -120,7 +120,7 @@ fn edge_path(edge: &PaintedEdge) -> Vec<Point2> {
     if let Some([ctrl_a, ctrl_b]) = edge.loop_ctrls {
         return sample_cubic_bezier(edge.start, ctrl_a, ctrl_b, edge.end, BEZIER_HIT_SAMPLES);
     }
-    if edge.bend_a.is_some() || edge.bend_b.is_some() {
+    if !edge.bends.is_empty() {
         return edge.polyline();
     }
     match edge.ctrl {
@@ -379,8 +379,7 @@ mod tests {
             end: Point2::new(1.0, 0.0),
             ctrl: None,
             loop_ctrls: None,
-            bend_a: None,
-            bend_b: None,
+            bends: Vec::new(),
             aggregated: false,
             tint: 0xFFFFFF,
             width: 1.0,
@@ -409,6 +408,7 @@ mod tests {
             opacity: 1.0,
             shape: NodeShape::Square,
             points: vec![],
+            image: None,
         }];
         let edges = vec![PaintedEdge {
             source: NodeIndex::new(0),
@@ -417,8 +417,7 @@ mod tests {
             end: Point2::new(9.0, 9.0),
             ctrl: None,
             loop_ctrls: None,
-            bend_a: None,
-            bend_b: None,
+            bends: Vec::new(),
             aggregated: false,
             tint: 0x00FF00,
             width: 1.0,
@@ -450,6 +449,7 @@ mod tests {
             opacity: 1.0,
             shape: NodeShape::Square,
             points: vec![],
+            image: None,
         }];
         let pixels = rasterize(10, 10, &nodes, &[], &[], [0, 0, 0]);
         let left = (5 * 10) * 3;

@@ -10,6 +10,7 @@ use cg_graph::NodeIndex;
 use cg_types::{Point2, Vec2};
 
 use crate::arrows::ArrowKind;
+use crate::image::NodeImage;
 use crate::lod::DetailLevel;
 use crate::shapes::NodeShape;
 use crate::style::NodeFill;
@@ -43,6 +44,8 @@ pub const RUBBER_BAND_STROKE: u32 = 0x4a9eff;
 /// and tests share one vertex table. The stroke outline reuses the resolved
 /// style border so the canvas and the export raster agree. The fill carries
 /// the full gradient description; minimal detail falls back to its solid end.
+/// The image carries the background picture specification; minimal detail
+/// clears it so dense views keep the fast solid path.
 #[derive(Clone, Debug)]
 pub struct PaintedNode {
     pub id: NodeIndex,
@@ -54,10 +57,11 @@ pub struct PaintedNode {
     pub opacity: f32,
     pub shape: NodeShape,
     pub points: Vec<Point2>,
+    pub image: Option<NodeImage>,
 }
 
 /// An edge polyline scheduled for painting, in screen pixels.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct PaintedEdge {
     pub source: NodeIndex,
     pub target: NodeIndex,
@@ -67,10 +71,13 @@ pub struct PaintedEdge {
     pub ctrl: Option<Point2>,
     /// Control points of a self loop; only set when start equals end.
     pub loop_ctrls: Option<[Point2; 2]>,
-    /// First orthogonal bend, if the edge routes as a polyline.
-    pub bend_a: Option<Point2>,
-    /// Second orthogonal bend, if the route needs two turns.
-    pub bend_b: Option<Point2>,
+    /// Ordered interior waypoints from start to end, in screen pixels.
+    ///
+    /// Empty means straight or curved, one entry means a single fold, more
+    /// entries mean a multi-segment polyline. Orthogonal routes store their
+    /// one or two bends as the first entries; user waypoints store the full
+    /// cleaned sequence.
+    pub bends: Vec<Point2>,
     /// True when the edge was simplified as a haystack fan-out for dense bundles.
     /// Explicit orthogonal and taxi routes keep this false; they carry bends
     /// instead of a bundle simplification.
@@ -99,8 +106,7 @@ impl PaintedEdge {
             end,
             ctrl: None,
             loop_ctrls: None,
-            bend_a: None,
-            bend_b: None,
+            bends: Vec::new(),
             aggregated: false,
             tint,
             width,
@@ -118,26 +124,14 @@ impl PaintedEdge {
 
     /// Interior points of the painted path excluding the endpoints.
     pub fn bends(&self) -> Vec<Point2> {
-        let mut bends = Vec::new();
-        if let Some(bend) = self.bend_a {
-            bends.push(bend);
-        }
-        if let Some(bend) = self.bend_b {
-            bends.push(bend);
-        }
-        bends
+        self.bends.clone()
     }
 
     /// Full painted polyline from start through bends to end.
     pub fn polyline(&self) -> Vec<Point2> {
-        let mut line = Vec::with_capacity(4);
+        let mut line = Vec::with_capacity(self.bends.len() + 2);
         line.push(self.start);
-        if let Some(bend) = self.bend_a {
-            line.push(bend);
-        }
-        if let Some(bend) = self.bend_b {
-            line.push(bend);
-        }
+        line.extend_from_slice(&self.bends);
         line.push(self.end);
         line
     }

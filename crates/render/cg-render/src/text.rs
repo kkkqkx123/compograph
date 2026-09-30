@@ -191,8 +191,7 @@ pub fn edge_label_angle(edge: &PaintedEdge) -> f32 {
         .loop_ctrls
         .map(|ctrls| ctrls[1])
         .or(edge.ctrl)
-        .or(edge.bend_b)
-        .or(edge.bend_a)
+        .or_else(|| edge.bends.last().copied())
         .unwrap_or(edge.start);
     let dx = edge.end.x - reference.x;
     let dy = edge.end.y - reference.y;
@@ -381,6 +380,7 @@ mod tests {
             opacity: 1.0,
             shape: crate::shapes::NodeShape::Square,
             points: Vec::new(),
+            image: None,
         }
     }
 
@@ -446,8 +446,7 @@ mod tests {
                 end,
                 ctrl,
                 loop_ctrls: None,
-                bend_a: None,
-                bend_b: None,
+                bends: Vec::new(),
                 aggregated: false,
                 tint: 0,
                 width: 1.0,
@@ -486,8 +485,7 @@ mod tests {
             end: Point2::new(10.0, 0.0),
             ctrl: None,
             loop_ctrls: None,
-            bend_a: None,
-            bend_b: None,
+            bends: Vec::new(),
             aggregated: false,
             tint: 0,
             width: 1.0,
@@ -580,8 +578,7 @@ mod tests {
                 end,
                 ctrl: None,
                 loop_ctrls: None,
-                bend_a: None,
-                bend_b: None,
+                bends: Vec::new(),
                 aggregated: false,
                 tint: 0,
                 width: 1.0,

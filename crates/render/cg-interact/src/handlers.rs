@@ -4,7 +4,7 @@
 //! headlessly; the application converts platform events into the model-space
 //! points these functions consume.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap, VecDeque};
 
 use cg_geometry::{
     BEZIER_HIT_SAMPLES, OrthoDirection, bezier_control_for_edge, manhattan_route, parallel_offsets,
@@ -15,6 +15,8 @@ use cg_render::{
     NODE_SIDE, NodeShape, PARALLEL_STEP, SpatialIndex, point_hits_shape, shape_hits_rect,
 };
 use cg_types::{Point2, Rect, Vec2};
+
+use super::input::{InteractLocks, SelectMode, SelectionState};
 
 /// Half extent of a node body in model units, derived from the paint plan.
 pub const NODE_HALF_EXTENT: f32 = NODE_SIDE / 2.0;
@@ -266,6 +268,96 @@ pub fn wheel_zoom_factor(line_delta: f32) -> f32 {
     1.15f32.powf(-line_delta)
 }
 
+/// Nodes within `hops` undirected steps of `seeds`, seeds included.
+///
+/// The expansion reads only the neighbor queries, so folded or hidden nodes
+/// are filtered by the caller. Zero hops return the seeds alone, and an empty
+/// seed set stays empty.
+pub fn expand_neighborhood(
+    graph: &dyn GraphView,
+    seeds: impl IntoIterator<Item = NodeIndex>,
+    hops: usize,
+) -> BTreeSet<NodeIndex> {
+    let mut visited: BTreeSet<NodeIndex> = seeds.into_iter().collect();
+    if hops == 0 || visited.is_empty() {
+        return visited;
+    }
+    let mut frontier: VecDeque<NodeIndex> = visited.iter().copied().collect();
+    let mut depth: HashMap<NodeIndex, usize> = visited.iter().map(|node| (*node, 0)).collect();
+    while let Some(node) = frontier.pop_front() {
+        let current = depth.get(&node).copied().unwrap_or(0);
+        if current >= hops {
+            continue;
+        }
+        for neighbour in graph.neighbors(node) {
+            if visited.insert(neighbour) {
+                depth.insert(neighbour, current + 1);
+                frontier.push_back(neighbour);
+            }
+        }
+    }
+    visited
+}
+
+/// Directed edges with both endpoints inside `expanded`, in sorted order.
+///
+/// Restricting to internal edges keeps highlighted edges anchored at tinted
+/// nodes on both ends, for any hop depth.
+pub fn neighborhood_edges(
+    graph: &dyn GraphView,
+    expanded: &BTreeSet<NodeIndex>,
+) -> Vec<(NodeIndex, NodeIndex)> {
+    if expanded.is_empty() {
+        return Vec::new();
+    }
+    let mut found: Vec<(NodeIndex, NodeIndex)> = graph
+        .edges()
+        .into_iter()
+        .filter(|(source, target)| expanded.contains(source) && expanded.contains(target))
+        .collect();
+    found.sort_unstable_by_key(|(source, target)| (source.index(), target.index()));
+    found.dedup();
+    found
+}
+
+/// Applies one point tap to `selection` under `mode` and the modifier key.
+///
+/// A held modifier always toggles the tapped node, preserving the existing
+/// rubber-band path. Without a modifier, single mode replaces the set while
+/// additive mode accumulates.
+pub fn apply_point_select(
+    selection: &mut SelectionState,
+    mode: SelectMode,
+    node: NodeIndex,
+    additive_modifier: bool,
+) {
+    if additive_modifier {
+        selection.toggle(node);
+        return;
+    }
+    match mode {
+        SelectMode::Single => selection.select(node),
+        SelectMode::Additive => selection.add(node),
+    }
+}
+
+/// True when a blank press clears the selection.
+///
+/// Locking deselect or holding the additive modifier both keep the set.
+pub fn should_clear_on_blank(locks: &InteractLocks, additive_modifier: bool) -> bool {
+    locks.can_deselect() && !additive_modifier
+}
+
+/// True when a node drag gesture may start under `locks`.
+pub fn can_begin_drag(locks: &InteractLocks) -> bool {
+    locks.can_drag()
+}
+
+/// True when a press may run node hit testing under `locks`.
+pub fn can_grab_node(locks: &InteractLocks) -> bool {
+    locks.can_grab()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -489,5 +581,82 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn neighborhood_expands_by_hops_and_clears_with_seeds() {
+        use cg_graph::MockGraph;
+
+        let graph = MockGraph::chain(4);
+        let seed = [NodeIndex::new(1)];
+        let none = expand_neighborhood(&graph, seed, 0);
+        assert_eq!(none, BTreeSet::from([NodeIndex::new(1)]));
+        let one = expand_neighborhood(&graph, [NodeIndex::new(1)], 1);
+        assert_eq!(
+            one,
+            BTreeSet::from([
+                NodeIndex::new(0),
+                NodeIndex::new(1),
+                NodeIndex::new(2)
+            ])
+        );
+        let two = expand_neighborhood(&graph, [NodeIndex::new(1)], 2);
+        assert_eq!(
+            two,
+            BTreeSet::from([
+                NodeIndex::new(0),
+                NodeIndex::new(1),
+                NodeIndex::new(2),
+                NodeIndex::new(3)
+            ])
+        );
+        let empty = expand_neighborhood(&graph, [], 2);
+        assert!(empty.is_empty());
+        let edges = neighborhood_edges(&graph, &one);
+        assert_eq!(
+            edges,
+            vec![
+                (NodeIndex::new(0), NodeIndex::new(1)),
+                (NodeIndex::new(1), NodeIndex::new(2))
+            ]
+        );
+        assert!(neighborhood_edges(&graph, &BTreeSet::new()).is_empty());
+    }
+
+    #[test]
+    fn point_select_modes_and_modifier_combine() {
+        use super::super::input::SelectionState;
+
+        let mut selection = SelectionState::default();
+        apply_point_select(&mut selection, SelectMode::Single, NodeIndex::new(1), false);
+        apply_point_select(&mut selection, SelectMode::Single, NodeIndex::new(2), false);
+        assert_eq!(
+            selection.iter().collect::<Vec<_>>(),
+            vec![NodeIndex::new(2)]
+        );
+        let mut additive = SelectionState::default();
+        apply_point_select(&mut additive, SelectMode::Additive, NodeIndex::new(1), false);
+        apply_point_select(&mut additive, SelectMode::Additive, NodeIndex::new(2), false);
+        assert_eq!(additive.len(), 2);
+        apply_point_select(&mut additive, SelectMode::Single, NodeIndex::new(1), true);
+        assert!(!additive.contains(NodeIndex::new(1)));
+        assert!(additive.contains(NodeIndex::new(2)));
+    }
+
+    #[test]
+    fn locks_gate_drag_grab_and_deselect() {
+        let open = InteractLocks::default();
+        assert!(can_begin_drag(&open));
+        assert!(can_grab_node(&open));
+        assert!(should_clear_on_blank(&open, false));
+        assert!(!should_clear_on_blank(&open, true));
+        let locked = InteractLocks {
+            lock_drag: true,
+            no_grab: true,
+            no_deselect: true,
+        };
+        assert!(!can_begin_drag(&locked));
+        assert!(!can_grab_node(&locked));
+        assert!(!should_clear_on_blank(&locked, false));
     }
 }

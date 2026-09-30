@@ -159,6 +159,11 @@ pub fn paint_single_node_for_level(
     } else {
         style.fill
     };
+    let image = if minimal {
+        None
+    } else {
+        style.image.clone().filter(|spec| spec.is_supported())
+    };
     let points = node_polygon(shape, side)
         .into_iter()
         .map(|vertex| Point2::new(screen.x + vertex.x, screen.y + vertex.y))
@@ -173,6 +178,7 @@ pub fn paint_single_node_for_level(
         opacity: style.opacity,
         shape,
         points,
+        image,
     })
 }
 
@@ -305,7 +311,7 @@ mod tests {
             &camera(),
             viewport(),
             DetailLevel::Full,
-            |_| shaped,
+            |_| shaped.clone(),
         )
         .expect("node stays visible");
         assert_eq!(full.shape, NodeShape::Diamond);
@@ -316,7 +322,7 @@ mod tests {
             &camera(),
             viewport(),
             DetailLevel::Minimal,
-            |_| shaped,
+            |_| shaped.clone(),
         )
         .expect("node stays visible");
         assert_eq!(minimal.shape, NodeShape::Square);
@@ -336,7 +342,7 @@ mod tests {
             &camera(),
             viewport(),
             DetailLevel::Full,
-            |_| gradient,
+            |_| gradient.clone(),
         )
         .expect("node stays visible");
         assert!(!full.fill.is_solid());
@@ -346,10 +352,59 @@ mod tests {
             &camera(),
             viewport(),
             DetailLevel::Minimal,
-            |_| gradient,
+            |_| gradient.clone(),
         )
         .expect("node stays visible");
         assert!(minimal.fill.is_solid());
         assert_eq!(minimal.fill.start, 0x112233);
+    }
+
+    #[test]
+    fn image_rides_on_the_plan_and_minimal_clears_it() {
+        use crate::image::{ImageFit, NodeImage};
+
+        let mut positions = Positions::new();
+        positions.insert(NodeIndex::new(0), Point2::new(0.0, 0.0));
+        let imaged = NodeStyle {
+            image: Some(NodeImage::new("/tmp/a.png", ImageFit::Cover)),
+            ..NodeStyle::default()
+        };
+        let full = paint_single_node_for_level(
+            NodeIndex::new(0),
+            &positions,
+            &camera(),
+            viewport(),
+            DetailLevel::Full,
+            |_| imaged.clone(),
+        )
+        .expect("node stays visible");
+        assert!(full.image.is_some());
+        let minimal = paint_single_node_for_level(
+            NodeIndex::new(0),
+            &positions,
+            &camera(),
+            viewport(),
+            DetailLevel::Minimal,
+            |_| imaged.clone(),
+        )
+        .expect("node stays visible");
+        assert!(minimal.image.is_none());
+        let remote = NodeStyle {
+            image: Some(NodeImage::new(
+                "https://example.com/a.png",
+                ImageFit::Contain,
+            )),
+            ..NodeStyle::default()
+        };
+        let filtered = paint_single_node_for_level(
+            NodeIndex::new(0),
+            &positions,
+            &camera(),
+            viewport(),
+            DetailLevel::Full,
+            |_| remote.clone(),
+        )
+        .expect("node stays visible");
+        assert!(filtered.image.is_none());
     }
 }

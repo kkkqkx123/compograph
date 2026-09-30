@@ -3,7 +3,7 @@
 //! The store owns the hierarchy side tables. Layout and rendering only read
 //! through the queries here and the folding-aware view implementation.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use petgraph::stable_graph::NodeIndex;
 
@@ -356,73 +356,6 @@ impl GraphStore {
         self.children.clear();
         self.collapsed.clear();
     }
-
-    pub(crate) fn compound_tables_for_document(
-        &self,
-    ) -> (HashMap<NodeIndex, Option<NodeIndex>>, HashSet<NodeIndex>) {
-        let mut parents: HashMap<NodeIndex, Option<NodeIndex>> = HashMap::new();
-        for node in self.node_ids() {
-            parents.insert(node, self.parents.get(&node).copied());
-        }
-        (parents, self.collapsed.clone())
-    }
-
-    pub(crate) fn restore_compound(
-        &mut self,
-        parents: &HashMap<NodeIndex, Option<NodeIndex>>,
-        collapsed: &HashSet<NodeIndex>,
-    ) {
-        self.parents.clear();
-        self.children.clear();
-        self.collapsed.clear();
-        let mut ordered: Vec<NodeIndex> = parents.keys().copied().collect();
-        ordered.sort_unstable_by_key(|node| node.index());
-        for node in ordered {
-            if self.graph.node_weight(node).is_none() {
-                continue;
-            }
-            if let Some(parent) = parents.get(&node).copied().flatten() {
-                if self.graph.node_weight(parent).is_none() || parent == node {
-                    continue;
-                }
-                if self.subtree_would_cycle(node, parent) {
-                    continue;
-                }
-                if self.ancestors_of(parent).len() + 1 > MAX_COMPOUND_DEPTH {
-                    continue;
-                }
-                self.parents.insert(node, parent);
-                self.children.entry(parent).or_default().insert(node);
-            }
-        }
-        for node in collapsed {
-            if self.is_container(*node) {
-                self.collapsed.insert(*node);
-            }
-        }
-    }
-
-    fn subtree_would_cycle(&self, child: NodeIndex, parent: NodeIndex) -> bool {
-        let mut cursor = Some(parent);
-        while let Some(current) = cursor {
-            if current == child {
-                return true;
-            }
-            cursor = self.parents.get(&current).copied();
-        }
-        let mut stack = vec![child];
-        let mut seen = HashSet::new();
-        while let Some(next) = stack.pop() {
-            if !seen.insert(next) {
-                continue;
-            }
-            if next == parent {
-                return true;
-            }
-            stack.extend(self.children_of(next));
-        }
-        false
-    }
 }
 
 /// Visible members of `members` under `store`, in index order.
@@ -439,6 +372,33 @@ pub fn visible_members(store: &GraphStore, members: &[NodeIndex]) -> Vec<NodeInd
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::{BTreeSet, HashSet};
+
+    use petgraph::Directed;
+    use petgraph::stable_graph::StableGraph;
+
+    use crate::store::{EdgeData, NodeData};
+
+    fn chain_store() -> (GraphStore, [NodeIndex; 3]) {
+        let mut graph: StableGraph<NodeData, EdgeData, Directed> = StableGraph::default();
+        let root = graph.add_node(NodeData { label: "a".into() });
+        let middle = graph.add_node(NodeData { label: "b".into() });
+        let leaf = graph.add_node(NodeData { label: "c".into() });
+        let store = GraphStore {
+            graph,
+            node_attr_table: HashMap::new(),
+            edge_attr_table: HashMap::new(),
+            node_class_table: HashMap::new(),
+            edge_class_table: HashMap::new(),
+            parents: HashMap::from([(middle, root), (leaf, middle)]),
+            children: HashMap::from([
+                (root, BTreeSet::from([middle])),
+                (middle, BTreeSet::from([leaf])),
+            ]),
+            collapsed: HashSet::new(),
+        };
+        (store, [root, middle, leaf])
+    }
 
     #[test]
     fn depth_limit_is_eight() {
@@ -446,9 +406,31 @@ mod tests {
     }
 
     #[test]
-    fn cycle_detection_covers_children() {
-        let mut seen: HashSet<NodeIndex> = HashSet::new();
-        seen.insert(NodeIndex::new(1));
-        assert!(seen.contains(&NodeIndex::new(1)));
+    fn chained_hierarchy_reports_ancestors_depth_and_subtrees() {
+        let (store, [root, middle, leaf]) = chain_store();
+        assert!(store.has_compound());
+        assert!(store.is_root(root));
+        assert!(!store.is_root(leaf));
+        assert!(store.is_container(root));
+        assert!(!store.is_container(leaf));
+        assert_eq!(store.parent_of(leaf), Some(middle));
+        assert_eq!(store.ancestors_of(leaf), vec![middle, root]);
+        assert_eq!(store.depth_of(leaf), Some(2));
+        assert_eq!(store.children_of(root), vec![middle]);
+        assert_eq!(store.descendants_of(root), vec![middle, leaf]);
+        assert_eq!(store.subtree_of(middle), vec![middle, leaf]);
+        assert_eq!(store.visible_node_ids(), vec![root, middle, leaf]);
+        assert_eq!(store.top_ancestor(leaf), Some(root));
+    }
+
+    #[test]
+    fn collapsed_containers_hide_their_descendants() {
+        let (mut store, [root, middle, leaf]) = chain_store();
+        store.collapsed.insert(middle);
+        assert!(store.is_collapsed(middle));
+        assert!(store.is_visible(middle));
+        assert!(!store.is_visible(leaf));
+        assert_eq!(store.visible_ancestor(leaf), Some(middle));
+        assert_eq!(store.visible_node_ids(), vec![root, middle]);
     }
 }

@@ -3,24 +3,27 @@
 mod algo_panel;
 mod file_io;
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::time::Instant;
 
 use algo_panel::{AlgoOutcome, EdgePair};
 use cg_graph::{
-    ChangeFilter, GraphChangeEvent, GraphDocument, GraphStore, GraphView, NodeEntry, NodeIndex,
-    Positions, all_pairs_shortest_paths, articulation_points, bellman_ford_paths,
-    betweenness_centrality, breadth_first_order, bridges, closeness_centrality, degree_centrality,
-    depth_first_order, eulerian_path_directed, eulerian_path_undirected, export_dot,
-    global_min_cut, heuristic_shortest_path, hierarchical_clusters, immediate_dominators,
-    kmeans_clusters, markov_clusters, minimum_spanning_forest, minimum_spanning_tree_single,
-    negative_cycle_path, node_order, rank_nodes, remap_positions, shortest_path,
-    strongly_connected_components, subscribe_graph, topological_order, transitive_reduction,
+    ChangeFilter, ClusterMetric, GraphChangeEvent, GraphDocument, GraphStore, GraphView, NodeEntry,
+    NodeIndex, Positions, affinity_clusters, all_pairs_shortest_paths, articulation_points,
+    bellman_ford_paths, betweenness_centrality, breadth_first_order, bridges, closeness_centrality,
+    degree_centrality, depth_first_order, eulerian_path_directed, eulerian_path_undirected,
+    export_dot, global_min_cut, heuristic_shortest_path, hierarchical_clusters,
+    immediate_dominators, kmeans_clusters, markov_clusters, metric_clusters,
+    minimum_spanning_forest, minimum_spanning_tree_single, negative_cycle_path, node_order,
+    rank_nodes, remap_positions, shortest_path, strongly_connected_components, subscribe_graph,
+    topological_order, transitive_reduction,
 };
 use cg_interact::{
-    BoxSelectState, DragState, NODE_HALF_EXTENT, SelectionState, drag_position, edges_in_rect,
-    hover_node_shaped, nodes_in_rect, press_hit_shaped, wheel_zoom_factor,
+    BoxSelectState, DragState, InteractLocks, NODE_HALF_EXTENT, SelectMode, SelectionState,
+    apply_point_select, can_begin_drag, can_grab_node, drag_position, edges_in_rect,
+    expand_neighborhood, hover_node_shaped, neighborhood_edges, nodes_in_rect, press_hit_shaped,
+    should_clear_on_blank, wheel_zoom_factor,
 };
 use cg_layout::{LayoutDriver, LayoutRegistry};
 use cg_render::{
@@ -66,6 +69,15 @@ const KMEANS_ITERATIONS: usize = 20;
 /// Single-linkage distance threshold per panel run, in model units.
 const HIERARCHICAL_THRESHOLD: f32 = 120.0;
 
+/// Affinity propagation damping per panel run.
+const AFFINITY_DAMPING: f32 = 0.5;
+
+/// Affinity propagation iteration budget per panel run.
+const AFFINITY_ITERATIONS: usize = 100;
+
+/// Metric clustering threshold per panel run, in model units.
+const METRIC_THRESHOLD: f32 = 120.0;
+
 /// Damping step of the panel controls, clamped to the unit interval.
 const DAMPING_STEP: f32 = 0.05;
 
@@ -103,6 +115,11 @@ struct GraphWindow {
     rubber: BoxSelectState,
     selection: SelectionState,
     selected_edges: Vec<(NodeIndex, NodeIndex)>,
+    select_mode: SelectMode,
+    locks: InteractLocks,
+    neighbor_hops: usize,
+    neighbor_nodes: BTreeSet<NodeIndex>,
+    neighbor_edges: Vec<(NodeIndex, NodeIndex)>,
     spatial: SpatialIndex,
     focus: FocusHandle,
     layouts: Vec<&'static str>,
@@ -194,6 +211,11 @@ impl GraphWindow {
             rubber: BoxSelectState::default(),
             selection: SelectionState::default(),
             selected_edges: Vec::new(),
+            select_mode: SelectMode::Single,
+            locks: InteractLocks::default(),
+            neighbor_hops: 1,
+            neighbor_nodes: BTreeSet::new(),
+            neighbor_edges: Vec::new(),
             spatial: SpatialIndex::new(48.0),
             focus: cx.focus_handle(),
             layouts,
@@ -255,19 +277,53 @@ impl GraphWindow {
     /// Drops the node and edge selection and aborts any box select.
     ///
     /// Algorithm highlights survive: they live in their own maps and are
-    /// merged back by [`GraphWindow::rebuild_bypass`].
+    /// merged back by [`GraphWindow::rebuild_bypass`]. Derived neighborhood
+    /// entries clear with the seeds, so no separate cleanup path exists.
     fn clear_selection(&mut self) {
         self.selection.clear();
         self.selected_edges.clear();
+        self.neighbor_nodes.clear();
+        self.neighbor_edges.clear();
         self.rubber.cancel();
         self.rebuild_bypass();
     }
 
-    /// Rebuilds the bypass from hover, selection sets plus algorithm highlights.
+    /// Derives fringe nodes and internal edges for a selection snapshot.
     ///
-    /// Hover sits below selection, and algorithm patches overlay both, so a
-    /// highlighted path stays visible even where it crosses the current
-    /// selection or the hovered node.
+    /// The fringe holds expanded nodes minus the seeds, and the edge list
+    /// holds internal edges of the expanded set. Both are merged by
+    /// [`GraphWindow::rebuild_bypass`] without touching the main styles.
+    fn derive_neighborhood(
+        graph: &dyn GraphView,
+        selection: &SelectionState,
+        selected_edges: &[(NodeIndex, NodeIndex)],
+        hops: usize,
+    ) -> (BTreeSet<NodeIndex>, Vec<(NodeIndex, NodeIndex)>) {
+        let seeds: Vec<NodeIndex> = selection.iter().collect();
+        if seeds.is_empty() || hops == 0 {
+            return (BTreeSet::new(), Vec::new());
+        }
+        let expanded = expand_neighborhood(graph, seeds, hops);
+        let mut fringe = BTreeSet::new();
+        for node in &expanded {
+            if !selection.contains(*node) {
+                fringe.insert(*node);
+            }
+        }
+        let edges = neighborhood_edges(graph, &expanded)
+            .into_iter()
+            .filter(|pair| !selected_edges.contains(pair))
+            .collect();
+        (fringe, edges)
+    }
+
+    /// Rebuilds the bypass from hover, selection, neighborhood plus highlights.
+    ///
+    /// Hover sits below selection, neighborhood sits above selection, and
+    /// algorithm patches overlay all three, so a highlighted path stays
+    /// visible even where it crosses the current selection or the hovered
+    /// node. Neighborhood entries only fill vacant slots, never overriding
+    /// selection or algorithm results.
     fn rebuild_bypass(&mut self) {
         self.bypass.clear_all();
         self.style_version += 1;
@@ -280,6 +336,17 @@ impl GraphWindow {
         for (source, target) in &self.selected_edges {
             self.bypass
                 .set_edge(*source, *target, EdgeStylePatch::highlighted());
+        }
+        for node in &self.neighbor_nodes {
+            if self.bypass.node_bypass(*node).is_none() {
+                self.bypass.set_node(*node, NodeStylePatch::hovered());
+            }
+        }
+        for (source, target) in &self.neighbor_edges {
+            if self.bypass.edge_bypass(*source, *target).is_none() {
+                self.bypass
+                    .set_edge(*source, *target, EdgeStylePatch::highlighted());
+            }
         }
         for (node, patch) in &self.algo_nodes {
             self.bypass.set_node(*node, patch.clone());
@@ -350,6 +417,14 @@ impl GraphWindow {
             self.selection.select_many(nodes);
             self.selected_edges = edges;
         }
+        let (fringe, neighbor_edges) = Self::derive_neighborhood(
+            view,
+            &self.selection,
+            &self.selected_edges,
+            self.neighbor_hops,
+        );
+        self.neighbor_nodes = fringe;
+        self.neighbor_edges = neighbor_edges;
         self.rebuild_bypass();
     }
 
@@ -838,6 +913,53 @@ impl GraphWindow {
                 Err(member) => AlgoOutcome {
                     summary: format!(
                         "k-means: invalid input at node {} ({:.1}ms)",
+                        member.index(),
+                        elapsed_ms()
+                    ),
+                    ..AlgoOutcome::default()
+                },
+            }
+        });
+    }
+
+    fn run_affinity(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.store.read(cx).graph().clone();
+        let positions: Positions = self.layout.read(cx).positions().clone();
+        let generation = self.begin_algo_run();
+        self.spawn_algo_task(cx, generation, move || {
+            let started = Instant::now();
+            let elapsed_ms = || started.elapsed().as_secs_f64() * 1000.0;
+            match affinity_clusters(&snapshot, &positions, AFFINITY_DAMPING, AFFINITY_ITERATIONS) {
+                Ok(groups) => algo_panel::groups_outcome(&groups, "affinity", elapsed_ms()),
+                Err(member) => AlgoOutcome {
+                    summary: format!(
+                        "affinity: invalid input at node {} ({:.1}ms)",
+                        member.index(),
+                        elapsed_ms()
+                    ),
+                    ..AlgoOutcome::default()
+                },
+            }
+        });
+    }
+
+    fn run_metric_clusters(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.store.read(cx).graph().clone();
+        let positions: Positions = self.layout.read(cx).positions().clone();
+        let generation = self.begin_algo_run();
+        self.spawn_algo_task(cx, generation, move || {
+            let started = Instant::now();
+            let elapsed_ms = || started.elapsed().as_secs_f64() * 1000.0;
+            match metric_clusters(
+                &snapshot,
+                &positions,
+                ClusterMetric::Euclidean,
+                METRIC_THRESHOLD,
+            ) {
+                Ok(groups) => algo_panel::groups_outcome(&groups, "metric", elapsed_ms()),
+                Err(member) => AlgoOutcome {
+                    summary: format!(
+                        "metric: invalid input at node {} ({:.1}ms)",
                         member.index(),
                         elapsed_ms()
                     ),
@@ -1500,6 +1622,26 @@ impl Render for GraphWindow {
         } else {
             "retained:off"
         };
+        let mode_label = match self.select_mode {
+            SelectMode::Single => "select:single",
+            SelectMode::Additive => "select:additive",
+        };
+        let lock_drag_label = if self.locks.lock_drag {
+            "lock-drag:on"
+        } else {
+            "lock-drag:off"
+        };
+        let no_grab_label = if self.locks.no_grab {
+            "no-grab:on"
+        } else {
+            "no-grab:off"
+        };
+        let no_deselect_label = if self.locks.no_deselect {
+            "no-deselect:on"
+        } else {
+            "no-deselect:off"
+        };
+        let neighbor_label = format!("neighbors:{}", self.neighbor_hops);
         let export_message = self.export_message.clone();
         let view = cx.entity();
         div()
@@ -1601,6 +1743,72 @@ impl Render for GraphWindow {
                                 cx.notify();
                             })),
                     )
+                    .child(
+                        div()
+                            .id("select-mode-toggle")
+                            .px_2()
+                            .child(mode_label)
+                            .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                                this.select_mode = match this.select_mode {
+                                    SelectMode::Single => SelectMode::Additive,
+                                    SelectMode::Additive => SelectMode::Single,
+                                };
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        div()
+                            .id("lock-drag-toggle")
+                            .px_2()
+                            .child(lock_drag_label)
+                            .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                                this.locks.lock_drag = !this.locks.lock_drag;
+                                this.drag.end();
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        div()
+                            .id("no-grab-toggle")
+                            .px_2()
+                            .child(no_grab_label)
+                            .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                                this.locks.no_grab = !this.locks.no_grab;
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        div()
+                            .id("no-deselect-toggle")
+                            .px_2()
+                            .child(no_deselect_label)
+                            .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                                this.locks.no_deselect = !this.locks.no_deselect;
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        div()
+                            .id("neighbor-hops-cycle")
+                            .px_2()
+                            .child(neighbor_label)
+                            .on_click(cx.listener(|this, _event: &ClickEvent, _window, cx| {
+                                this.neighbor_hops = (this.neighbor_hops + 1) % 4;
+                                let store = this.store.read(cx);
+                                let view: &dyn GraphView = store;
+                                let (fringe, neighbor_edges) =
+                                    GraphWindow::derive_neighborhood(
+                                        view,
+                                        &this.selection,
+                                        &this.selected_edges,
+                                        this.neighbor_hops,
+                                    );
+                                this.neighbor_nodes = fringe;
+                                this.neighbor_edges = neighbor_edges;
+                                this.rebuild_bypass();
+                                cx.notify();
+                            })),
+                    )
                     .child(div().px_2().child(format!("lod:{lod_label}")))
                     .child(
                         div()
@@ -1662,25 +1870,46 @@ impl Render for GraphWindow {
                                         this.layout.read(cx).positions().clone();
                                     let version = this.layout.read(cx).positions_version();
                                     this.refresh_spatial(&positions, version);
-                                    match press_hit_shaped(
-                                        world,
-                                        &positions,
-                                        &this.spatial,
-                                        this.hit_radius(),
-                                        |node| this.node_shape(cx, node),
-                                    ) {
+                                    let locks = this.locks;
+                                    let mode = this.select_mode;
+                                    let hit = if can_grab_node(&locks) {
+                                        press_hit_shaped(
+                                            world,
+                                            &positions,
+                                            &this.spatial,
+                                            this.hit_radius(),
+                                            |node| this.node_shape(cx, node),
+                                        )
+                                    } else {
+                                        None
+                                    };
+                                    match hit {
                                         Some((node, offset)) => {
-                                            this.drag.begin(node, offset);
-                                            if additive {
-                                                this.selection.toggle(node);
-                                            } else if !this.selection.contains(node) {
-                                                this.selection.select(node);
+                                            if can_begin_drag(&locks) {
+                                                this.drag.begin(node, offset);
                                             }
+                                            apply_point_select(
+                                                &mut this.selection,
+                                                mode,
+                                                node,
+                                                additive,
+                                            );
                                             this.rubber.cancel();
+                                            let store = this.store.read(cx);
+                                            let view: &dyn GraphView = store;
+                                            let (fringe, neighbor_edges) =
+                                                GraphWindow::derive_neighborhood(
+                                                    view,
+                                                    &this.selection,
+                                                    &this.selected_edges,
+                                                    this.neighbor_hops,
+                                                );
+                                            this.neighbor_nodes = fringe;
+                                            this.neighbor_edges = neighbor_edges;
                                             this.rebuild_bypass();
                                         }
                                         None => {
-                                            if !additive {
+                                            if should_clear_on_blank(&locks, additive) {
                                                 this.clear_selection();
                                             }
                                             this.rubber.begin(viewport_point);
@@ -1693,6 +1922,11 @@ impl Render for GraphWindow {
                                 |this, event: &MouseMoveEvent, _window, cx| {
                                     let viewport_point = Self::viewport_point(event.position);
                                     if let Some(node) = this.drag.active_node() {
+                                        if !can_begin_drag(&this.locks) {
+                                            this.drag.end();
+                                            cx.notify();
+                                            return;
+                                        }
                                         let offset = this
                                             .drag
                                             .active
@@ -2001,6 +2235,26 @@ impl Render for GraphWindow {
                                     .on_click(cx.listener(
                                         |this, _event: &ClickEvent, _window, cx| {
                                             this.run_kmeans(cx);
+                                        },
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .id(("algo-run", 21usize))
+                                    .child("affinity")
+                                    .on_click(cx.listener(
+                                        |this, _event: &ClickEvent, _window, cx| {
+                                            this.run_affinity(cx);
+                                        },
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .id(("algo-run", 22usize))
+                                    .child("metric")
+                                    .on_click(cx.listener(
+                                        |this, _event: &ClickEvent, _window, cx| {
+                                            this.run_metric_clusters(cx);
                                         },
                                     )),
                             )

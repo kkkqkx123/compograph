@@ -8,6 +8,7 @@ use cg_graph::{
 };
 use gpui::{App, Context, Entity, Subscription, Task};
 
+use crate::anim::{Easing, PositionTransition};
 use crate::compound::{CompoundSnapshot, apply_compound_postprocess};
 use crate::engine::LayoutEngine;
 use crate::force::{ForceSimulation, snapshot_of};
@@ -62,6 +63,8 @@ pub struct LayoutDriver {
     last_refine_ms: f64,
     /// Completed background write-backs of the current generation.
     chunks_written: u64,
+    /// Pending position interpolation towards a fresh target, if any.
+    transition: Option<PositionTransition>,
     /// Held so an in-flight refinement is cancelled when replaced or dropped.
     _task: Option<Task<()>>,
     _subscription: Subscription,
@@ -96,6 +99,7 @@ impl LayoutDriver {
             positions_version: 0,
             last_refine_ms,
             chunks_written: 0,
+            transition: None,
             _task: None,
             _subscription: subscription,
         }
@@ -140,7 +144,78 @@ impl LayoutDriver {
     /// takes effect on the next write-back without preemption.
     pub fn cancel(&mut self) {
         self.generation += 1;
+        self.transition = None;
         self._task = None;
+    }
+
+    /// True while a position transition still has frames to write.
+    pub fn has_transition(&self) -> bool {
+        self.transition
+            .as_ref()
+            .map(|run| !run.is_done())
+            .unwrap_or(false)
+    }
+
+    /// Done and total frames of the pending transition, if any.
+    pub fn transition_progress(&self) -> Option<(usize, usize)> {
+        self.transition
+            .as_ref()
+            .map(|run| (run.steps_done(), run.steps_total()))
+    }
+
+    /// Starts interpolation towards `target` over `steps` frames.
+    ///
+    /// Any background refinement is abandoned so its late chunks cannot fight
+    /// the staged frames. The shared generation guard drops those chunks.
+    pub fn begin_transition(&mut self, target: Positions, steps: usize, easing: Easing) {
+        self.generation += 1;
+        self._task = None;
+        self.chunks_written = 0;
+        let from = self.positions.clone();
+        let fixed = self.pinned.clone();
+        self.transition = Some(PositionTransition::new(from, target, steps, easing, fixed));
+    }
+
+    /// Drops a pending transition without touching the current positions.
+    ///
+    /// Drags, engine swaps and clears call this so a stale interpolation can
+    /// never overwrite fresh coordinates.
+    pub fn cancel_transition(&mut self) {
+        if self.transition.is_some() {
+            self.transition = None;
+            self.generation += 1;
+        }
+    }
+
+    /// Writes the next interpolation frame and notifies.
+    ///
+    /// Returns true while frames remain. Compound containers are polished
+    /// after every frame so they follow their leaves through the motion.
+    pub fn step_transition(
+        &mut self,
+        store: &Entity<GraphStore>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(mut run) = self.transition.take() else {
+            return false;
+        };
+        let Some(mut frame) = run.next_frame() else {
+            self.transition = None;
+            return false;
+        };
+        let snapshot = store.read(cx);
+        polish_compound(snapshot, &mut frame);
+        self.positions = frame;
+        self.positions_version += 1;
+        self.placements_since_full_run = 0;
+        cx.notify();
+        if run.is_done() {
+            self.transition = None;
+            false
+        } else {
+            self.transition = Some(run);
+            true
+        }
     }
 
     /// True while a background task may still write back.
@@ -171,6 +246,7 @@ impl LayoutDriver {
         cx: &mut App,
     ) {
         self.generation += 1;
+        self.transition = None;
         self._task = None;
         self.chunks_written = 0;
         self.positions_version += 1;
@@ -183,12 +259,41 @@ impl LayoutDriver {
         self.placements_since_full_run = 0;
     }
 
+    /// Swaps the engine but reaches the fresh target through interpolation.
+    ///
+    /// The current positions stay on screen while the new engine computes its
+    /// target in the background of the call; callers pump
+    /// [`LayoutDriver::step_transition`] per frame. Pinned nodes hold their
+    /// anchors for the whole run.
+    pub fn set_engine_animated(
+        &mut self,
+        store: &Entity<GraphStore>,
+        engine: Box<dyn LayoutEngine>,
+        steps: usize,
+        easing: Easing,
+        cx: &mut App,
+    ) {
+        let store_snapshot = store.read(cx);
+        let view: &dyn GraphView = store_snapshot;
+        let mut target = engine.layout(view, &self.positions, &self.pinned);
+        polish_compound(store_snapshot, &mut target);
+        self.engine = engine;
+        self.placements_since_full_run = 0;
+        self.generation += 1;
+        self._task = None;
+        self.chunks_written = 0;
+        let from = self.positions.clone();
+        let fixed = self.pinned.clone();
+        self.transition = Some(PositionTransition::new(from, target, steps, easing, fixed));
+    }
+
     /// Replaces every position at once, for example after a file import.
     ///
     /// Any in-flight background refinement is abandoned so its late
     /// write-back cannot overwrite the restored coordinates.
     pub fn replace_positions(&mut self, positions: Positions, cx: &mut Context<Self>) {
         self.generation += 1;
+        self.transition = None;
         self._task = None;
         self.chunks_written = 0;
         self.positions_version += 1;
@@ -216,6 +321,11 @@ impl LayoutDriver {
         position: cg_types::Point2,
         cx: &mut Context<Self>,
     ) -> bool {
+        if !self.positions.contains_key(&node) {
+            return false;
+        }
+        // A drag cancels any staged interpolation so the pointer owns the node.
+        self.cancel_transition();
         let Some(slot) = self.positions.get_mut(&node) else {
             return false;
         };
@@ -233,6 +343,7 @@ impl LayoutDriver {
     /// so the canvas animates towards convergence. A newer refinement or
     /// engine swap bumps the generation, and stale chunks stop writing.
     pub fn request_refine(&mut self, store: &Entity<GraphStore>, cx: &mut Context<Self>) {
+        self.cancel_transition();
         let Some(options) = self.engine.force_options() else {
             let node_count = store.read(cx).node_count();
             if node_count < SYNC_LAYOUT_NODE_LIMIT {
@@ -334,6 +445,7 @@ impl LayoutDriver {
                     // The synchronous write supersedes any in-flight background
                     // task, so its late chunks must not overwrite this result.
                     self.generation += 1;
+                    self.transition = None;
                     self._task = None;
                     self.chunks_written = 0;
                     let previous = std::mem::take(&mut self.positions);
@@ -351,6 +463,7 @@ impl LayoutDriver {
 
     fn run_full(&mut self, store: &Entity<GraphStore>, cx: &mut App) {
         self.generation += 1;
+        self.transition = None;
         self._task = None;
         self.chunks_written = 0;
         let store_snapshot = store.read(cx);
@@ -370,6 +483,7 @@ impl LayoutDriver {
     /// Dragged nodes stay pinned because the snapshot carries them through.
     fn run_static_in_background(&mut self, store: &Entity<GraphStore>, cx: &mut Context<Self>) {
         self.generation += 1;
+        self.transition = None;
         self.chunks_written = 0;
         let generation = self.generation;
         let live = store.read(cx);

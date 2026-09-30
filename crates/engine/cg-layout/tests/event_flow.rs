@@ -7,6 +7,7 @@
 //! between and the assertions observe a settled state.
 
 use cg_graph::{ChangeFilter, GraphStore, Positions, subscribe_graph};
+use cg_layout::anim::Easing;
 use cg_layout::driver::LayoutDriver;
 use cg_layout::random::RandomLayout;
 use cg_layout::reaction::{LayoutWork, work_for};
@@ -234,6 +235,93 @@ fn incremental_reaction_supersedes_the_generation(cx: &mut TestAppContext) {
         assert_eq!(driver.progress().generation, 1);
         assert_eq!(driver.positions_version(), 1);
         assert_eq!(driver.positions().len(), 1);
+    });
+}
+
+#[gpui::test]
+fn transition_blends_to_the_target_and_clears(cx: &mut TestAppContext) {
+    let store = cx.update(|cx: &mut App| cx.new(|_| GraphStore::new()));
+    cx.update(|cx| {
+        store.update(cx, |graph, cx| {
+            graph.add_node(cx, "a");
+            graph.add_node(cx, "b");
+        });
+    });
+    let layout = cx.update(|cx: &mut App| {
+        cx.new(|cx| LayoutDriver::new(cx, &store, Box::new(RandomLayout::new(50.0))))
+    });
+
+    cx.update(|cx| {
+        layout.update(cx, |driver, cx| {
+            let mut target = Positions::new();
+            for node in store.read(cx).node_ids() {
+                target.insert(node, Point2::new(100.0, 100.0));
+            }
+            driver.begin_transition(target.clone(), 2, Easing::Linear);
+            assert!(driver.has_transition());
+            assert_eq!(driver.transition_progress(), Some((0, 2)));
+        });
+    });
+    cx.update(|cx| {
+        layout.update(cx, |driver, cx| {
+            assert!(driver.step_transition(&store, cx));
+            assert!(driver.has_transition());
+            assert_eq!(driver.transition_progress(), Some((1, 2)));
+        });
+    });
+    cx.update(|cx| {
+        layout.update(cx, |driver, cx| {
+            assert!(!driver.step_transition(&store, cx));
+            assert!(!driver.has_transition());
+            for point in driver.positions().values() {
+                assert_eq!(*point, Point2::new(100.0, 100.0));
+            }
+            assert!(!driver.step_transition(&store, cx));
+        });
+    });
+}
+
+#[gpui::test]
+fn drag_and_engine_switch_cancel_the_transition(cx: &mut TestAppContext) {
+    let store = cx.update(|cx: &mut App| cx.new(|_| GraphStore::new()));
+    cx.update(|cx| {
+        store.update(cx, |graph, cx| {
+            graph.add_node(cx, "solo");
+        });
+    });
+    let layout = cx.update(|cx: &mut App| {
+        cx.new(|cx| LayoutDriver::new(cx, &store, Box::new(RandomLayout::new(50.0))))
+    });
+
+    cx.update(|cx| {
+        layout.update(cx, |driver, cx| {
+            let node = store.read(cx).node_ids().next().expect("node exists");
+            let mut target = Positions::new();
+            target.insert(node, Point2::new(90.0, 90.0));
+            let before = driver.progress().generation;
+            driver.begin_transition(target, 4, Easing::CubicInOut);
+            assert!(driver.has_transition());
+            assert_eq!(driver.progress().generation, before + 1);
+        });
+    });
+    cx.update(|cx| {
+        layout.update(cx, |driver, cx| {
+            let node = store.read(cx).node_ids().next().expect("node exists");
+            assert!(driver.move_pinned(node, Point2::new(7.0, 8.0), cx));
+            assert!(!driver.has_transition());
+            assert_eq!(driver.positions().get(&node), Some(&Point2::new(7.0, 8.0)));
+        });
+    });
+    cx.update(|cx| {
+        layout.update(cx, |driver, cx| {
+            let node = store.read(cx).node_ids().next().expect("node exists");
+            let mut target = Positions::new();
+            target.insert(node, Point2::new(40.0, 40.0));
+            driver.begin_transition(target, 4, Easing::Linear);
+            assert!(driver.has_transition());
+            driver.set_engine(&store, Box::new(RandomLayout::new(50.0)), cx);
+            assert!(!driver.has_transition());
+        });
     });
 }
 

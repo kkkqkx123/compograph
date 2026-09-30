@@ -23,7 +23,10 @@ pub mod routing;
 pub use bundles::{bundle_slot, edge_ordinals_for, loop_ordinal};
 pub use canvas::graph_view;
 pub use culling::world_viewport_rect;
-pub use edges::{paint_edges, paint_edges_for, paint_edges_with_options, paint_single_edge};
+pub use edges::{
+    paint_edges, paint_edges_for, paint_edges_for_with_waypoints, paint_edges_with_options,
+    paint_single_edge, paint_single_edge_with_waypoints,
+};
 pub use heads::{paint_arrows, paint_arrows_for_level, paint_single_arrow};
 pub use hits::painted_edge_hits;
 pub use nodes::{

@@ -89,6 +89,7 @@ pub fn scale_nodes(nodes: &[PaintedNode], scale: f32) -> Vec<PaintedNode> {
                 .iter()
                 .map(|point| Point2::new(point.x * scale, point.y * scale))
                 .collect(),
+            image: node.image.clone(),
         })
         .collect()
 }
@@ -109,14 +110,13 @@ pub fn scale_edges(edges: &[PaintedEdge], scale: f32) -> Vec<PaintedEdge> {
                     Point2::new(b.x * scale, b.y * scale),
                 ]
             }),
-            bend_a: edge
-                .bend_a
-                .map(|point| Point2::new(point.x * scale, point.y * scale)),
-            bend_b: edge
-                .bend_b
-                .map(|point| Point2::new(point.x * scale, point.y * scale)),
+            bends: edge
+                .bends
+                .iter()
+                .map(|point| Point2::new(point.x * scale, point.y * scale))
+                .collect(),
             width: edge.width * scale,
-            ..*edge
+            ..edge.clone()
         })
         .collect()
 }
@@ -190,7 +190,7 @@ pub fn export_pixels(
         &snapshot.positions,
         &camera,
         viewport,
-        |node| snapshot.node_styles.get(&node).copied().unwrap_or_default(),
+        |node| snapshot.node_styles.get(&node).cloned().unwrap_or_default(),
     );
     let edges = paint_edges_for(
         &snapshot.pairs,

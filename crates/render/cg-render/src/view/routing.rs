@@ -115,8 +115,7 @@ pub(crate) fn loop_edge(
         end: screen,
         ctrl: None,
         loop_ctrls: Some(ctrls),
-        bend_a: None,
-        bend_b: None,
+        bends: Vec::new(),
         aggregated: false,
         tint: style.tint,
         width: style.width,
@@ -148,14 +147,13 @@ pub(crate) fn haystack_edge(
     edge
 }
 
-/// Painted Manhattan edge carrying up to two bends.
+/// Painted Manhattan edge carrying its bend table.
 pub(crate) fn manhattan_edge(
     source: NodeIndex,
     target: NodeIndex,
     start: Point2,
     end: Point2,
-    bend_a: Option<Point2>,
-    bend_b: Option<Point2>,
+    bends: Vec<Point2>,
     style: EdgeStyle,
 ) -> PaintedEdge {
     PaintedEdge {
@@ -165,8 +163,7 @@ pub(crate) fn manhattan_edge(
         end,
         ctrl: None,
         loop_ctrls: None,
-        bend_a,
-        bend_b,
+        bends,
         aggregated: false,
         tint: style.tint,
         width: style.width,
@@ -174,6 +171,50 @@ pub(crate) fn manhattan_edge(
         arrow: style.arrow,
         arrow_scale: style.arrow_scale,
     }
+}
+
+/// Painted user waypoint edge carrying the cleaned screen sequence.
+pub(crate) fn waypoint_edge(
+    source: NodeIndex,
+    target: NodeIndex,
+    start: Point2,
+    end: Point2,
+    bends: Vec<Point2>,
+    style: EdgeStyle,
+) -> PaintedEdge {
+    PaintedEdge {
+        source,
+        target,
+        start,
+        end,
+        ctrl: None,
+        loop_ctrls: None,
+        bends,
+        aggregated: false,
+        tint: style.tint,
+        width: style.width,
+        opacity: style.opacity,
+        arrow: style.arrow,
+        arrow_scale: style.arrow_scale,
+    }
+}
+
+/// Cleans raw screen waypoints into interior bends.
+///
+/// Non-finite points drop, consecutive duplicates collapse, and points equal
+/// to the endpoints drop so empty and single-point inputs degrade to a
+/// straight line through the shared polyline builder.
+pub(crate) fn clean_waypoints(start: Point2, raw: &[Point2], end: Point2) -> Vec<Point2> {
+    let filtered: Vec<Point2> = raw
+        .iter()
+        .copied()
+        .filter(|point| *point != start && *point != end)
+        .collect();
+    let line = cg_geometry::segmented_polyline(start, &filtered, end);
+    if line.len() <= 2 {
+        return Vec::new();
+    }
+    line[1..line.len() - 1].to_vec()
 }
 
 /// Painted straight or parallel-curved edge.
@@ -192,8 +233,7 @@ pub(crate) fn curved_edge(
         end,
         ctrl,
         loop_ctrls: None,
-        bend_a: None,
-        bend_b: None,
+        bends: Vec::new(),
         aggregated: false,
         tint: style.tint,
         width: style.width,
@@ -281,5 +321,50 @@ mod tests {
             manhattan_bends(Point2::new(0.0, 0.0), Point2::new(100.0, 40.0), taxi);
         assert!(bend_a.is_some());
         assert!(bend_b.is_none());
+    }
+
+    #[test]
+    fn waypoint_cleaning_drops_degenerate_points() {
+        let start = Point2::new(0.0, 0.0);
+        let end = Point2::new(100.0, 0.0);
+        assert!(clean_waypoints(start, &[], end).is_empty());
+        assert!(clean_waypoints(start, &[Point2::new(f32::NAN, 0.0)], end).is_empty());
+        let single = clean_waypoints(start, &[Point2::new(50.0, 10.0)], end);
+        assert_eq!(single, vec![Point2::new(50.0, 10.0)]);
+        let collapsed = clean_waypoints(
+            start,
+            &[
+                Point2::new(10.0, 0.0),
+                Point2::new(10.0, 0.0),
+                Point2::new(0.0, 0.0),
+            ],
+            end,
+        );
+        assert_eq!(collapsed, vec![Point2::new(10.0, 0.0)]);
+    }
+
+    #[test]
+    fn waypoint_edge_carries_the_cleaned_table() {
+        use crate::style::EdgeStyle;
+
+        let start = Point2::new(0.0, 0.0);
+        let end = Point2::new(100.0, 0.0);
+        let bends = clean_waypoints(
+            start,
+            &[Point2::new(30.0, 20.0), Point2::new(70.0, -20.0)],
+            end,
+        );
+        let edge = waypoint_edge(
+            NodeIndex::new(0),
+            NodeIndex::new(1),
+            start,
+            end,
+            bends,
+            EdgeStyle::default(),
+        );
+        assert_eq!(edge.bends().len(), 2);
+        assert_eq!(edge.polyline().len(), 4);
+        assert!(edge.ctrl.is_none());
+        assert!(!edge.aggregated);
     }
 }

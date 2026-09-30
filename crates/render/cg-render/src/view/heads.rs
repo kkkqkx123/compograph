@@ -58,8 +58,7 @@ fn edge_direction(edge: &PaintedEdge) -> Vec2 {
         .loop_ctrls
         .map(|ctrls| ctrls[1])
         .or(edge.ctrl)
-        .or(edge.bend_b)
-        .or(edge.bend_a)
+        .or_else(|| edge.bends.last().copied())
         .unwrap_or(edge.start);
     let delta = edge.end - reference;
     let length = delta.length();

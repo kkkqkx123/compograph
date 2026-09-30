@@ -17,7 +17,7 @@ pub fn painted_edge_hits(edge: &PaintedEdge, rect: Rect) -> bool {
         let samples = sample_cubic_bezier(edge.start, ctrl_a, ctrl_b, edge.end, BEZIER_HIT_SAMPLES);
         return polyline_intersects_rect(&samples, rect);
     }
-    if edge.bend_a.is_some() || edge.bend_b.is_some() {
+    if !edge.bends.is_empty() {
         return polyline_intersects_rect(&edge.polyline(), rect);
     }
     match edge.ctrl {
@@ -45,8 +45,7 @@ mod tests {
             end: Point2::new(10.0, 0.0),
             ctrl: None,
             loop_ctrls: None,
-            bend_a: None,
-            bend_b: None,
+            bends: Vec::new(),
             aggregated: false,
             tint: 0,
             width: 1.0,

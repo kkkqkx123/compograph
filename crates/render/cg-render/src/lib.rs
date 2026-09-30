@@ -4,6 +4,7 @@ pub mod arrows;
 pub mod camera;
 pub mod compound;
 pub mod export;
+pub mod image;
 pub mod lod;
 pub mod metrics;
 pub mod png;
@@ -17,6 +18,7 @@ pub mod style;
 pub mod synth;
 pub mod text;
 pub mod view;
+pub mod waypoints;
 
 pub use arrows::ArrowKind;
 pub use camera::{Camera, MAX_ZOOM, MIN_ZOOM};
@@ -28,6 +30,7 @@ pub use export::{
     ExportRequest, ExportScope, ExportSnapshot, export_pixels, graph_bounds, scale_arrows,
     scale_edges, scale_nodes,
 };
+pub use image::{ImageCache, ImageEntry, ImageFit, ImageStatus, NodeImage, fit_rect, node_bounds};
 pub use lod::{DetailLevel, LodParams};
 pub use metrics::{FrameMetrics, FrameSample, PlanCounts, measure_ms};
 pub use png::encode_png;
@@ -58,7 +61,9 @@ pub use view::{
     ARROW_HALF_WIDTH, ARROW_LENGTH, EDGE_AGGREGATION_THRESHOLD, EdgePaintOptions, NODE_SIDE,
     PARALLEL_STEP, PaintedArrow, PaintedEdge, PaintedNode, PaintedRubberBand, bundle_slot,
     edge_ordinals_for, graph_view, loop_ordinal, paint_arrows, paint_arrows_for_level, paint_edges,
-    paint_edges_for, paint_edges_with_options, paint_nodes, paint_nodes_for, paint_nodes_for_level,
-    paint_single_arrow, paint_single_edge, paint_single_node, paint_single_node_for_level,
+    paint_edges_for, paint_edges_for_with_waypoints, paint_edges_with_options, paint_nodes,
+    paint_nodes_for, paint_nodes_for_level, paint_single_arrow, paint_single_edge,
+    paint_single_edge_with_waypoints, paint_single_node, paint_single_node_for_level,
     painted_edge_hits, visible_node_ids, world_viewport_rect,
 };
+pub use waypoints::WaypointStore;

@@ -235,7 +235,7 @@ impl SelectorSheet {
         base: &crate::style::NodeStyle,
         node: NodeIndex,
     ) -> crate::style::NodeStyle {
-        let mut resolved = *base;
+        let mut resolved = base.clone();
         for (selector, patch) in &self.nodes {
             if selector.matches_node(store, node) {
                 resolved = patch.apply_to_style(&resolved);
