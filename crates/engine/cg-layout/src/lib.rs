@@ -9,6 +9,7 @@ pub mod force;
 pub mod grid;
 pub mod hierarchical;
 pub mod preset;
+pub mod radial;
 pub mod random;
 pub mod reaction;
 pub mod registry;
@@ -22,6 +23,7 @@ pub use force::{ForceLayout, ForceOptions, ForceSimulation, ForceSnapshot, snaps
 pub use grid::{GridLayout, GridOptions};
 pub use hierarchical::{HierarchicalLayout, HierarchicalOptions};
 pub use preset::PresetLayout;
+pub use radial::{RadialLayout, RadialOptions, RadialScoring};
 pub use random::RandomLayout;
 pub use reaction::{LAYOUT_FILTER, LayoutWork, work_for};
 pub use registry::{DEFAULT_DEMO_RADIUS, LayoutRegistry};

@@ -98,6 +98,8 @@ mod tests {
             side,
             fill: 0,
             opacity: 1.0,
+            shape: crate::shapes::NodeShape::Square,
+            points: Vec::new(),
         }
     }
 

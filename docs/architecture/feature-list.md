@@ -44,9 +44,9 @@
 | 中心性 | `page_rank`（`page_rank.rs:64`） | `algo/` | P2 |
 | 遍历 | `Bfs`/`Dfs`/`DfsPostOrder`/`Topo`、`depth_first_search` | `visit/` | P1（布局内部即用） |
 
-> petgraph 缺失、cytoscape 独有的"网络科学"算法（度/接近/介数中心性、MCL、k-means、层次聚类、亲和传播、Euler 路径、Karger-Stein 最小割）**不在 v1 范围**，列为远期自研项（见 §6）。
+> petgraph 缺失、cytoscape 独有的部分“网络科学”算法（MCL、k-means、层次聚类、亲和传播、Euler 路径、Karger-Stein 最小割）**不在 v1 范围**，列为远期自研项（见 §6）。度/接近/介数中心性已按 P1 方案自研落地，不在远期表。
 >
-> **已桥接算法（`cg-graph/src/algo.rs`，共 11 个）**：`shortest_paths`/`shortest_path_cost`（Dijkstra）、`shortest_path`（A*）、`heuristic_shortest_path`（带位置启发式 A*）、`strongly_connected_components`（Tarjan）、`minimum_spanning_forest`（Kruskal）、`minimum_spanning_tree_single`（Prim）、`topological_order`、`immediate_dominators`、`rank_nodes`（PageRank）、`transitive_reduction`。UI 已暴露其中 5 类（最短路/引导搜索/连通分量/PageRank/生成树）。
+> **已桥接算法（`cg-graph/src/algo.rs`，共 18 个）**：`shortest_paths`/`shortest_path_cost`（Dijkstra）、`shortest_path`（A*）、`heuristic_shortest_path`（带位置启发式 A*）、`strongly_connected_components`（Tarjan）、`minimum_spanning_forest`（Kruskal）、`minimum_spanning_tree_single`（Prim）、`topological_order`、`immediate_dominators`、`rank_nodes`（PageRank）、`transitive_reduction`，另有 P1 新增 `all_pairs_shortest_paths`（自研 Floyd-Warshall）、`bellman_ford_paths` + `negative_cycle_path`、`articulation_points` + `bridges`（自研无向语义）、`breadth_first_order` + `depth_first_order`。中心性三件套在 `centrality.rs`（度/接近/介数，无权版本）。UI 已暴露其中 7 类（最短路/引导搜索/连通分量/PageRank/生成树/度中心性/割点桥）。
 
 ---
 
@@ -54,7 +54,7 @@
 
 | # | 功能 | 来源 | 阶段 | 说明 |
 |---|---|---|---|---|
-| 2.1 | `LayoutEngine` trait + 布局注册表 | `[cy→模式]` | P0 | ✅ 已落地（`engine.rs`/`registry.rs`），注册 8 种 |
+| 2.1 | `LayoutEngine` trait + 布局注册表 | `[cy→模式]` | P0 | ✅ 已落地（`engine.rs`/`registry.rs`），注册 9 种 |
 | 2.2 | 布局桥接契约（产坐标→写回→触发重绘） | `[cy→模式]` | P0 | ✅ 已落地（`driver.rs` + `reaction.rs`） |
 | 2.3 | Preset 布局（使用给定坐标） | `[cy→移植]` | P0 | ✅ 已落地（`preset.rs`） |
 | 2.4 | Random 布局 | `[cy→移植]` | P0 | ✅ 已落地（`random.rs`） |
@@ -63,7 +63,7 @@
 | 2.7 | Circle 布局 | `[cy→移植]` | P1 | ✅ 已落地（`circle.rs`） |
 | 2.8 | Breadth-first 布局 | `[cy→移植]` | P1 | ✅ 已落地（`breadthfirst.rs`） |
 | 2.9 | Concentric 布局 | `[cy→移植]` | P2 | ✅ 已落地（`concentric.rs`） |
-| 2.10 | Radial（按中心性定半径，petgraph `page_rank` 辅助排序） | `[自研]` | P2 | ❌ 未实现（缺口） |
+| 2.10 | Radial（按分值定半径，默认度数，可外灌 PageRank 等分值表） | `[自研]` | P2 | ✅ 已落地（`radial.rs`，孤立节点放最外环） |
 | 2.11 | Hierarchical（DAG 分层） | `[petgraph` 辅助`+自研]` | P2 | ✅ 已落地（`hierarchical.rs`） |
 | 2.12 | 增量布局（固定未变节点、局部更新） | `[自研]` | P1 | ✅ 已落地（`driver.rs` 的 `pin`/`move_pinned`/`request_refine`） |
 | 2.13 | 后台线程布局 + 分批回写（动画式收敛） | `[gpui]` | P1 | ✅ 已落地（`LayoutProgress` + `SYNC_LAYOUT_NODE_LIMIT`） |
@@ -76,8 +76,8 @@
 |---|---|---|---|---|
 | 3.1 | 路线 A：`gpui::canvas` 即时绘制 `GraphView` | `[gpui]` | P0 | `elements/canvas.rs:10`；节点 `paint_quad`（`window.rs:4502`） |
 | 3.2 | 边绘制（直线/折线/贝塞尔） | `[cy→移植]+[gpui]` | P1 | 几何借 `edge-control-points.mjs`（`findStraightEdgePoints:251`、`findBezierPoints:257`、`findTaxiPoints:309`、`findLoopPoints:162`），落为 `Path`（`scene.rs:840/847/859`） |
-| 3.3 | 箭头（三角几何） | `[cy→移植]+[gpui]` | P1 | ✅ 已落地（`view.rs` 的 `arrow_triangle` 等） |
-| 3.4 | 节点形状（圆/椭圆/圆角矩形起步，多边形族后续） | `[cy→移植]+[gpui]` | P1/P2 | ⚠️ 部分：当前仅方形块，形状族未做（缺口） |
+| 3.3 | 箭头形状族（三角/燕尾/丁形/圆点/菱形） | `[cy→移植]+[gpui]` | P1 | ✅ 已落地（`arrows.rs` 的多边形顶点表 + `view.rs` 统一入口） |
+| 3.4 | 节点形状族（方/圆/椭圆/圆角矩形/三角/菱形） | `[cy→移植]+[gpui]` | P1/P2 | ✅ 已落地（`shapes.rs` 顶点表，绘制与命中共用，默认方形） |
 | 3.5 | 自环边 | `[cy→移植]` | P2 | ✅ 已落地（`curves.rs` 的 `self_loop_*`） |
 | 3.6 | Haystack 边聚合（大图简化边） | `[cy→移植]` | P3 | ✅ 已落地（`aggregation.rs` + `view.rs` 的 `bundle_slot`） |
 | 3.7 | 相机 `Camera{offset,zoom}`（平移/缩放） | `[cy→模式]+[gpui]` | P1 | ✅ 已落地（`camera.rs`，含光标锚点缩放） |
@@ -103,7 +103,7 @@
 | 4.3 | 节点拖拽（fixed + 局部重布局） | `[自研]` | P1 | ✅ 已落地（`DragState` + `drag_position`） |
 | 4.4 | 点选 / 多选 | `[cy→移植]` | P1 | ✅ 已落地（`SelectionState`） |
 | 4.5 | 框选 | `[cy→移植]` | P2 | ✅ 已落地（`BoxSelectState` + `nodes_in_rect`/`edges_in_rect`） |
-| 4.6 | 高亮/悬停效果 | `[cy→模式]` | P2 | ✅ 已落地（`hover_node` + `BypassStore`） |
+| 4.6 | 高亮/悬停效果 | `[cy→模式]` | P2 | ✅ 已落地（`hover_node_shaped` + `BypassStore`） |
 | 4.7 | 悬停 tooltip（popover） | `[gpui]` | P2 | ✅ 已落地（`main.rs` 的 `hover_label`） |
 | 4.8 | 指针事件 → 相机逆变换 → 命中查询 事件桥 | `[自研]` | P1 | ✅ 已落地（`main.rs` 指针事件接线） |
 
@@ -115,7 +115,7 @@
 |---|---|---|---|---|
 | 5.1 | 窗口/画布容器 `GraphView` | `[gpui]` | P0 | ✅ 已落地（`main.rs` 的 `GraphWindow`） |
 | 5.2 | 布局切换 UI（下拉/命令面板） | `[自研]` | P1 | ✅ 已落地（`switch_layout` + 顶栏菜单） |
-| 5.3 | 算法执行面板（选算法→后台跑→结果高亮/面板展示） | `[自研]` | P2 | ✅ 已落地（5 类算法 + `algo_panel.rs` + 代次守卫） |
+| 5.3 | 算法执行面板（选算法→后台跑→结果高亮/面板展示） | `[自研]` | P2 | ✅ 已落地（7 类算法 + `algo_panel.rs` + 代次守卫） |
 | 5.4 | 图导入/导出入口（文件对话框） | `[自研]` | P2 | ✅ 已落地：JSON 进出、DOT 进出、图片导出（PPM） |
 | 5.5 | 状态栏（节点/边计数、缩放比、布局耗时） | `[自研]` | P2 | ✅ 已落地（含 LOD/帧耗时/索引耗时） |
 
@@ -123,12 +123,13 @@
 
 ## 6. 远期自研项（cytoscape 独有算法，v1 不做）
 
+> 中心性三件套（度/接近/介数）已按 P1 方案自研落地（无权版本，见 `centrality.rs`），不在本表；其余仍为远期。
+
 | 功能 | 说明 |
 |---|---|
-| 度/接近/介数中心性 | petgraph 仅 PageRank，其余需自研（`algo/` 无对应） |
 | 聚类套件（MCL、k-means/k-medoids、层次聚类、亲和传播） | petgraph 无任何聚类 |
-| Euler 路径（Hierholzer）、最小割（Karger-Stein） | petgraph 无对应 |
-| 完整样式 schema（cytoscape ~208 属性） | v1 仅做常用子集（3.11） |
+| Euler 路径（Hierholzer）、最小割 | petgraph 0.8.3 无最小割实现（已核源码），均需自研 |
+| 完整样式 schema（cytoscape ~208 属性） | v1 仅做常用子集（3.11），扩展见 P2 方案 |
 
 ---
 
@@ -143,11 +144,10 @@
 | **P2** | 接近 cytoscape 可用度 | 1.6–1.7、2.9–2.11、3.5、3.9、3.11–3.12、4.5–4.7、5.3–5.5、算法桥接（最短路/SCC/PageRank/MST） |
 | **P3** | 大规模 | 3.6、3.14–3.16、远期算法按需；路线 C 视规模评估（3.17） |
 
-### 7.1 实测缺口汇总（对照 [分析报告](../plan/feature-analysis-report.md)）
+### 7.1 实测缺口汇总（对照 [分析报告](../plan/feature-analysis-report.md)，P1 状态见 [P1 方案](../plan/compograph-p1-plan.md)，远期归属见 [P2 方案](../plan/compograph-p2-plan.md)）
 
-- **2.10 Radial 布局**：未实现。
-- **3.4 节点形状族**：仅方形块，未做形状族。
-- **3.10 边标签**：节点标签已落地，边标签未做。
-- **3.16 PNG 导出**：仅 PPM。
-- **3.17 路线 C**：未实现（评估项）。
-- **§6 远期算法**：中心性三件套、聚类套件、Euler、Karger-Stein 均未做。
+- **P1 五项**：算法桥、中心性三件套、Radial 布局、节点形状族、箭头形状族均已落地，见上表；面板按口径仅接度中心性与割点桥，其余桥不接面板。
+- **3.10 边标签**：节点标签已落地，边标签未做（P2-1）。
+- **3.16 PNG 导出**：仅 PPM（P2-6）。
+- **3.17 路线 C**：未实现（P3-6，需先拍板规模）。
+- **§6 远期算法**：聚类套件、Euler、最小割均未做（P3-1/P3-2）。

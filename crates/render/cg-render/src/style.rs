@@ -10,6 +10,9 @@ use std::collections::{HashMap, HashSet};
 
 use cg_graph::NodeIndex;
 
+use crate::arrows::ArrowKind;
+use crate::shapes::NodeShape;
+
 /// Fill of nodes carrying no mapping or bypass.
 pub const DEFAULT_NODE_FILL: u32 = 0x4a9eff;
 
@@ -37,6 +40,7 @@ pub struct NodeStyle {
     pub opacity: f32,
     pub label_size: f32,
     pub scale: f32,
+    pub shape: NodeShape,
 }
 
 impl Default for NodeStyle {
@@ -48,6 +52,7 @@ impl Default for NodeStyle {
             opacity: 1.0,
             label_size: 12.0,
             scale: 1.0,
+            shape: NodeShape::Square,
         }
     }
 }
@@ -60,6 +65,7 @@ pub struct EdgeStyle {
     pub opacity: f32,
     pub arrow_scale: f32,
     pub label_size: f32,
+    pub arrow: ArrowKind,
 }
 
 impl Default for EdgeStyle {
@@ -70,6 +76,7 @@ impl Default for EdgeStyle {
             opacity: 1.0,
             arrow_scale: 1.0,
             label_size: 11.0,
+            arrow: ArrowKind::Triangle,
         }
     }
 }
@@ -83,6 +90,7 @@ pub struct NodeStylePatch {
     pub opacity: Option<f32>,
     pub label_size: Option<f32>,
     pub scale: Option<f32>,
+    pub shape: Option<NodeShape>,
 }
 
 impl NodeStylePatch {
@@ -94,6 +102,7 @@ impl NodeStylePatch {
             && self.opacity.is_none()
             && self.label_size.is_none()
             && self.scale.is_none()
+            && self.shape.is_none()
     }
 
     /// Patch selecting a node through the bypass channel.
@@ -128,6 +137,14 @@ impl NodeStylePatch {
         }
     }
 
+    /// Patch reshaping a node.
+    pub fn reshaped(shape: NodeShape) -> Self {
+        Self {
+            shape: Some(shape),
+            ..Self::default()
+        }
+    }
+
     fn apply_to(&self, base: &NodeStyle) -> NodeStyle {
         NodeStyle {
             fill: self.fill.unwrap_or(base.fill),
@@ -136,6 +153,7 @@ impl NodeStylePatch {
             opacity: self.opacity.unwrap_or(base.opacity),
             label_size: self.label_size.unwrap_or(base.label_size),
             scale: self.scale.unwrap_or(base.scale),
+            shape: self.shape.unwrap_or(base.shape),
         }
     }
 }
@@ -148,6 +166,7 @@ pub struct EdgeStylePatch {
     pub opacity: Option<f32>,
     pub arrow_scale: Option<f32>,
     pub label_size: Option<f32>,
+    pub arrow: Option<ArrowKind>,
 }
 
 impl EdgeStylePatch {
@@ -158,6 +177,7 @@ impl EdgeStylePatch {
             && self.opacity.is_none()
             && self.arrow_scale.is_none()
             && self.label_size.is_none()
+            && self.arrow.is_none()
     }
 
     /// Patch highlighting an edge through the bypass channel.
@@ -177,6 +197,14 @@ impl EdgeStylePatch {
         }
     }
 
+    /// Patch reheading an edge.
+    pub fn reheaded(arrow: ArrowKind) -> Self {
+        Self {
+            arrow: Some(arrow),
+            ..Self::default()
+        }
+    }
+
     fn apply_to(&self, base: &EdgeStyle) -> EdgeStyle {
         EdgeStyle {
             tint: self.tint.unwrap_or(base.tint),
@@ -184,6 +212,7 @@ impl EdgeStylePatch {
             opacity: self.opacity.unwrap_or(base.opacity),
             arrow_scale: self.arrow_scale.unwrap_or(base.arrow_scale),
             label_size: self.label_size.unwrap_or(base.label_size),
+            arrow: self.arrow.unwrap_or(base.arrow),
         }
     }
 }
@@ -601,5 +630,18 @@ mod tests {
         assert!(!patch.is_empty());
         let applied = patch.apply_to(&NodeStyle::default());
         assert_eq!(applied.scale, 1.5);
+    }
+
+    #[test]
+    fn shape_and_arrow_defaults_keep_legacy_look() {
+        use crate::arrows::ArrowKind;
+        use crate::shapes::NodeShape;
+
+        assert_eq!(NodeStyle::default().shape, NodeShape::Square);
+        assert_eq!(EdgeStyle::default().arrow, ArrowKind::Triangle);
+        let reshaped = NodeStylePatch::reshaped(NodeShape::Circle).apply_to(&NodeStyle::default());
+        assert_eq!(reshaped.shape, NodeShape::Circle);
+        let reheaded = EdgeStylePatch::reheaded(ArrowKind::Diamond).apply_to(&EdgeStyle::default());
+        assert_eq!(reheaded.arrow, ArrowKind::Diamond);
     }
 }

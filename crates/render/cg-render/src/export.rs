@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use cg_geometry::{BEZIER_HIT_SAMPLES, sample_cubic_bezier, sample_quadratic_bezier};
+use cg_geometry::{BEZIER_HIT_SAMPLES, point_in_polygon, sample_cubic_bezier, sample_quadratic_bezier};
 use cg_graph::{NodeIndex, Positions};
 use cg_types::{Point2, Rect, Vec2};
 
@@ -72,9 +72,17 @@ pub fn scale_nodes(nodes: &[PaintedNode], scale: f32) -> Vec<PaintedNode> {
     nodes
         .iter()
         .map(|node| PaintedNode {
+            id: node.id,
             origin: Point2::new(node.origin.x * scale, node.origin.y * scale),
             side: node.side * scale,
-            ..*node
+            fill: node.fill,
+            opacity: node.opacity,
+            shape: node.shape,
+            points: node
+                .points
+                .iter()
+                .map(|point| Point2::new(point.x * scale, point.y * scale))
+                .collect(),
         })
         .collect()
 }
@@ -113,9 +121,13 @@ pub fn scale_arrows(arrows: &[PaintedArrow], scale: f32) -> Vec<PaintedArrow> {
         .iter()
         .map(|arrow| PaintedArrow {
             tip: Point2::new(arrow.tip.x * scale, arrow.tip.y * scale),
-            left: Point2::new(arrow.left.x * scale, arrow.left.y * scale),
-            right: Point2::new(arrow.right.x * scale, arrow.right.y * scale),
-            ..*arrow
+            points: arrow
+                .points
+                .iter()
+                .map(|point| Point2::new(point.x * scale, point.y * scale))
+                .collect(),
+            tint: arrow.tint,
+            kind: arrow.kind,
         })
         .collect()
 }
@@ -228,8 +240,10 @@ fn tint_to_rgb(tint: u32) -> [u8; 3] {
 /// Renders screen-space plans into a flat top-down RGB buffer.
 ///
 /// Edges paint first and nodes on top; curves reuse the shared flattening
-/// samplers so the export matches the canvas. This is the software fallback
-/// behind both export scopes and needs no image dependency.
+/// samplers so the export matches the canvas. Squares keep the fast rectangle
+/// path while other shapes and every arrow kind fill their shared polygons.
+/// This is the software fallback behind both export scopes and needs no image
+/// dependency.
 pub fn rasterize(
     width: u32,
     height: u32,
@@ -243,10 +257,14 @@ pub fn rasterize(
         canvas.stroke_polyline(&edge_path(edge), tint_to_rgb(edge.tint), edge.width);
     }
     for arrow in arrows {
-        canvas.fill_triangle(arrow.tip, arrow.left, arrow.right, tint_to_rgb(arrow.tint));
+        canvas.fill_polygon(&arrow.points, tint_to_rgb(arrow.tint), 1.0);
     }
     for node in nodes {
-        canvas.fill_rect(node.origin, node.side, tint_to_rgb(node.fill), node.opacity);
+        if node.shape == crate::shapes::NodeShape::Square {
+            canvas.fill_rect(node.origin, node.side, tint_to_rgb(node.fill), node.opacity);
+        } else {
+            canvas.fill_polygon(&node.points, tint_to_rgb(node.fill), node.opacity);
+        }
     }
     canvas.pixels
 }
@@ -345,37 +363,37 @@ impl Image {
         }
     }
 
-    fn fill_triangle(&mut self, a: Point2, b: Point2, c: Point2, rgb: [u8; 3]) {
-        let x0 = a.x.min(b.x).min(c.x).floor() as i32;
-        let y0 = a.y.min(b.y).min(c.y).floor() as i32;
-        let x1 = a.x.max(b.x).max(c.x).ceil() as i32;
-        let y1 = a.y.max(b.y).max(c.y).ceil() as i32;
-        let area = edge_factor(a, b, c);
-        if area == 0.0 {
+    fn fill_polygon(&mut self, vertices: &[Point2], rgb: [u8; 3], opacity: f32) {
+        if vertices.len() < 3 {
             return;
         }
-        for y in y0..=y1 {
-            for x in x0..=x1 {
+        let mut x0 = f32::INFINITY;
+        let mut y0 = f32::INFINITY;
+        let mut x1 = f32::NEG_INFINITY;
+        let mut y1 = f32::NEG_INFINITY;
+        for point in vertices {
+            x0 = x0.min(point.x);
+            y0 = y0.min(point.y);
+            x1 = x1.max(point.x);
+            y1 = y1.max(point.y);
+        }
+        let alpha = opacity.clamp(0.0, 1.0);
+        if alpha <= 0.0 {
+            return;
+        }
+        for y in (y0.floor() as i32)..=(y1.ceil() as i32) {
+            for x in (x0.floor() as i32)..=(x1.ceil() as i32) {
                 let point = Point2::new(x as f32 + 0.5, y as f32 + 0.5);
-                let inside = if area > 0.0 {
-                    edge_factor(a, b, point) >= 0.0
-                        && edge_factor(b, c, point) >= 0.0
-                        && edge_factor(c, a, point) >= 0.0
-                } else {
-                    edge_factor(a, b, point) <= 0.0
-                        && edge_factor(b, c, point) <= 0.0
-                        && edge_factor(c, a, point) <= 0.0
-                };
-                if inside {
-                    self.plot(x, y, rgb);
+                if point_in_polygon(point, vertices) {
+                    if alpha >= 1.0 {
+                        self.plot(x, y, rgb);
+                    } else {
+                        self.blend(x, y, rgb, alpha);
+                    }
                 }
             }
         }
     }
-}
-
-fn edge_factor(a: Point2, b: Point2, c: Point2) -> f32 {
-    (c.x - a.x) * (b.y - a.y) - (c.y - a.y) * (b.x - a.x)
 }
 
 #[cfg(test)]
@@ -469,6 +487,7 @@ mod tests {
 
     #[test]
     fn raster_places_nodes_over_edges() {
+        use crate::shapes::NodeShape;
         use crate::view::{PaintedArrow, PaintedEdge, PaintedNode};
         use cg_graph::NodeIndex;
 
@@ -478,6 +497,8 @@ mod tests {
             side: 4.0,
             fill: 0xFF0000,
             opacity: 1.0,
+            shape: NodeShape::Square,
+            points: vec![],
         }];
         let edges = vec![PaintedEdge {
             source: NodeIndex::new(0),
@@ -491,6 +512,8 @@ mod tests {
             aggregated: false,
             tint: 0x00FF00,
             width: 1.0,
+            arrow: crate::arrows::ArrowKind::Triangle,
+            arrow_scale: 1.0,
         }];
         let arrows: Vec<PaintedArrow> = Vec::new();
         let pixels = rasterize(10, 10, &nodes, &edges, &arrows, [0, 0, 0]);

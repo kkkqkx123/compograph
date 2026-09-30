@@ -8,6 +8,8 @@
 | [phase-3-detailed-plan.md](./phase-3-detailed-plan.md) | **阶段 3 细化方案**：度量基线、细节层次、边聚合、索引与剔除改造、保留模式、后台调度、图片导出、路线 C 评估的任务分解、顺序与验收 |
 | [feature-analysis-report.md](./feature-analysis-report.md) | **功能实测分析报告**：以代码为准盘点已落地功能、对照 cytoscape.js 的差距、待补充清单与优先级、文档与代码的偏差表（供回改） |
 | [compograph-p0-plan.md](./compograph-p0-plan.md) | **P0 阶段方案**：节点标签文本渲染、DOT 导入、应用接线、文档回改的实施设计与验证 |
+| [compograph-p1-plan.md](./compograph-p1-plan.md) | **P1 阶段方案**：算法桥补齐、中心性三件套、Radial 布局、节点形状族、箭头形状族的实施设计与验证（0/5 未开工） |
+| [compograph-p2-plan.md](./compograph-p2-plan.md) | **P2 与远期方案**：边标签、界面接线、换行、曲线、样式扩展、PNG，以及聚类/复合节点/动画链/实例化后端的归属与拍板条件 |
 
 ## 约定
 

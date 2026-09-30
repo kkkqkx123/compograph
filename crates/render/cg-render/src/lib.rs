@@ -1,17 +1,20 @@
 //! Graph canvas rendering on top of gpui paint primitives.
 
+pub mod arrows;
 pub mod camera;
 pub mod export;
 pub mod lod;
 pub mod metrics;
 pub mod refresh;
 pub mod retained;
+pub mod shapes;
 pub mod spatial;
 pub mod style;
 pub mod synth;
 pub mod text;
 pub mod view;
 
+pub use arrows::ArrowKind;
 pub use camera::{Camera, MAX_ZOOM, MIN_ZOOM};
 pub use export::{
     ExportRequest, ExportScope, ExportSnapshot, encode_ppm, export_pixels, graph_bounds, rasterize,
@@ -23,6 +26,7 @@ pub use refresh::subscribe_repaint;
 pub use retained::{
     CacheVersions, CameraSnapshot, RefreshInput, RetainedCache, StoredPlans, incident_edges,
 };
+pub use shapes::{NodeShape, node_polygon, point_hits_shape};
 pub use spatial::{ADAPTIVE_CELL_MULTIPLE, SpatialIndex, adaptive_cell};
 pub use style::{
     BypassStore, DEFAULT_EDGE_TINT, DEFAULT_NODE_FILL, DEFAULT_NODE_STROKE, EdgeMapper,
@@ -36,9 +40,9 @@ pub use text::{
     paint_labels_for,
 };
 pub use view::{
-    EDGE_AGGREGATION_THRESHOLD, EdgePaintOptions, NODE_SIDE, PARALLEL_STEP, PaintedArrow,
-    PaintedEdge, PaintedNode, PaintedRubberBand, bundle_slot, edge_ordinals_for, graph_view,
-    loop_ordinal, paint_arrows, paint_arrows_for_level, paint_edges, paint_edges_for,
-    paint_edges_with_options, paint_nodes, paint_nodes_for, paint_single_arrow, paint_single_edge,
-    paint_single_node, painted_edge_hits, visible_node_ids, world_viewport_rect,
+    ARROW_HALF_WIDTH, ARROW_LENGTH, EDGE_AGGREGATION_THRESHOLD, EdgePaintOptions, NODE_SIDE,
+    PARALLEL_STEP, PaintedArrow, PaintedEdge, PaintedNode, PaintedRubberBand, bundle_slot,
+    edge_ordinals_for, graph_view, loop_ordinal, paint_arrows, paint_arrows_for_level, paint_edges, paint_edges_for, paint_edges_with_options, paint_nodes, paint_nodes_for,
+    paint_nodes_for_level, paint_single_arrow, paint_single_edge, paint_single_node,
+    paint_single_node_for_level, painted_edge_hits, visible_node_ids, world_viewport_rect,
 };

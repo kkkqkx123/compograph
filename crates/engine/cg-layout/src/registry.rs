@@ -10,6 +10,7 @@ use crate::force::ForceLayout;
 use crate::grid::{GridLayout, GridOptions};
 use crate::hierarchical::{HierarchicalLayout, HierarchicalOptions};
 use crate::preset::PresetLayout;
+use crate::radial::{RadialLayout, RadialOptions};
 use crate::random::RandomLayout;
 
 /// Radius of the scatter fallback layouts in the default registry.
@@ -58,6 +59,9 @@ impl LayoutRegistry {
         registry.register(Box::new(HierarchicalLayout::with_options(
             HierarchicalOptions::default(),
         )));
+        registry.register(Box::new(RadialLayout::with_options(
+            RadialOptions::default(),
+        )));
         registry
     }
 
@@ -79,6 +83,9 @@ impl LayoutRegistry {
             ))),
             "hierarchical" => Some(Box::new(HierarchicalLayout::with_options(
                 HierarchicalOptions::default(),
+            ))),
+            "radial" => Some(Box::new(RadialLayout::with_options(
+                RadialOptions::default(),
             ))),
             _ => None,
         }
@@ -152,6 +159,7 @@ mod tests {
                 "grid",
                 "hierarchical",
                 "preset",
+                "radial",
                 "random",
             ]
         );

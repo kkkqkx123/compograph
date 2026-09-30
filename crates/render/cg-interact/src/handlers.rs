@@ -7,12 +7,11 @@
 use std::collections::HashMap;
 
 use cg_geometry::{
-    BEZIER_HIT_SAMPLES, bezier_control_for_edge, nearest_point_index, parallel_offsets,
-    point_hits_node, polyline_intersects_rect, sample_quadratic_bezier, segment_intersects_rect,
-    self_loop_polyline,
+    BEZIER_HIT_SAMPLES, bezier_control_for_edge, parallel_offsets, polyline_intersects_rect,
+    sample_quadratic_bezier, segment_intersects_rect, self_loop_polyline,
 };
 use cg_graph::{GraphView, NodeIndex, Positions};
-use cg_render::{NODE_SIDE, PARALLEL_STEP, SpatialIndex};
+use cg_render::{NODE_SIDE, NodeShape, PARALLEL_STEP, SpatialIndex, point_hits_shape};
 use cg_types::{Point2, Rect, Vec2};
 
 /// Half extent of a node body in model units, derived from the paint plan.
@@ -21,31 +20,50 @@ pub const NODE_HALF_EXTENT: f32 = NODE_SIDE / 2.0;
 /// Pointer tolerance for node grabs, in model units.
 pub const NODE_GRAB_TOLERANCE: f32 = 6.0;
 
-/// Finds the node under `world_point`, if any.
+/// Finds the node under `world_point` honoring per-node shapes.
 ///
-/// Candidates come from the spatial index; the nearest candidate within the
-/// node body wins. Returns the hit node and the grab offset from its center.
-pub fn press_hit(
+/// Candidates are tested nearest first; the square body stays the conservative
+/// outer envelope inside [`point_hits_shape`], so box selection keeps using
+/// the square path while taps gain polygon precision.
+pub fn press_hit_shaped(
     world_point: Point2,
     positions: &Positions,
     index: &SpatialIndex,
     radius: f32,
+    shape_of: impl Fn(NodeIndex) -> NodeShape,
 ) -> Option<(NodeIndex, Vec2)> {
     let candidates = index.query_point(world_point, radius);
-    let mut points = Vec::with_capacity(candidates.len());
-    for node in &candidates {
-        if let Some(position) = positions.get(node) {
-            points.push(*position);
+    let mut ordered: Vec<(f32, NodeIndex, Point2)> = Vec::new();
+    for node in candidates {
+        if let Some(center) = positions.get(&node).copied() {
+            let distance = (world_point - center).length_squared();
+            ordered.push((distance, node, center));
         }
     }
-    let slot = nearest_point_index(world_point, &points)?;
-    let node = candidates.get(slot).copied()?;
-    let center = positions.get(&node).copied()?;
-    if point_hits_node(world_point, center, NODE_HALF_EXTENT, NODE_GRAB_TOLERANCE) {
-        Some((node, world_point - center))
-    } else {
-        None
+    ordered.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+    for (_, node, center) in ordered {
+        if point_hits_shape(
+            shape_of(node),
+            world_point,
+            center,
+            NODE_HALF_EXTENT,
+            NODE_GRAB_TOLERANCE,
+        ) {
+            return Some((node, world_point - center));
+        }
     }
+    None
+}
+
+/// Node under `world_point` honoring per-node shapes, for hover highlighting.
+pub fn hover_node_shaped(
+    world_point: Point2,
+    positions: &Positions,
+    index: &SpatialIndex,
+    radius: f32,
+    shape_of: impl Fn(NodeIndex) -> NodeShape,
+) -> Option<NodeIndex> {
+    press_hit_shaped(world_point, positions, index, radius, shape_of).map(|(node, _)| node)
 }
 
 /// New center of a dragged node from the pointer and the initial grab offset.
@@ -184,19 +202,6 @@ fn bundle_key(source: NodeIndex, target: NodeIndex) -> (usize, usize) {
     if a <= b { (a, b) } else { (b, a) }
 }
 
-/// Node under `world_point`, if any, for hover highlighting.
-///
-/// This shares the press-hit geometry without the grab offset, so hover and
-/// click agree on the target.
-pub fn hover_node(
-    world_point: Point2,
-    positions: &Positions,
-    index: &SpatialIndex,
-    radius: f32,
-) -> Option<NodeIndex> {
-    press_hit(world_point, positions, index, radius).map(|(node, _)| node)
-}
-
 /// Zoom factor for a scroll wheel line delta.
 ///
 /// Positive deltas zoom in one notch per line; the factor compounds, so small
@@ -220,20 +225,39 @@ mod tests {
 
     #[test]
     fn press_finds_the_node_under_the_pointer() {
+        use cg_render::NodeShape;
+
         let mut positions = Positions::new();
         positions.insert(NodeIndex::new(0), Point2::new(0.0, 0.0));
         positions.insert(NodeIndex::new(1), Point2::new(100.0, 0.0));
         let index = indexed(&positions);
-        let hit = press_hit(Point2::new(103.0, 1.0), &positions, &index, 24.0);
+        let hit = press_hit_shaped(
+            Point2::new(103.0, 1.0),
+            &positions,
+            &index,
+            24.0,
+            |_| NodeShape::Square,
+        );
         assert!(hit.map(|(node, _)| node) == Some(NodeIndex::new(1)));
     }
 
     #[test]
     fn press_misses_empty_space() {
+        use cg_render::NodeShape;
+
         let mut positions = Positions::new();
         positions.insert(NodeIndex::new(0), Point2::new(0.0, 0.0));
         let index = indexed(&positions);
-        assert!(press_hit(Point2::new(200.0, 200.0), &positions, &index, 24.0).is_none());
+        assert!(
+            press_hit_shaped(
+                Point2::new(200.0, 200.0),
+                &positions,
+                &index,
+                24.0,
+                |_| NodeShape::Square
+            )
+            .is_none()
+        );
     }
 
     #[test]
@@ -327,16 +351,41 @@ mod tests {
     }
 
     #[test]
-    fn hover_agrees_with_press_hits() {
+    fn shaped_press_rejects_triangle_corners() {
+        use cg_render::NodeShape;
+
         let mut positions = Positions::new();
         positions.insert(NodeIndex::new(0), Point2::new(0.0, 0.0));
         let index = indexed(&positions);
+        let corner = Point2::new(-11.0, -11.0);
+        assert!(
+            press_hit_shaped(corner, &positions, &index, 24.0, |_| NodeShape::Square).is_some()
+        );
+        assert!(
+            press_hit_shaped(corner, &positions, &index, 24.0, |_| NodeShape::Triangle).is_none()
+        );
+        assert!(
+            press_hit_shaped(Point2::ZERO, &positions, &index, 24.0, |_| {
+                NodeShape::Triangle
+            })
+            .is_some()
+        );
+    }
+
+    #[test]
+    fn hover_agrees_with_press_hits() {
+        use cg_render::NodeShape;
+
+        let mut positions = Positions::new();
+        positions.insert(NodeIndex::new(0), Point2::new(0.0, 0.0));
+        let index = indexed(&positions);
+        let shape_of = |_| NodeShape::Square;
         assert_eq!(
-            hover_node(Point2::new(2.0, 1.0), &positions, &index, 24.0),
+            hover_node_shaped(Point2::new(2.0, 1.0), &positions, &index, 24.0, shape_of),
             Some(NodeIndex::new(0))
         );
         assert_eq!(
-            hover_node(Point2::new(200.0, 200.0), &positions, &index, 24.0),
+            hover_node_shaped(Point2::new(200.0, 200.0), &positions, &index, 24.0, shape_of),
             None
         );
     }

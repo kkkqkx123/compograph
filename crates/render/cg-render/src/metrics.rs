@@ -78,6 +78,10 @@ impl FrameMetrics {
     pub fn len(&self) -> usize {
         self.samples.len()
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.samples.is_empty()
+    }
 }
 
 fn average(values: impl Iterator<Item = f64>) -> f64 {

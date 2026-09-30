@@ -86,6 +86,44 @@ pub fn point_hits_node(point: Point2, center: Point2, half_extent: f32, toleranc
     (point.x - center.x).abs() <= half && (point.y - center.y).abs() <= half
 }
 
+/// True when `point` lies inside the polygon through `vertices`.
+///
+/// Uses the ray cast rule; points on an edge count as inside. Short polygons
+/// never hit.
+pub fn point_in_polygon(point: Point2, vertices: &[Point2]) -> bool {
+    if vertices.len() < 3 {
+        return false;
+    }
+    let mut inside = false;
+    let mut previous = vertices[vertices.len() - 1];
+    for current in vertices {
+        let crosses = (current.y > point.y) != (previous.y > point.y);
+        if crosses {
+            let intersect = (previous.x - current.x) * (point.y - current.y)
+                / (previous.y - current.y)
+                + current.x;
+            if point.x < intersect || (point.x - intersect).abs() <= f32::EPSILON {
+                inside = !inside;
+            }
+        } else if point_on_segment(point, *current, previous) {
+            return true;
+        }
+        previous = *current;
+    }
+    inside
+}
+
+fn point_on_segment(point: Point2, a: Point2, b: Point2) -> bool {
+    let cross = (b.x - a.x) * (point.y - a.y) - (b.y - a.y) * (point.x - a.x);
+    if cross.abs() > 1e-4 {
+        return false;
+    }
+    point.x >= a.x.min(b.x) - 1e-4
+        && point.x <= a.x.max(b.x) + 1e-4
+        && point.y >= a.y.min(b.y) - 1e-4
+        && point.y <= a.y.max(b.y) + 1e-4
+}
+
 /// Index of the nearest candidate to `point`, if any candidate exists.
 ///
 /// Candidates stay index-agnostic so this crate never names graph identifiers.
@@ -264,6 +302,20 @@ mod tests {
         let outside = vec![Point2::new(0.0, 5.0), Point2::new(10.0, 5.0)];
         assert!(!polyline_intersects_rect(&outside, rect));
         assert!(!polyline_intersects_rect(&[], rect));
+    }
+
+    #[test]
+    fn polygon_ray_accepts_inside_and_border() {
+        let square = vec![
+            Point2::new(-10.0, -10.0),
+            Point2::new(10.0, -10.0),
+            Point2::new(10.0, 10.0),
+            Point2::new(-10.0, 10.0),
+        ];
+        assert!(point_in_polygon(Point2::ZERO, &square));
+        assert!(point_in_polygon(Point2::new(10.0, 0.0), &square));
+        assert!(!point_in_polygon(Point2::new(30.0, 0.0), &square));
+        assert!(!point_in_polygon(Point2::ZERO, &[]));
     }
 
     #[test]

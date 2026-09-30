@@ -75,8 +75,13 @@ pub fn scc_outcome(components: &[Vec<NodeIndex>], elapsed_ms: f64) -> AlgoOutcom
     }
 }
 
-/// Maps scores to node sizes over the observed score range.
-pub fn pagerank_outcome(order: &[NodeIndex], scores: &[f32], elapsed_ms: f64) -> AlgoOutcome {
+/// Maps centrality scores to node sizes over the observed score range.
+pub fn centrality_outcome(
+    order: &[NodeIndex],
+    scores: &[f32],
+    label: &str,
+    elapsed_ms: f64,
+) -> AlgoOutcome {
     let mut finite: Vec<f32> = scores
         .iter()
         .copied()
@@ -102,10 +107,38 @@ pub fn pagerank_outcome(order: &[NodeIndex], scores: &[f32], elapsed_ms: f64) ->
         nodes,
         edges: Vec::new(),
         summary: format!(
-            "pagerank: {} nodes, peak {peak:.3} ({elapsed_ms:.1}ms)",
+            "{label}: {} nodes, peak {peak:.3} ({elapsed_ms:.1}ms)",
             order.len()
         ),
     }
+}
+
+/// Highlights articulation points and bridges together.
+pub fn cut_outcome(
+    points: &[NodeIndex],
+    bridges: &[(NodeIndex, NodeIndex)],
+    elapsed_ms: f64,
+) -> AlgoOutcome {
+    AlgoOutcome {
+        nodes: points
+            .iter()
+            .map(|node| (*node, NodeStylePatch::selected()))
+            .collect(),
+        edges: bridges
+            .iter()
+            .map(|(source, target)| ((*source, *target), EdgeStylePatch::highlighted()))
+            .collect(),
+        summary: format!(
+            "cuts: {} points, {} bridges ({elapsed_ms:.1}ms)",
+            points.len(),
+            bridges.len()
+        ),
+    }
+}
+
+/// Maps scores to node sizes over the observed score range.
+pub fn pagerank_outcome(order: &[NodeIndex], scores: &[f32], elapsed_ms: f64) -> AlgoOutcome {
+    centrality_outcome(order, scores, "pagerank", elapsed_ms)
 }
 
 /// Thickens every edge of a spanning forest and totals its weight.
@@ -178,5 +211,24 @@ mod tests {
         assert!(outcome.summary.contains("1 edges"));
         assert!(!is_stale(3, 3));
         assert!(is_stale(4, 3));
+    }
+
+    #[test]
+    fn centrality_outcome_labels_scores_and_scales() {
+        let order = vec![NodeIndex::new(0), NodeIndex::new(1)];
+        let outcome = centrality_outcome(&order, &[0.1, 0.9], "degree", 0.5);
+        assert_eq!(outcome.nodes.len(), 2);
+        assert!(outcome.summary.contains("degree"));
+        assert!(outcome.summary.contains("2 nodes"));
+    }
+
+    #[test]
+    fn cut_outcome_highlights_points_and_bridges() {
+        let points = vec![NodeIndex::new(1)];
+        let bridges = vec![(NodeIndex::new(0), NodeIndex::new(1))];
+        let outcome = cut_outcome(&points, &bridges, 0.5);
+        assert_eq!(outcome.nodes.len(), 1);
+        assert_eq!(outcome.edges.len(), 1);
+        assert!(outcome.summary.contains("1 points"));
     }
 }

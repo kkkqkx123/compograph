@@ -4,7 +4,11 @@
 //! concrete store, so they can run headlessly against lightweight mocks and
 //! stay independent of the petgraph storage details.
 
-use petgraph::stable_graph::NodeIndex;
+use petgraph::stable_graph::{NodeIndex, StableGraph};
+use petgraph::visit::EdgeRef;
+use petgraph::{Directed, Direction};
+
+use crate::store::{EdgeData, NodeData};
 
 /// Structural queries a layout engine or paint planner may perform.
 ///
@@ -89,6 +93,69 @@ impl MockGraph {
     pub fn push_edge(&mut self, source: usize, target: usize) {
         self.nodes = self.nodes.max(source + 1).max(target + 1);
         self.edges.push((source, target));
+    }
+}
+
+impl GraphView for StableGraph<NodeData, EdgeData, Directed> {
+    fn node_ids(&self) -> Vec<NodeIndex> {
+        use petgraph::visit::IntoNodeIdentifiers;
+        self.node_identifiers().collect()
+    }
+
+    fn node_count(&self) -> usize {
+        self.node_count()
+    }
+
+    fn edge_count(&self) -> usize {
+        self.edge_count()
+    }
+
+    fn edges(&self) -> Vec<(NodeIndex, NodeIndex)> {
+        use petgraph::visit::IntoEdgeReferences;
+        self.edge_references()
+            .map(|edge| (edge.source(), edge.target()))
+            .collect()
+    }
+
+    fn degree(&self, node: NodeIndex) -> usize {
+        let outgoing = self.edges(node).count();
+        let incoming = self.edges_directed(node, Direction::Incoming).count();
+        let loops = self
+            .edges(node)
+            .filter(|edge| edge.source() == node && edge.target() == node)
+            .count();
+        outgoing + incoming - loops
+    }
+
+    fn neighbors(&self, node: NodeIndex) -> Vec<NodeIndex> {
+        let mut result: Vec<NodeIndex> = self
+            .edges(node)
+            .map(|edge| edge.target())
+            .chain(
+                self.edges_directed(node, Direction::Incoming)
+                    .map(|edge| edge.source()),
+            )
+            .collect();
+        result.sort_unstable_by_key(|neighbour| neighbour.index());
+        result.dedup_by_key(|neighbour| neighbour.index());
+        result
+    }
+
+    fn successors(&self, node: NodeIndex) -> Vec<NodeIndex> {
+        let mut result: Vec<NodeIndex> = self.edges(node).map(|edge| edge.target()).collect();
+        result.sort_unstable_by_key(|neighbour| neighbour.index());
+        result.dedup_by_key(|neighbour| neighbour.index());
+        result
+    }
+
+    fn predecessors(&self, node: NodeIndex) -> Vec<NodeIndex> {
+        let mut result: Vec<NodeIndex> = self
+            .edges_directed(node, Direction::Incoming)
+            .map(|edge| edge.source())
+            .collect();
+        result.sort_unstable_by_key(|neighbour| neighbour.index());
+        result.dedup_by_key(|neighbour| neighbour.index());
+        result
     }
 }
 

@@ -18,7 +18,9 @@ use gpui::{
     canvas, fill, rgb,
 };
 
+use crate::arrows::{ArrowKind, arrow_polygon};
 use crate::camera::Camera;
+use crate::shapes::{NodeShape, node_polygon, shape_for_level};
 use crate::style::{EdgeStyle, NodeStyle};
 
 /// Side length, in logical pixels, of the placeholder node rectangle.
@@ -38,10 +40,10 @@ pub const EDGE_AGGREGATION_THRESHOLD: usize = 24;
 const CULL_MARGIN: f32 = 32.0;
 
 /// Length of the arrowhead along the edge direction, in screen pixels.
-const ARROW_LENGTH: f32 = 10.0;
+pub const ARROW_LENGTH: f32 = 10.0;
 
 /// Half width of the arrowhead across the edge direction.
-const ARROW_HALF_WIDTH: f32 = 4.0;
+pub const ARROW_HALF_WIDTH: f32 = 4.0;
 
 /// Fill of the rubber-band box-selection rectangle.
 const RUBBER_BAND_FILL: u32 = 0x4a9eff22;
@@ -49,14 +51,20 @@ const RUBBER_BAND_FILL: u32 = 0x4a9eff22;
 /// Outline of the rubber-band box-selection rectangle.
 pub const RUBBER_BAND_STROKE: u32 = 0x4a9eff;
 
-/// A node rectangle scheduled for painting, in screen pixels.
-#[derive(Clone, Copy, Debug)]
+/// A node body scheduled for painting, in screen pixels.
+///
+/// Squares keep the fast rectangle path through `origin` and `side`; every
+/// shape also carries its screen pixel polygon in `points` so drawing, export
+/// and tests share one vertex table.
+#[derive(Clone, Debug)]
 pub struct PaintedNode {
     pub id: NodeIndex,
     pub origin: Point2,
     pub side: f32,
     pub fill: u32,
     pub opacity: f32,
+    pub shape: NodeShape,
+    pub points: Vec<Point2>,
 }
 
 /// An edge polyline scheduled for painting, in screen pixels.
@@ -78,6 +86,8 @@ pub struct PaintedEdge {
     pub aggregated: bool,
     pub tint: u32,
     pub width: f32,
+    pub arrow: ArrowKind,
+    pub arrow_scale: f32,
 }
 
 impl PaintedEdge {
@@ -101,7 +111,15 @@ impl PaintedEdge {
             aggregated: false,
             tint,
             width,
+            arrow: ArrowKind::Triangle,
+            arrow_scale: 1.0,
         }
+    }
+
+    fn with_arrow(mut self, arrow: ArrowKind, arrow_scale: f32) -> Self {
+        self.arrow = arrow;
+        self.arrow_scale = arrow_scale;
+        self
     }
 
     /// Interior points of the painted path excluding the endpoints.
@@ -151,13 +169,17 @@ impl Default for EdgePaintOptions {
     }
 }
 
-/// An arrowhead triangle scheduled for painting, in screen pixels.
-#[derive(Clone, Copy, Debug)]
+/// An arrowhead polygon scheduled for painting, in screen pixels.
+///
+/// Triangles keep three points with the tip first; the remaining kinds carry
+/// their full vertex tables in `points` with the tip first for oriented
+/// shapes. Dots center on `tip` and need no orientation.
+#[derive(Clone, Debug)]
 pub struct PaintedArrow {
     pub tip: Point2,
-    pub left: Point2,
-    pub right: Point2,
+    pub points: Vec<Point2>,
     pub tint: u32,
+    pub kind: ArrowKind,
 }
 
 /// Rubber-band rectangle scheduled for painting, in screen pixels.
@@ -229,9 +251,31 @@ pub fn paint_nodes_for(
     viewport: Vec2,
     node_style: impl Fn(NodeIndex) -> NodeStyle,
 ) -> Vec<PaintedNode> {
+    paint_nodes_for_level(
+        nodes,
+        positions,
+        camera,
+        viewport,
+        DetailLevel::Full,
+        node_style,
+    )
+}
+
+/// Node plan honoring the detail level; minimal degrades every shape to a
+/// square while keeping positions and fills.
+pub fn paint_nodes_for_level(
+    nodes: &[NodeIndex],
+    positions: &Positions,
+    camera: &Camera,
+    viewport: Vec2,
+    level: DetailLevel,
+    node_style: impl Fn(NodeIndex) -> NodeStyle,
+) -> Vec<PaintedNode> {
     let mut painted = Vec::new();
     for node in nodes {
-        if let Some(entry) = paint_single_node(*node, positions, camera, viewport, &node_style) {
+        if let Some(entry) =
+            paint_single_node_for_level(*node, positions, camera, viewport, level, &node_style)
+        {
             painted.push(entry);
         }
     }
@@ -246,6 +290,25 @@ pub fn paint_single_node(
     viewport: Vec2,
     node_style: impl Fn(NodeIndex) -> NodeStyle,
 ) -> Option<PaintedNode> {
+    paint_single_node_for_level(
+        node,
+        positions,
+        camera,
+        viewport,
+        DetailLevel::Full,
+        node_style,
+    )
+}
+
+/// Node plan for one node with explicit detail handling.
+pub fn paint_single_node_for_level(
+    node: NodeIndex,
+    positions: &Positions,
+    camera: &Camera,
+    viewport: Vec2,
+    level: DetailLevel,
+    node_style: impl Fn(NodeIndex) -> NodeStyle,
+) -> Option<PaintedNode> {
     let world = positions.get(&node)?;
     let screen = camera.world_to_viewport(viewport, *world);
     let visible = screen.x >= -NODE_SIDE
@@ -257,12 +320,19 @@ pub fn paint_single_node(
     }
     let style = node_style(node);
     let side = (NODE_SIDE * style.scale).max(4.0);
+    let shape = shape_for_level(style.shape, level == DetailLevel::Minimal);
+    let points = node_polygon(shape, side)
+        .into_iter()
+        .map(|vertex| Point2::new(screen.x + vertex.x, screen.y + vertex.y))
+        .collect();
     Some(PaintedNode {
         id: node,
         origin: Point2::new(screen.x - side / 2.0, screen.y - side / 2.0),
         side,
         fill: style.fill,
         opacity: style.opacity,
+        shape,
+        points,
     })
 }
 
@@ -368,6 +438,8 @@ pub fn paint_edges_for(
                     aggregated: false,
                     tint: style.tint,
                     width: style.width,
+                    arrow: style.arrow,
+                    arrow_scale: style.arrow_scale,
                 });
             }
             continue;
@@ -406,7 +478,8 @@ pub fn paint_edges_for(
             end = fanned_b;
             if edge_visible(start, end, None, viewport) {
                 let mut edge =
-                    PaintedEdge::straight(*source, *target, start, end, style.tint, style.width);
+                    PaintedEdge::straight(*source, *target, start, end, style.tint, style.width)
+                        .with_arrow(style.arrow, style.arrow_scale);
                 edge.aggregated = true;
                 painted.push(edge);
             }
@@ -432,6 +505,8 @@ pub fn paint_edges_for(
                     aggregated: true,
                     tint: style.tint,
                     width: style.width,
+                    arrow: style.arrow,
+                    arrow_scale: style.arrow_scale,
                 });
             }
             continue;
@@ -459,6 +534,8 @@ pub fn paint_edges_for(
                 aggregated: false,
                 tint: style.tint,
                 width: style.width,
+                arrow: style.arrow,
+                arrow_scale: style.arrow_scale,
             });
         }
     }
@@ -543,6 +620,8 @@ pub fn paint_single_edge(
             aggregated: false,
             tint: style.tint,
             width: style.width,
+            arrow: style.arrow,
+            arrow_scale: style.arrow_scale,
         });
     }
     let (a, b) = match (positions.get(&source), positions.get(&target)) {
@@ -575,7 +654,8 @@ pub fn paint_single_edge(
         if !edge_visible(start, end, None, viewport) {
             return None;
         }
-        let mut edge = PaintedEdge::straight(source, target, start, end, style.tint, style.width);
+        let mut edge = PaintedEdge::straight(source, target, start, end, style.tint, style.width)
+            .with_arrow(style.arrow, style.arrow_scale);
         edge.aggregated = true;
         return Some(edge);
     }
@@ -601,6 +681,8 @@ pub fn paint_single_edge(
             aggregated: true,
             tint: style.tint,
             width: style.width,
+            arrow: style.arrow,
+            arrow_scale: style.arrow_scale,
         });
     }
     let offsets = parallel_offsets(bundle_len, PARALLEL_STEP);
@@ -628,6 +710,8 @@ pub fn paint_single_edge(
         aggregated: false,
         tint: style.tint,
         width: style.width,
+        arrow: style.arrow,
+        arrow_scale: style.arrow_scale,
     })
 }
 
@@ -709,15 +793,24 @@ pub fn paint_arrows(edges: &[PaintedEdge]) -> Vec<PaintedArrow> {
 /// Arrowhead for one painted edge, pointing along its end tangent.
 ///
 /// Self loops point along the return tangent from the second loop control.
+/// The kind and scale ride on the edge plan; dots ignore the angle and center
+/// on the endpoint.
 pub fn paint_single_arrow(edge: &PaintedEdge) -> PaintedArrow {
     let direction = edge_direction(edge);
     let angle = direction.y.atan2(direction.x);
-    let corners = arrow_triangle(edge.end, angle, ARROW_LENGTH, ARROW_HALF_WIDTH);
+    let scale = edge.arrow_scale.max(0.1);
+    let points = arrow_polygon(
+        edge.arrow,
+        edge.end,
+        angle,
+        ARROW_LENGTH * scale,
+        ARROW_HALF_WIDTH * scale,
+    );
     PaintedArrow {
-        tip: corners[0],
-        left: corners[1],
-        right: corners[2],
+        tip: edge.end,
+        points,
         tint: edge.tint,
+        kind: edge.arrow,
     }
 }
 
@@ -737,18 +830,6 @@ fn edge_direction(edge: &PaintedEdge) -> Vec2 {
     } else {
         Vec2::new(delta.x / length, delta.y / length)
     }
-}
-
-/// Arrowhead corners with the tip first, pointing along `angle`.
-pub fn arrow_triangle(tip: Point2, angle: f32, length: f32, half_width: f32) -> [Point2; 3] {
-    let axis = Vec2::new(angle.cos(), angle.sin());
-    let normal = Vec2::new(-axis.y, axis.x);
-    let base = tip + axis * (-length);
-    [
-        tip,
-        base + normal * half_width,
-        base + normal * (-half_width),
-    ]
 }
 
 fn unordered_key(source: NodeIndex, target: NodeIndex) -> (usize, usize) {
@@ -865,27 +946,21 @@ pub fn graph_view(
                 }
             }
             if !arrows.is_empty() {
-                let mut by_tint: HashMap<u32, Vec<[Point2; 3]>> = HashMap::new();
+                let mut by_tint: HashMap<u32, Vec<Vec<Point2>>> = HashMap::new();
                 for arrow in &arrows {
-                    by_tint.entry(arrow.tint).or_default().push([
-                        arrow.tip,
-                        arrow.left,
-                        arrow.right,
-                    ]);
+                    by_tint
+                        .entry(arrow.tint)
+                        .or_default()
+                        .push(arrow.points.clone());
                 }
                 let mut tints: Vec<u32> = by_tint.keys().copied().collect();
                 tints.sort_unstable();
                 for tint in tints {
                     let mut heads = gpui::PathBuilder::fill();
                     for corners in by_tint.get(&tint).unwrap_or(&Vec::new()) {
-                        heads.add_polygon(
-                            &[
-                                to_pixels(corners[0]),
-                                to_pixels(corners[1]),
-                                to_pixels(corners[2]),
-                            ],
-                            true,
-                        );
+                        let pixels: Vec<gpui::Point<Pixels>> =
+                            corners.iter().map(|point| to_pixels(*point)).collect();
+                        heads.add_polygon(&pixels, true);
                     }
                     if let Ok(path) = heads.build() {
                         window.paint_path(path, rgb(tint));
@@ -893,14 +968,24 @@ pub fn graph_view(
                 }
             }
             for node in &nodes {
-                let quad = fill(
-                    Bounds {
-                        origin: gpui::point(gpui::px(node.origin.x), gpui::px(node.origin.y)),
-                        size: gpui::size(gpui::px(node.side), gpui::px(node.side)),
-                    },
-                    with_opacity(node.fill, node.opacity),
-                );
-                window.paint_quad(quad);
+                if node.shape == NodeShape::Square {
+                    let quad = fill(
+                        Bounds {
+                            origin: gpui::point(gpui::px(node.origin.x), gpui::px(node.origin.y)),
+                            size: gpui::size(gpui::px(node.side), gpui::px(node.side)),
+                        },
+                        with_opacity(node.fill, node.opacity),
+                    );
+                    window.paint_quad(quad);
+                    continue;
+                }
+                let mut body = gpui::PathBuilder::fill();
+                let pixels: Vec<gpui::Point<Pixels>> =
+                    node.points.iter().map(|point| to_pixels(*point)).collect();
+                body.add_polygon(&pixels, true);
+                if let Ok(path) = body.build() {
+                    window.paint_path(path, with_opacity(node.fill, node.opacity));
+                }
             }
             for label in &labels {
                 paint_label(label, window, cx);
@@ -1046,7 +1131,15 @@ mod tests {
 
     #[test]
     fn arrow_tip_leads_along_the_edge() {
-        let corners = arrow_triangle(Point2::new(10.0, 0.0), 0.0, ARROW_LENGTH, ARROW_HALF_WIDTH);
+        use crate::arrows::arrow_polygon;
+
+        let corners = arrow_polygon(
+            ArrowKind::Triangle,
+            Point2::new(10.0, 0.0),
+            0.0,
+            ARROW_LENGTH,
+            ARROW_HALF_WIDTH,
+        );
         assert_eq!(corners[0], Point2::new(10.0, 0.0));
         assert!(corners[1].x < corners[0].x && corners[2].x < corners[0].x);
         assert!(corners[1].y > 0.0 && corners[2].y < 0.0);
@@ -1084,6 +1177,8 @@ mod tests {
             aggregated: false,
             tint: 0,
             width: 1.0,
+            arrow: ArrowKind::Triangle,
+            arrow_scale: 1.0,
         };
         let rect = Rect::new(Point2::new(4.0, -1.0), Vec2::new(2.0, 2.0));
         assert!(painted_edge_hits(&straight, rect));
@@ -1307,5 +1402,79 @@ mod tests {
         assert!(painted_edge_hits(&loops[0], above));
         let below = Rect::new(Point2::new(412.0, 500.0), Vec2::new(200.0, 80.0));
         assert!(!painted_edge_hits(&loops[0], below));
+    }
+
+    #[test]
+    fn default_node_plan_stays_square() {
+        let graph = MockGraph::isolated(1);
+        let mut positions = Positions::new();
+        positions.insert(NodeIndex::new(0), Point2::new(0.0, 0.0));
+        let plan = paint_nodes(&graph, &positions, &camera(), viewport(), |_| {
+            NodeStyle::default()
+        });
+        assert_eq!(plan.len(), 1);
+        assert_eq!(plan[0].shape, NodeShape::Square);
+        assert_eq!(plan[0].points.len(), 4);
+    }
+
+    #[test]
+    fn shaped_nodes_carry_polygons_and_minimal_degrades() {
+        let _graph = MockGraph::isolated(1);
+        let mut positions = Positions::new();
+        positions.insert(NodeIndex::new(0), Point2::new(0.0, 0.0));
+        let shaped = NodeStyle {
+            shape: NodeShape::Diamond,
+            ..NodeStyle::default()
+        };
+        let full = paint_single_node_for_level(
+            NodeIndex::new(0),
+            &positions,
+            &camera(),
+            viewport(),
+            DetailLevel::Full,
+            |_| shaped,
+        )
+        .expect("node stays visible");
+        assert_eq!(full.shape, NodeShape::Diamond);
+        assert_eq!(full.points.len(), 4);
+        let minimal = paint_single_node_for_level(
+            NodeIndex::new(0),
+            &positions,
+            &camera(),
+            viewport(),
+            DetailLevel::Minimal,
+            |_| shaped,
+        )
+        .expect("node stays visible");
+        assert_eq!(minimal.shape, NodeShape::Square);
+    }
+
+    #[test]
+    fn arrow_kinds_expand_to_vertex_tables() {
+        let graph = MockGraph::chain(2);
+        let mut positions = Positions::new();
+        positions.insert(NodeIndex::new(0), Point2::new(-400.0, 0.0));
+        positions.insert(NodeIndex::new(1), Point2::new(-300.0, 0.0));
+        for (kind, count) in [
+            (ArrowKind::Triangle, 3),
+            (ArrowKind::Dovetail, 4),
+            (ArrowKind::Tee, 4),
+            (ArrowKind::Dot, 12),
+            (ArrowKind::Diamond, 4),
+        ] {
+            let edges = paint_edges(&graph, &positions, &camera(), viewport(), |_, _| {
+                EdgeStyle {
+                    arrow: kind,
+                    ..EdgeStyle::default()
+                }
+            });
+            assert_eq!(edges.len(), 1);
+            assert_eq!(edges[0].arrow, kind);
+            let arrows = paint_arrows(&edges);
+            assert_eq!(arrows.len(), 1);
+            assert_eq!(arrows[0].kind, kind);
+            assert_eq!(arrows[0].points.len(), count);
+            assert_eq!(arrows[0].tip, edges[0].end);
+        }
     }
 }

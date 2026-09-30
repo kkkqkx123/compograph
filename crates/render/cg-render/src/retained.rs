@@ -322,6 +322,8 @@ mod tests {
             aggregated: false,
             tint: 0,
             width: 1.0,
+            arrow: crate::arrows::ArrowKind::Triangle,
+            arrow_scale: 1.0,
         }
     }
 

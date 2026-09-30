@@ -10,12 +10,13 @@ use std::time::Instant;
 use algo_panel::{AlgoOutcome, EdgePair};
 use cg_graph::{
     ChangeFilter, GraphDocument, GraphStore, GraphView, NodeEntry, NodeIndex, Positions,
-    export_dot, heuristic_shortest_path, minimum_spanning_forest, rank_nodes, remap_positions,
-    shortest_path, strongly_connected_components, subscribe_graph,
+    articulation_points, bridges, degree_centrality, export_dot, heuristic_shortest_path,
+    minimum_spanning_forest, node_order, rank_nodes, remap_positions, shortest_path,
+    strongly_connected_components, subscribe_graph,
 };
 use cg_interact::{
     BoxSelectState, DragState, NODE_HALF_EXTENT, SelectionState, drag_position, edges_in_rect,
-    hover_node, nodes_in_rect, press_hit, wheel_zoom_factor,
+    hover_node_shaped, nodes_in_rect, press_hit_shaped, wheel_zoom_factor,
 };
 use cg_layout::{LayoutDriver, LayoutRegistry};
 use cg_render::{
@@ -24,7 +25,7 @@ use cg_render::{
     NodeStylePatch, PaintedArrow, PaintedEdge, PaintedNode, PaintedRubberBand, PlanCounts,
     RefreshInput, RetainedCache, SpatialIndex, StoredPlans, StyleMapper, StyleSheet,
     edge_ordinals_for, encode_ppm, export_pixels, graph_view, paint_arrows_for_level,
-    paint_edges_for, paint_labels_for, paint_nodes_for, subscribe_repaint, visible_node_ids,
+    paint_edges_for, paint_labels_for, paint_nodes_for_level, subscribe_repaint, visible_node_ids,
     world_viewport_rect,
 };
 use cg_types::{Point2, Rect, Vec2};
@@ -325,6 +326,24 @@ impl GraphWindow {
             .map(|data| data.label.clone())
     }
 
+    fn node_shape(&self, cx: &App, node: NodeIndex) -> cg_render::NodeShape {
+        let store = self.store.read(cx);
+        let label = store
+            .node_data(node)
+            .map(|data| data.label.clone())
+            .unwrap_or_default();
+        let view: &dyn GraphView = store;
+        self.bypass
+            .resolve_node(
+                &self.sheet,
+                &self.mapper,
+                node,
+                Some(label.as_str()),
+                view.degree(node),
+            )
+            .shape
+    }
+
     /// Sorted node identifiers currently in the store.
     fn ordered_nodes(&self, cx: &App) -> Vec<NodeIndex> {
         let mut ids: Vec<NodeIndex> = self.store.read(cx).node_ids().collect();
@@ -493,6 +512,30 @@ impl GraphWindow {
             let edges = minimum_spanning_forest(&snapshot);
             let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
             algo_panel::forest_outcome(&edges, elapsed_ms)
+        });
+    }
+
+    fn run_degree(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.store.read(cx).graph().clone();
+        let generation = self.begin_algo_run();
+        self.spawn_algo_task(cx, generation, move || {
+            let started = Instant::now();
+            let order = node_order(&snapshot);
+            let scores = degree_centrality(&snapshot);
+            let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+            algo_panel::centrality_outcome(&order, &scores, "degree", elapsed_ms)
+        });
+    }
+
+    fn run_cuts(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.store.read(cx).graph().clone();
+        let generation = self.begin_algo_run();
+        self.spawn_algo_task(cx, generation, move || {
+            let started = Instant::now();
+            let points = articulation_points(&snapshot);
+            let cuts = bridges(&snapshot);
+            let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+            algo_panel::cut_outcome(&points, &cuts, elapsed_ms)
         });
     }
 
@@ -984,7 +1027,8 @@ impl Render for GraphWindow {
         let (nodes, edges, arrows) = if cached_hit || partial_hit {
             self.cached_plans()
         } else {
-            let nodes = paint_nodes_for(&visible_ids, positions, &camera, viewport, style_of);
+            let nodes =
+                paint_nodes_for_level(&visible_ids, positions, &camera, viewport, lod, style_of);
             let edges = paint_edges_for(
                 &pairs,
                 positions,
@@ -1233,11 +1277,12 @@ impl Render for GraphWindow {
                                         this.layout.read(cx).positions().clone();
                                     let version = this.layout.read(cx).positions_version();
                                     this.refresh_spatial(&positions, version);
-                                    match press_hit(
+                                    match press_hit_shaped(
                                         world,
                                         &positions,
                                         &this.spatial,
                                         this.hit_radius(),
+                                        |node| this.node_shape(cx, node),
                                     ) {
                                         Some((node, offset)) => {
                                             this.drag.begin(node, offset);
@@ -1291,11 +1336,12 @@ impl Render for GraphWindow {
                                             this.layout.read(cx).positions().clone();
                                         let version = this.layout.read(cx).positions_version();
                                         this.refresh_spatial(&positions, version);
-                                        let hovered = hover_node(
+                                        let hovered = hover_node_shaped(
                                             world,
                                             &positions,
                                             &this.spatial,
                                             this.hit_radius(),
+                                            |node| this.node_shape(cx, node),
                                         );
                                         if hovered != this.hovered {
                                             this.hovered = hovered;
@@ -1410,6 +1456,26 @@ impl Render for GraphWindow {
                                     .on_click(cx.listener(
                                         |this, _event: &ClickEvent, _window, cx| {
                                             this.run_spanning_forest(cx);
+                                        },
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .id(("algo-run", 5usize))
+                                    .child("degree")
+                                    .on_click(cx.listener(
+                                        |this, _event: &ClickEvent, _window, cx| {
+                                            this.run_degree(cx);
+                                        },
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .id(("algo-run", 6usize))
+                                    .child("cuts")
+                                    .on_click(cx.listener(
+                                        |this, _event: &ClickEvent, _window, cx| {
+                                            this.run_cuts(cx);
                                         },
                                     )),
                             )
