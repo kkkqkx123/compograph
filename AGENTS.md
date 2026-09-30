@@ -1,91 +1,92 @@
-# compograph 开发者指南（AI Agent 必读）
+# compograph
 
-## 项目概述
+## Project Overview
 
-compograph 是纯 Rust 桌面图可视化应用：图模型与算法内核基于 petgraph，UI 底座为 zed-gpui 的 gpui（Zed GPU 加速 GUI 框架），布局、渲染与交互由本项目自研。
+compograph is a pure Rust desktop graph visualization application: the graph model and algorithm core are based on petgraph, the UI foundation is gpui from zed-gpui (Zed's GPU-accelerated GUI framework), and layout, rendering, and interaction are developed in-house by this project.
 
-**No-backward-compatible**：项目处于开发期，无需考虑向后兼容，保持合理架构即可。
+**No-backward-compatible**: The project is in the development phase; backward compatibility does not need to be considered, only a reasonable architecture needs to be maintained.
 
-**Document Reference Rule**：代码注释中禁止出现任何文档结构标识（如 P1、P2-3、§4.1、phase3、G2 等）。注释只描述代码意图，不得引用外部文档位置。
+**Document Reference Rule**: Code comments must not contain any document structure identifiers (such as P1, P2-3, §4.1, phase3, G2, etc.). Comments should only describe code intent and must not reference external document locations.
 
-**Language**：代码、注释、日志、错误信息一律使用英文；文档使用中文。**代码文件中禁止出现任何中文。**
+**Language**: Code, comments, logs, and error messages must all be in English; documentation is in Chinese. **No Chinese text may appear in code files.**
 
-## 代码架构
+## Code Architecture
 
-顶层包含 `crates/`、`docs/`、`Cargo.toml`、`rust-toolchain.toml`、`.gitmodules`、`AGENTS.md`。
+The top level contains `crates/`, `docs/`, `Cargo.toml`, `rust-toolchain.toml`, `.gitmodules`, and `AGENTS.md`.
 
-`crates/` 分为自建分层与上游挂载点两部分：
+`crates/` is divided into two parts: self-built layers and upstream mount points:
 
-- **上游源码（gpui 及其依赖）**：以 **git submodule** 挂在 `crates/vendor/zed-gpui`，内容为 zed-gpui 仓库 `lean` 分支的快照，保持上游原始布局（`crates/gpui`、`crates/refineable/derive_refineable`、`tooling/perf` 等路径与上游一致）。本项目通过 `path` 依赖消费其中的 crate，例如 `gpui = { path = "crates/vendor/zed-gpui/crates/gpui" }`。
-- **foundation 层**：`cg-types`（几何原语，叶子 crate）、`cg-geometry`（命中测试与曲线几何，框架无关）、`cg-graph`（`GraphStore` 图存储 + petgraph `StableGraph` 适配 + 变更事件广播与订阅过滤）
-- **engine 层**：`cg-layout`（`LayoutEngine` trait、布局注册表、具体布局实现、`LayoutDriver` 变更驱动的位置维护）
-- **render 层**：`cg-render`（GraphView 画布、`Camera` 视口映射、绘制计划）、`cg-interact`（指针拖拽/平移/缩放/选择状态）
-- **app 层**：`compograph`（桌面应用二进制，gpui 引导与装配）
+- **Upstream source (gpui and its dependencies)**: Mounted as a **git submodule** at `crates/vendor/zed-gpui`, containing a snapshot of the `lean` branch of the zed-gpui repository, preserving the upstream original layout (`crates/gpui`, `crates/refineable/derive_refineable`, `tooling/perf`, and other paths consistent with upstream). This project consumes the crates within it through `path` dependencies, for example `gpui = { path = "crates/vendor/zed-gpui/crates/gpui" }`.
+- **foundation layer**: `cg-types` (geometry primitives, leaf crate), `cg-geometry` (hit testing and curve geometry, framework-agnostic), `cg-graph` (`GraphStore` graph storage + petgraph `StableGraph` adaptation + change event broadcasting and subscription filtering)
+- **engine layer**: `cg-layout` (`LayoutEngine` trait, layout registry, concrete layout implementations, `LayoutDriver` change-driven position maintenance)
+- **render layer**: `cg-render` (GraphView canvas, `Camera` viewport mapping, draw planning), `cg-interact` (pointer drag/pan/zoom/selection state)
+- **app layer**: `compograph` (desktop application binary, gpui bootstrapping and assembly)
 
-自建 crate 按 `foundation/`、`engine/`、`render/`、`app/` 分层；上游不在其中，因此本项目自身的代码一眼可见，不被上游文件淹没。
+Self-built crates are layered as `foundation/`, `engine/`, `render/`, and `app/`; upstream is not among them, so this project's own code is visible at a glance and is not drowned out by upstream files.
 
-### Rust Crate 依赖 DAG
+### Rust Crate Dependency DAG
 
 ```
-foundation:  cg-types ← cg-geometry
-             cg-types ← cg-graph（另依赖 petgraph 与 gpui 的 EventEmitter 标记）
-engine:      cg-graph + cg-types ← cg-layout（订阅驱动需要 gpui 的 Context，故同级依赖 gpui）
-render:      cg-graph + cg-layout + cg-geometry + cg-types ← cg-render
-             cg-graph + cg-render + cg-types ← cg-interact
-app:         上述全部 ← compograph（另依赖 gpui_platform）
-upstream:    crates/vendor/zed-gpui 内 27 个上游 crate 互依，
-             绝不反向依赖任何 cg-* crate
+foundation: cg-types <- cg-geometry
+cg-types <- cg-graph (also depends on petgraph and gpui's EventEmitter marker)
+engine: cg-graph + cg-types <- cg-layout (subscription-driven requires gpui's Context, so it depends on gpui at the same level)
+render: cg-graph + cg-layout + cg-geometry + cg-types <- cg-render
+cg-graph + cg-render + cg-types <- cg-interact
+app: all of the above <- compograph (also depends on gpui_platform)
+upstream: 27 upstream crates within crates/vendor/zed-gpui interdepend,
+ and never depend in reverse on any cg-* crate
 ```
 
-`petgraph` 只被 `cg-graph` 直接依赖；其余自建 crate 经 `cg-graph` 暴露的标识类型（`NodeIndex`/`EdgeIndex`）与查询方法访问图，不直接引用 petgraph。
+`petgraph` is directly depended on only by `cg-graph`; the other self-built crates access the graph through the identifier types (`NodeIndex`/`EdgeIndex`) and query methods exposed by `cg-graph`, and do not directly reference petgraph.
 
-严格 DAG，禁止任何形式的循环依赖。`cg-graph` 依赖 gpui 是因为 `EventEmitter` 标记 trait 必须在类型定义侧实现（孤儿规则）；`cg-layout` 依赖它是为了用 `Context`/`App` 建立变更订阅。两者都不依赖任何 gpui 平台后端，因此仍可 headless 单测。
+Strict DAG; circular dependencies of any form are prohibited. `cg-graph` depends on gpui because the `EventEmitter` marker trait must be implemented on the type definition side (orphan rule); `cg-layout` depends on it in order to establish change subscriptions using `Context`/`App`. Neither depends on any gpui platform backend, so they can still be unit tested headlessly.
 
-## 上游源码规范
+## Upstream Source Specifications
 
-- 上游是 zed-gpui `lean` 分支的 submodule 快照，原样保留上游布局。
-- **禁止修改**上游代码、不格式化、不加业务依赖。需要改动上游时，在 zed-gpui 仓库内完成并走它的同步/发布流程，再在本项目更新 submodule 指向。
-- **上游同步只能在 zed-gpui 仓库内进行**。本项目绝不单独 fetch/merge 上游：`crates/vendor/zed-gpui` 的 `.git` 不参与本项目的工作流，只作为只读挂载点。
-- `lean` 快照在发布时已展开工作区继承（`dep.workspace = true` 等），因此本项目无需复述 gpui 的 workspace 表；若遇到 `error inheriting ... from workspace root manifest`，说明 submodule 指向了未展开的内容或未初始化。
-- gpui API 行号基线为 `212afa4`；升级上游后所有引用 gpui API 的代码需复核签名。
+- Upstream is a submodule snapshot of the zed-gpui `lean` branch, preserving the upstream layout as-is.
+- **Modifying** upstream code is **prohibited**; do not format it or add business dependencies. When changes to upstream are needed, complete them within the zed-gpui repository and go through its synchronization/release process, then update the submodule pointer in this project.
+- **Upstream synchronization may only be performed within the zed-gpui repository**. This project never separately fetches/merges upstream: the `.git` of `crates/vendor/zed-gpui` does not participate in this project's workflow and serves only as a read-only mount point.
+- The `lean` snapshot has already expanded workspace inheritance (`dep.workspace = true`, etc.) at release time, so this project does not need to restate gpui's workspace table; if you encounter `error inheriting ... from workspace root manifest`, it means the submodule points to unexpanded content or has not been initialized.
+- The gpui API line number baseline is `212afa4`; after upgrading upstream, all code referencing gpui APIs must have signatures rechecked.
 
-## Rust 开发规范
+## Rust Development Specifications
 
-### 模块结构
+### Module Structure
 
-每个 crate 的 `lib.rs` 直接声明 `pub mod` 与 `pub use` 导出。子文件使用扁平命名——禁止嵌套模块目录，禁止 `mod.rs`。
+Each crate's `lib.rs` directly declares `pub mod` and `pub use` exports. Subfiles use flat naming—nested module directories are prohibited, and `mod.rs` is prohibited.
 
-### 文件布局
+### File Layout
 
 ```
 crates/<name>/src/
-├── lib.rs              ← 全部 pub mod 声明与 pub use 导出
-├── <module_name>.rs    ← 子模块实现
+├── lib.rs              <- all pub mod declarations and pub use exports
+├── <module_name>.rs    <- submodule implementation
 └── ...
 ```
 
-## 构建与运行
+## Build and Run
 
-前置条件：`rust-toolchain.toml` 钉定工具链（当前 1.98.1）。克隆后先初始化 submodule：`git submodule update --init --depth 1`。受限网络环境下需为 cargo 配置 crates.io 镜像（如 rsproxy）与 GitHub 代理（如 `git config --global url."https://gh-proxy.com/https://github.com/".insteadOf "https://github.com/"`）。
+Prerequisites: `rust-toolchain.toml` pins the toolchain (currently 1.98.1). After cloning, first initialize the submodule: `git submodule update --init --depth 1`. In restricted network environments, cargo needs to be configured with a crates.io mirror (such as rsproxy) and a GitHub proxy (such as `git config --global url."https://gh-proxy.com/https://github.com/".insteadOf "https://github.com/"`).
 
 ```shell
-cargo clippy --all-targets --all-features   # 全量编译检查
-cargo test --workspace                      # 全量测试
-cargo run -p compograph                     # 启动桌面应用
+cargo clippy --all-targets --all-features   # full compilation check
+cargo test --workspace                      # full test suite
+cargo run -p compograph                     # launch desktop application
 ```
 
-## 测试
+## Testing
 
-单元测试置于同文件 `#[cfg(test)]`；大文件拆分独立 `test.rs`；集成测试置于 `tests/`；基准置于 `benches/`。
+Unit tests are placed in the same file under `#[cfg(test)]`; large files are split into a separate `test.rs`; integration tests are placed in `tests/`; benchmarks are placed in `benches/`.
 
-## 编码规范
+## Coding Specifications
 
-- **安全**：禁用 `unwrap`（测试中可用 `expect`）。除底层操作外禁用 `unsafe`，如需使用须在 `docs/archive/unsafe.md` 记录。
-- **类型**：尽量少用 `dyn`，优先具体类型；所有动态派发须注释说明理由。
-- **依赖**：所有子 crate 构成严格 DAG；依赖版本集中在根 `Cargo.toml` 的 workspace 段。
+- **Safety**: `unwrap` is prohibited (in tests, `expect` may be used). Except for low-level operations, `unsafe` is prohibited; if it must be used, it must be recorded in `docs/archive/unsafe.md`.
+- **Types**: Minimize the use of `dyn`; prefer concrete types; all dynamic dispatch must have comments explaining the reason.
+- **Dependencies**: All sub-crates form a strict DAG; dependency versions are centralized in the workspace section of the root `Cargo.toml`.
 
-## 重要备注
+## Important Notes
 
-1. **Rust 依赖**：统一集中在根 `Cargo.toml` 的 `[workspace.dependencies]`，子 crate 一律 `xxx.workspace = true`。
-2. **计划/设计文档**：避免大段代码贴片，以简明自然语言描述为主。
-3. **文档同步**：`docs/architecture/` 与 `docs/plan/` 随代码落地持续更新过期内容（更新而非仅标记）。
+1. **Rust dependencies**: Uniformly centralized in the root `Cargo.toml` under `[workspace.dependencies]`; sub-crates always use `xxx.workspace = true`.
+2. **Planning/design documents**: Avoid large code snippets; focus on concise natural language descriptions.
+3. **Documentation synchronization**: `docs/architecture/` and `docs/plan/` should be continuously updated as code lands to replace outdated content (update rather than merely mark).
+
