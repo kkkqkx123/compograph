@@ -175,6 +175,39 @@ pub fn bezier_hit(start: Point2, ctrl: Point2, end: Point2, point: Point2, toler
     distance_to_bezier(start, ctrl, end, point) <= tolerance
 }
 
+/// True when the polygon through `vertices` touches `rect`.
+///
+/// A hit means a vertex inside the rectangle, a rectangle corner inside the
+/// polygon, or a polygon edge crossing the rectangle border, covering full
+/// containment in either direction as well as partial overlap.
+pub fn polygon_intersects_rect(vertices: &[Point2], rect: Rect) -> bool {
+    if vertices.is_empty() {
+        return false;
+    }
+    if vertices.iter().any(|vertex| rect.contains(*vertex)) {
+        return true;
+    }
+    let min = rect.origin;
+    let max = rect.origin + rect.size;
+    let corners = [
+        min,
+        Point2::new(max.x, min.y),
+        max,
+        Point2::new(min.x, max.y),
+    ];
+    if corners
+        .iter()
+        .any(|corner| point_in_polygon(*corner, vertices))
+    {
+        return true;
+    }
+    vertices
+        .iter()
+        .zip(vertices.iter().cycle().skip(1))
+        .take(vertices.len())
+        .any(|(a, b)| segment_intersects_rect(*a, *b, rect))
+}
+
 /// True when the polyline through `points` touches `rect`.
 ///
 /// A hit means either a sample point inside the rectangle or a segment
@@ -302,6 +335,24 @@ mod tests {
         let outside = vec![Point2::new(0.0, 5.0), Point2::new(10.0, 5.0)];
         assert!(!polyline_intersects_rect(&outside, rect));
         assert!(!polyline_intersects_rect(&[], rect));
+    }
+
+    #[test]
+    fn polygon_rect_hit_covers_containment_both_ways() {
+        let triangle = vec![
+            Point2::new(0.0, -10.0),
+            Point2::new(10.0, 10.0),
+            Point2::new(-10.0, 10.0),
+        ];
+        let inner = Rect::new(Point2::new(-1.0, -1.0), Vec2::new(2.0, 2.0));
+        assert!(polygon_intersects_rect(&triangle, inner));
+        let outer = Rect::new(Point2::new(-20.0, -20.0), Vec2::new(40.0, 40.0));
+        assert!(polygon_intersects_rect(&triangle, outer));
+        let crossing = Rect::new(Point2::new(5.0, -20.0), Vec2::new(4.0, 40.0));
+        assert!(polygon_intersects_rect(&triangle, crossing));
+        let far = Rect::new(Point2::new(30.0, 30.0), Vec2::new(4.0, 4.0));
+        assert!(!polygon_intersects_rect(&triangle, far));
+        assert!(!polygon_intersects_rect(&[], far));
     }
 
     #[test]

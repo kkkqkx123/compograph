@@ -16,6 +16,6 @@ pub use curves::{
 pub use picking::{
     BEZIER_HIT_SAMPLES, EDGE_HIT_TOLERANCE, NODE_HIT_TOLERANCE, bezier_hit, distance_to_bezier,
     distance_to_polyline, distance_to_segment, edge_hit, nearest_point_index, point_hits_node,
-    point_in_polygon, polyline_intersects_rect,
+    point_in_polygon, polygon_intersects_rect, polyline_intersects_rect,
 };
 pub use picking::{segment_intersects_rect, segments_intersect};

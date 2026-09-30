@@ -26,7 +26,7 @@ pub use refresh::subscribe_repaint;
 pub use retained::{
     CacheVersions, CameraSnapshot, RefreshInput, RetainedCache, StoredPlans, incident_edges,
 };
-pub use shapes::{NodeShape, node_polygon, point_hits_shape};
+pub use shapes::{NodeShape, node_polygon, point_hits_shape, shape_hits_rect};
 pub use spatial::{ADAPTIVE_CELL_MULTIPLE, SpatialIndex, adaptive_cell};
 pub use style::{
     BypassStore, DEFAULT_EDGE_TINT, DEFAULT_NODE_FILL, DEFAULT_NODE_STROKE, EdgeMapper,

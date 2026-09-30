@@ -20,7 +20,7 @@ use gpui::{
 
 use crate::arrows::{ArrowKind, arrow_polygon};
 use crate::camera::Camera;
-use crate::shapes::{NodeShape, node_polygon, shape_for_level};
+use crate::shapes::{NodeShape, node_polygon, shape_for_level, shape_hits_rect};
 use crate::style::{EdgeStyle, NodeStyle};
 
 /// Side length, in logical pixels, of the placeholder node rectangle.
@@ -191,15 +191,17 @@ pub struct PaintedRubberBand {
 
 /// Nodes whose bodies touch `rect`, in index order.
 ///
-/// The spatial index narrows candidates and the node body square decides, so
-/// plan generation iterates only visible nodes on large graphs. Callers keep
-/// the index versioned: viewport motion reuses it, position write-backs
-/// rebuild it.
+/// The spatial index narrows candidates and each body is tested with its
+/// effective shape, so plan generation iterates only visible nodes on large
+/// graphs. Callers pass the painted shape: squares under the minimal detail
+/// level, true shapes otherwise. Callers keep the index versioned: viewport
+/// motion reuses it, position write-backs rebuild it.
 pub fn visible_node_ids(
     positions: &Positions,
     index: &SpatialIndex,
     rect: Rect,
     half_extent: f32,
+    shape_of: impl Fn(NodeIndex) -> NodeShape,
 ) -> Vec<NodeIndex> {
     let mut found: Vec<NodeIndex> = index
         .query_rect(rect)
@@ -207,13 +209,7 @@ pub fn visible_node_ids(
         .filter(|node| {
             positions
                 .get(node)
-                .map(|center| {
-                    let body = Rect::new(
-                        Point2::new(center.x - half_extent, center.y - half_extent),
-                        Vec2::new(half_extent * 2.0, half_extent * 2.0),
-                    );
-                    body.intersects(rect)
-                })
+                .map(|center| shape_hits_rect(shape_of(*node), *center, half_extent, rect))
                 .unwrap_or(false)
         })
         .collect();
@@ -1378,13 +1374,40 @@ mod tests {
         index.rebuild(&positions);
         let near = Rect::new(Point2::new(-100.0, -100.0), Vec2::new(200.0, 200.0));
         assert_eq!(
-            visible_node_ids(&positions, &index, near, NODE_SIDE / 2.0),
+            visible_node_ids(&positions, &index, near, NODE_SIDE / 2.0, |_| {
+                NodeShape::Square
+            }),
             vec![NodeIndex::new(0)]
         );
         let far = Rect::new(Point2::new(4900.0, 4900.0), Vec2::new(200.0, 200.0));
         assert_eq!(
-            visible_node_ids(&positions, &index, far, NODE_SIDE / 2.0),
+            visible_node_ids(&positions, &index, far, NODE_SIDE / 2.0, |_| {
+                NodeShape::Square
+            }),
             vec![NodeIndex::new(1)]
+        );
+    }
+
+    #[test]
+    fn visible_query_honors_effective_shapes() {
+        use crate::spatial::SpatialIndex;
+
+        let mut positions = Positions::new();
+        positions.insert(NodeIndex::new(0), Point2::ZERO);
+        let mut index = SpatialIndex::new(48.0);
+        index.rebuild(&positions);
+        let corner = Rect::from_corners(Point2::new(-12.0, -12.0), Point2::new(-8.0, -8.0));
+        assert_eq!(
+            visible_node_ids(&positions, &index, corner, NODE_SIDE / 2.0, |_| {
+                NodeShape::Square
+            }),
+            vec![NodeIndex::new(0)]
+        );
+        assert!(
+            visible_node_ids(&positions, &index, corner, NODE_SIDE / 2.0, |_| {
+                NodeShape::Triangle
+            })
+            .is_empty()
         );
     }
 

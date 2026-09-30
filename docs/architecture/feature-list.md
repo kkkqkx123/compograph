@@ -77,17 +77,17 @@
 | 3.1 | 路线 A：`gpui::canvas` 即时绘制 `GraphView` | `[gpui]` | P0 | `elements/canvas.rs:10`；节点 `paint_quad`（`window.rs:4502`） |
 | 3.2 | 边绘制（直线/折线/贝塞尔） | `[cy→移植]+[gpui]` | P1 | 几何借 `edge-control-points.mjs`（`findStraightEdgePoints:251`、`findBezierPoints:257`、`findTaxiPoints:309`、`findLoopPoints:162`），落为 `Path`（`scene.rs:840/847/859`） |
 | 3.3 | 箭头形状族（三角/燕尾/丁形/圆点/菱形） | `[cy→移植]+[gpui]` | P1 | ✅ 已落地（`arrows.rs` 的多边形顶点表 + `view.rs` 统一入口） |
-| 3.4 | 节点形状族（方/圆/椭圆/圆角矩形/三角/菱形） | `[cy→移植]+[gpui]` | P1/P2 | ✅ 已落地（`shapes.rs` 顶点表，绘制与命中共用，默认方形） |
+| 3.4 | 节点形状族（方/圆/椭圆/圆角矩形/三角/菱形） | `[cy→移植]+[gpui]` | P1/P2 | ✅ 已落地（`shapes.rs` 顶点表，绘制、点选、框选、可见查询共用，默认方形） |
 | 3.5 | 自环边 | `[cy→移植]` | P2 | ✅ 已落地（`curves.rs` 的 `self_loop_*`） |
 | 3.6 | Haystack 边聚合（大图简化边） | `[cy→移植]` | P3 | ✅ 已落地（`aggregation.rs` + `view.rs` 的 `bundle_slot`） |
 | 3.7 | 相机 `Camera{offset,zoom}`（平移/缩放） | `[cy→模式]+[gpui]` | P1 | ✅ 已落地（`camera.rs`，含光标锚点缩放） |
 | 3.8 | 空间索引（四叉树/均匀网格）+ 点选命中 | `[cy→移植]` | P1 | ✅ 已落地（`spatial.rs` 均匀网格 + `picking.rs`） |
-| 3.9 | 框选命中 | `[cy→移植]` | P2 | ✅ 已落地（`picking.rs` 的 `polyline_intersects_rect` 等） |
+| 3.9 | 框选命中 | `[cy→移植]` | P2 | ✅ 已落地（`picking.rs` 的 `polygon_intersects_rect`/`polyline_intersects_rect` + `shapes.rs` 的 `shape_hits_rect`，与点选同口径） |
 | 3.10 | 节点/边标签 | `[自研]`（gpui 文本系统） | P1/P2 | ✅ 节点标签已落地（`text.rs` + `graph_view` 内文本整形）；边标签未做 |
 | 3.11 | 样式属性层（颜色/描边/宽度/透明度…） | `[cy→模式]` | P2 | ✅ 已落地（`style.rs`，常用子集 + mapper/谓词） |
 | 3.12 | 选中/高亮覆盖（bypass 式 override） | `[cy→模式]` | P2 | ✅ 已落地（`style.rs` 的 `BypassStore`） |
 | 3.13 | 绘制顺序编排（先边后节点、标签最上、z-order） | `[cy→模式]` | P1 | ✅ 已落地（`graph_view`：边→箭头→节点→标签→框选） |
-| 3.14 | 路线 B：自定义 `Element` + 保留场景（增量 flush） | `[gpui]` | P3 | ✅ 已落地（`retained.rs` 的 `RetainedCache`） |
+| 3.14 | 路线 B：自定义 `Element` + 保留场景（增量 flush） | `[gpui]` | P3 | ✅ 已落地（`retained.rs` 的 `RetainedCache`，三维版本 + 选项与相机快照组成完整复用键） |
 | 3.15 | LOD（缩放阈值后降级为点/线） | `[自研]` | P3 | ✅ 已落地（`lod.rs` 三级 + 滞回） |
 | 3.16 | 图片导出（PNG） | `[自研]`（思路参考 cytoscape `export-image.mjs`） | P3 | ⚠️ 部分：软件光栅化 PPM（`export.rs`），PNG 未做 |
 | 3.17 | 路线 C：wgpu 实例化（十万级） | `[gpui_wgpu]` | 按需 | ❌ 未实现（评估项） |
@@ -102,7 +102,7 @@
 | 4.2 | 滚轮/捏合缩放（光标锚点） | `[自研]` | P1 | ✅ 已落地（`handlers.rs` 的 `wheel_zoom_factor`） |
 | 4.3 | 节点拖拽（fixed + 局部重布局） | `[自研]` | P1 | ✅ 已落地（`DragState` + `drag_position`） |
 | 4.4 | 点选 / 多选 | `[cy→移植]` | P1 | ✅ 已落地（`SelectionState`） |
-| 4.5 | 框选 | `[cy→移植]` | P2 | ✅ 已落地（`BoxSelectState` + `nodes_in_rect`/`edges_in_rect`） |
+| 4.5 | 框选 | `[cy→移植]` | P2 | ✅ 已落地（`BoxSelectState` + `nodes_in_rect`/`edges_in_rect`，节点框选按形状判定；可见查询两遍制，最简档用方形集） |
 | 4.6 | 高亮/悬停效果 | `[cy→模式]` | P2 | ✅ 已落地（`hover_node_shaped` + `BypassStore`） |
 | 4.7 | 悬停 tooltip（popover） | `[gpui]` | P2 | ✅ 已落地（`main.rs` 的 `hover_label`） |
 | 4.8 | 指针事件 → 相机逆变换 → 命中查询 事件桥 | `[自研]` | P1 | ✅ 已落地（`main.rs` 指针事件接线） |

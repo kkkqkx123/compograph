@@ -11,7 +11,7 @@ use cg_geometry::{
     sample_quadratic_bezier, segment_intersects_rect, self_loop_polyline,
 };
 use cg_graph::{GraphView, NodeIndex, Positions};
-use cg_render::{NODE_SIDE, NodeShape, PARALLEL_STEP, SpatialIndex, point_hits_shape};
+use cg_render::{NODE_SIDE, NodeShape, PARALLEL_STEP, SpatialIndex, point_hits_shape, shape_hits_rect};
 use cg_types::{Point2, Rect, Vec2};
 
 /// Half extent of a node body in model units, derived from the paint plan.
@@ -23,8 +23,8 @@ pub const NODE_GRAB_TOLERANCE: f32 = 6.0;
 /// Finds the node under `world_point` honoring per-node shapes.
 ///
 /// Candidates are tested nearest first; the square body stays the conservative
-/// outer envelope inside [`point_hits_shape`], so box selection keeps using
-/// the square path while taps gain polygon precision.
+/// outer envelope inside [`point_hits_shape`], and box selection shares the
+/// same shape test, so taps and box selects agree.
 pub fn press_hit_shaped(
     world_point: Point2,
     positions: &Positions,
@@ -83,13 +83,15 @@ pub fn normalize_drag(start: Point2, current: Point2) -> Rect {
 
 /// Nodes whose bodies touch `rect`, in index order.
 ///
-/// The spatial index narrows candidates and the node body square decides, so
-/// partially covered nodes count as selected.
+/// The spatial index narrows candidates and each body is tested with its own
+/// shape, so box selection agrees with pointer hit testing: corners a tap
+/// rejects stay unselected here as well.
 pub fn nodes_in_rect(
     positions: &Positions,
     index: &SpatialIndex,
     rect: Rect,
     half_extent: f32,
+    shape_of: impl Fn(NodeIndex) -> NodeShape,
 ) -> Vec<NodeIndex> {
     let mut found: Vec<NodeIndex> = index
         .query_rect(rect)
@@ -97,13 +99,7 @@ pub fn nodes_in_rect(
         .filter(|node| {
             positions
                 .get(node)
-                .map(|center| {
-                    let body = Rect::new(
-                        Point2::new(center.x - half_extent, center.y - half_extent),
-                        Vec2::new(half_extent * 2.0, half_extent * 2.0),
-                    );
-                    body.intersects(rect)
-                })
+                .map(|center| shape_hits_rect(shape_of(*node), *center, half_extent, rect))
                 .unwrap_or(false)
         })
         .collect();
@@ -282,6 +278,8 @@ mod tests {
 
     #[test]
     fn rect_select_picks_nodes_by_body_overlap() {
+        use cg_render::NodeShape;
+
         let mut positions = Positions::new();
         positions.insert(NodeIndex::new(0), Point2::new(0.0, 0.0));
         positions.insert(NodeIndex::new(1), Point2::new(100.0, 0.0));
@@ -289,8 +287,32 @@ mod tests {
         let index = indexed(&positions);
         let rect = Rect::from_corners(Point2::new(-20.0, -20.0), Point2::new(112.0, 20.0));
         assert_eq!(
-            nodes_in_rect(&positions, &index, rect, NODE_HALF_EXTENT),
+            nodes_in_rect(&positions, &index, rect, NODE_HALF_EXTENT, |_| {
+                NodeShape::Square
+            }),
             vec![NodeIndex::new(0), NodeIndex::new(1)]
+        );
+    }
+
+    #[test]
+    fn rect_select_rejects_corners_a_tap_rejects() {
+        use cg_render::NodeShape;
+
+        let mut positions = Positions::new();
+        positions.insert(NodeIndex::new(0), Point2::ZERO);
+        let index = indexed(&positions);
+        let corner = Rect::from_corners(Point2::new(-12.0, -12.0), Point2::new(-8.0, -8.0));
+        assert_eq!(
+            nodes_in_rect(&positions, &index, corner, NODE_HALF_EXTENT, |_| {
+                NodeShape::Square
+            }),
+            vec![NodeIndex::new(0)]
+        );
+        assert!(
+            nodes_in_rect(&positions, &index, corner, NODE_HALF_EXTENT, |_| {
+                NodeShape::Triangle
+            })
+            .is_empty()
         );
     }
 

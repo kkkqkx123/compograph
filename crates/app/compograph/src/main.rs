@@ -22,7 +22,7 @@ use cg_layout::{LayoutDriver, LayoutRegistry};
 use cg_render::{
     BypassStore, CacheVersions, Camera, DetailLevel, EdgeMapper, EdgePaintOptions, EdgeStylePatch,
     ExportRequest, ExportScope, ExportSnapshot, FrameMetrics, FrameSample, LodParams, NODE_SIDE,
-    NodeStylePatch, PaintedArrow, PaintedEdge, PaintedNode, PaintedRubberBand, PlanCounts,
+    NodeShape, NodeStylePatch, PaintedArrow, PaintedEdge, PaintedNode, PaintedRubberBand, PlanCounts,
     RefreshInput, RetainedCache, SpatialIndex, StoredPlans, StyleMapper, StyleSheet,
     edge_ordinals_for, encode_ppm, export_pixels, graph_view, paint_arrows_for_level,
     paint_edges_for, paint_labels_for, paint_nodes_for_level, subscribe_repaint, visible_node_ids,
@@ -112,7 +112,6 @@ struct GraphWindow {
     lod_params: LodParams,
     aggregate: bool,
     retained: RetainedCache,
-    retained_options: EdgePaintOptions,
     structure_version: u64,
     style_version: u64,
     spatial_version: Option<u64>,
@@ -189,7 +188,6 @@ impl GraphWindow {
             lod_params: LodParams::default(),
             aggregate: false,
             retained: RetainedCache::new(false),
-            retained_options: EdgePaintOptions::default(),
             structure_version: 0,
             style_version: 0,
             spatial_version: None,
@@ -300,7 +298,13 @@ impl GraphWindow {
         let positions = self.layout.read(cx).positions().clone();
         let version = self.layout.read(cx).positions_version();
         self.refresh_spatial(&positions, version);
-        let nodes = nodes_in_rect(&positions, &self.spatial, model_rect, NODE_HALF_EXTENT);
+        let nodes = nodes_in_rect(
+            &positions,
+            &self.spatial,
+            model_rect,
+            NODE_HALF_EXTENT,
+            |node| self.node_shape(cx, node),
+        );
         let store = self.store.read(cx);
         let view: &dyn GraphView = store;
         let edges = edges_in_rect(view, &positions, model_rect, NODE_SIDE);
@@ -982,10 +986,40 @@ impl Render for GraphWindow {
             bypass.resolve_node(sheet, mapper, node, Some(label), degree)
         };
         let world_rect = world_viewport_rect(&self.camera, self.viewport);
-        let visible_ids = visible_node_ids(positions, &self.spatial, world_rect, NODE_HALF_EXTENT);
+        // First pass with squares for a provisional level; the minimal level
+        // paints squares, so its visible set is the square set. Other levels
+        // paint true shapes and refine the set with per-node shapes.
+        let square_ids = visible_node_ids(
+            positions,
+            &self.spatial,
+            world_rect,
+            NODE_HALF_EXTENT,
+            |_| NodeShape::Square,
+        );
+        let provisional = self
+            .lod_params
+            .select(self.camera.zoom, square_ids.len(), self.lod);
+        let visible_ids = if provisional == DetailLevel::Minimal {
+            square_ids
+        } else {
+            let shapes: HashMap<NodeIndex, NodeShape> = labels
+                .iter()
+                .map(|(node, label, degree)| {
+                    (
+                        *node,
+                        bypass
+                            .resolve_node(sheet, mapper, *node, Some(label.as_str()), *degree)
+                            .shape,
+                    )
+                })
+                .collect();
+            visible_node_ids(positions, &self.spatial, world_rect, NODE_HALF_EXTENT, |node| {
+                shapes.get(&node).copied().unwrap_or_default()
+            })
+        };
         self.lod = self
             .lod_params
-            .select(self.camera.zoom, visible_ids.len(), self.lod);
+            .select(self.camera.zoom, visible_ids.len(), provisional);
         let lod = self.lod;
         let edge_options = EdgePaintOptions {
             level: lod,
@@ -1003,15 +1037,10 @@ impl Render for GraphWindow {
         let camera = self.camera;
         let viewport = self.viewport;
         let plan_started = Instant::now();
-        let cached_hit = self.retained.enabled()
-            && self.retained.is_populated()
-            && self.retained.is_fresh(versions)
-            && self.retained_options == edge_options
-            && !self.retained.needs_reproject(&camera, viewport);
+        let cached_hit = self
+            .retained
+            .is_reusable(versions, edge_options, &camera, viewport);
         let partial_hit = !cached_hit
-            && self.retained.enabled()
-            && self.retained.is_populated()
-            && self.retained_options == edge_options
             && self.retained.refresh_moved(
                 RefreshInput {
                     pairs: &pairs,
@@ -1049,10 +1078,10 @@ impl Render for GraphWindow {
                         arrows: arrows.clone(),
                     },
                     versions,
+                    edge_options,
                     &camera,
                     viewport,
                 );
-                self.retained_options = edge_options;
             }
             (nodes, edges, arrows)
         };

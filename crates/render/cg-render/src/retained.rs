@@ -1,9 +1,10 @@
 //! Retained paint cache refreshing on version differences.
 //!
-//! The cache owns the last node, edge and arrow plans plus four versions:
-//! structure, positions, style and the camera snapshot. Viewport motion only
-//! reprojects; only structural, position or style changes rebuild geometry.
-//! Painting walks the cache grouped by tint, keeping batch-friendly order.
+//! The cache owns the last node, edge and arrow plans plus the full reuse
+//! key: three versions (structure, positions, style), the paint options and
+//! the camera snapshot. Viewport motion only reprojects; only structural,
+//! position or style changes rebuild geometry. Painting walks the cache
+//! grouped by tint, keeping batch-friendly order.
 
 use std::collections::HashSet;
 
@@ -17,7 +18,10 @@ use crate::view::{
     paint_single_edge, paint_single_node,
 };
 
-/// Four versions identifying what changed since the last refresh.
+/// Three versions identifying what changed since the last refresh.
+///
+/// The triplet stays fixed: paint options and the camera snapshot are key
+/// dimensions beside the versions, never extra version counters.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CacheVersions {
     pub structure: u64,
@@ -57,6 +61,7 @@ pub struct RetainedCache {
     edge_ordinals: Vec<usize>,
     arrows: Vec<PaintedArrow>,
     versions: CacheVersions,
+    options: EdgePaintOptions,
     camera: CameraSnapshot,
     /// Nodes whose cached plans are stale.
     dirty_nodes: HashSet<NodeIndex>,
@@ -136,11 +141,13 @@ impl RetainedCache {
     ///
     /// `node_order` carries the candidate identifiers in plan order and
     /// `edge_ordinals` carries the pair-list ordinal behind each cached edge
-    /// and arrow, so later partial refreshes can locate entries.
+    /// and arrow, so later partial refreshes can locate entries. `options`
+    /// joins the reuse key beside the versions and the camera snapshot.
     pub fn store(
         &mut self,
         plans: StoredPlans,
         versions: CacheVersions,
+        options: EdgePaintOptions,
         camera: &Camera,
         viewport: Vec2,
     ) {
@@ -150,6 +157,7 @@ impl RetainedCache {
         self.edge_ordinals = plans.edge_ordinals;
         self.arrows = plans.arrows;
         self.versions = versions;
+        self.options = options;
         self.camera = CameraSnapshot::captures(camera, viewport);
         self.dirty_nodes.clear();
         self.structure_dirty = false;
@@ -158,8 +166,8 @@ impl RetainedCache {
 
     /// Refreshes moved nodes and their incident edges in place.
     ///
-    /// Structure and style versions must already match the cache; only the
-    /// dirty set and the position generation may differ. Entries that leave
+    /// Structure and style versions plus paint options must already match the
+    /// cache; only the dirty set and the position generation may differ. Entries that leave
     /// the viewport are dropped and ones that enter are inserted, so a drag
     /// across the cull boundary still converges. Returns false when the cache
     /// cannot be patched, in which case the caller rebuilds fully.
@@ -169,7 +177,13 @@ impl RetainedCache {
         node_style: impl Fn(NodeIndex) -> NodeStyle,
         edge_style: impl Fn(NodeIndex, NodeIndex) -> EdgeStyle,
     ) -> bool {
+        if !self.enabled {
+            return false;
+        }
         if !self.populated || self.structure_dirty || self.dirty_nodes.is_empty() {
+            return false;
+        }
+        if self.options != input.options {
             return false;
         }
         if self.versions.structure != input.versions.structure
@@ -271,6 +285,26 @@ impl RetainedCache {
     pub fn is_fresh(&self, versions: CacheVersions) -> bool {
         !self.structure_dirty && self.dirty_nodes.is_empty() && self.versions == versions
     }
+
+    /// True when the cached plans can be reused as built for these inputs.
+    ///
+    /// Versions alone identify graph changes; paint options and the camera
+    /// snapshot are key dimensions beside them, so every dimension must
+    /// match. This keeps [`CacheVersions`] exactly three-dimensional: new
+    /// inputs arrive as key dimensions here instead of extra versions.
+    pub fn is_reusable(
+        &self,
+        versions: CacheVersions,
+        options: EdgePaintOptions,
+        camera: &Camera,
+        viewport: Vec2,
+    ) -> bool {
+        self.enabled
+            && self.populated
+            && self.is_fresh(versions)
+            && self.options == options
+            && !self.needs_reproject(camera, viewport)
+    }
 }
 
 /// One full plan set stored into the retained cache.
@@ -352,6 +386,7 @@ mod tests {
                 arrows: vec![],
             },
             versions,
+            EdgePaintOptions::default(),
             &Camera::new(Point2::ZERO, 1.0),
             Vec2::new(10.0, 10.0),
         );
@@ -399,6 +434,7 @@ mod tests {
                 arrows,
             },
             versions,
+            EdgePaintOptions::default(),
             &camera,
             viewport,
         );
@@ -457,6 +493,78 @@ mod tests {
     }
 
     #[test]
+    fn reuse_key_covers_options_beside_versions() {
+        use crate::style::{EdgeStyle, NodeStyle};
+        use cg_graph::Positions;
+
+        let versions = CacheVersions {
+            structure: 1,
+            positions: 1,
+            style: 1,
+        };
+        let camera = Camera::new(Point2::ZERO, 1.0);
+        let viewport = Vec2::new(100.0, 100.0);
+        let plans = || StoredPlans {
+            nodes: vec![],
+            node_order: vec![],
+            edges: vec![],
+            edge_ordinals: vec![],
+            arrows: vec![],
+        };
+        let mut cache = RetainedCache::new(true);
+        cache.store(plans(), versions, EdgePaintOptions::default(), &camera, viewport);
+        assert!(cache.is_reusable(
+            versions,
+            EdgePaintOptions::default(),
+            &camera,
+            viewport
+        ));
+        let haystack = EdgePaintOptions {
+            force_haystack: true,
+            ..EdgePaintOptions::default()
+        };
+        assert!(!cache.is_reusable(versions, haystack, &camera, viewport));
+        cache.mark_moved([NodeIndex::new(9)]);
+        let positions = Positions::new();
+        let pairs: Vec<(NodeIndex, NodeIndex)> = Vec::new();
+        let node_style = |_: NodeIndex| NodeStyle::default();
+        let edge_style = |_: NodeIndex, _: NodeIndex| EdgeStyle::default();
+        assert!(!cache.refresh_moved(
+            RefreshInput {
+                pairs: &pairs,
+                positions: &positions,
+                camera: &camera,
+                viewport,
+                options: haystack,
+                versions,
+            },
+            node_style,
+            edge_style,
+        ));
+        let mut disabled = RetainedCache::new(false);
+        disabled.store(plans(), versions, EdgePaintOptions::default(), &camera, viewport);
+        disabled.mark_moved([NodeIndex::new(9)]);
+        assert!(!disabled.is_reusable(
+            versions,
+            EdgePaintOptions::default(),
+            &camera,
+            viewport
+        ));
+        assert!(!disabled.refresh_moved(
+            RefreshInput {
+                pairs: &pairs,
+                positions: &positions,
+                camera: &camera,
+                viewport,
+                options: EdgePaintOptions::default(),
+                versions,
+            },
+            node_style,
+            edge_style,
+        ));
+    }
+
+    #[test]
     fn camera_only_change_keeps_geometry_fresh() {
         let mut cache = RetainedCache::new(true);
         let versions = CacheVersions {
@@ -474,6 +582,7 @@ mod tests {
                 arrows: vec![],
             },
             versions,
+            EdgePaintOptions::default(),
             &camera,
             Vec2::new(100.0, 100.0),
         );

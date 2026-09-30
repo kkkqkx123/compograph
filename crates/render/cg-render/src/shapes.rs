@@ -6,8 +6,8 @@
 //! and its hit test doubles as the conservative outer envelope for the other
 //! shapes.
 
-use cg_geometry::{distance_to_segment, point_hits_node, point_in_polygon};
-use cg_types::Point2;
+use cg_geometry::{distance_to_segment, point_hits_node, point_in_polygon, polygon_intersects_rect};
+use cg_types::{Point2, Rect, Vec2};
 
 /// Body shape of a node.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -113,6 +113,32 @@ pub fn point_hits_shape(
     }
 }
 
+/// True when the body of `shape` around `center` touches `rect`.
+///
+/// The square envelope rejects exactly: every body is inscribed in it, so an
+/// envelope miss misses every shape. Squares and rounded rectangles decide by
+/// rectangle overlap, matching their point hit test; the remaining shapes use
+/// the shared vertex tables, so a shape selects exactly where it paints.
+pub fn shape_hits_rect(shape: NodeShape, center: Point2, half: f32, rect: Rect) -> bool {
+    let body = Rect::new(
+        Point2::new(center.x - half, center.y - half),
+        Vec2::new(half * 2.0, half * 2.0),
+    );
+    if !body.intersects(rect) {
+        return false;
+    }
+    match shape {
+        NodeShape::Square | NodeShape::RoundedRect => true,
+        _ => {
+            let vertices: Vec<Point2> = node_polygon(shape, half * 2.0)
+                .into_iter()
+                .map(|vertex| Point2::new(vertex.x + center.x, vertex.y + center.y))
+                .collect();
+            polygon_intersects_rect(&vertices, rect)
+        }
+    }
+}
+
 fn circle_points(radius: f32, segments: usize) -> Vec<Point2> {
     (0..segments)
         .map(|ordinal| {
@@ -207,6 +233,28 @@ mod tests {
             shape_for_level(NodeShape::Diamond, false),
             NodeShape::Diamond
         );
+    }
+
+    #[test]
+    fn rect_hits_agree_with_point_hits() {
+        let center = Point2::ZERO;
+        let over = Rect::from_corners(Point2::new(-2.0, -2.0), Point2::new(2.0, 2.0));
+        let far = Rect::from_corners(Point2::new(40.0, 40.0), Point2::new(44.0, 44.0));
+        for shape in [
+            NodeShape::Square,
+            NodeShape::Circle,
+            NodeShape::Ellipse,
+            NodeShape::RoundedRect,
+            NodeShape::Triangle,
+            NodeShape::Diamond,
+        ] {
+            assert!(shape_hits_rect(shape, center, 12.0, over));
+            assert!(!shape_hits_rect(shape, center, 12.0, far));
+        }
+        let corner = Rect::from_corners(Point2::new(-12.0, -12.0), Point2::new(-8.0, -8.0));
+        assert!(shape_hits_rect(NodeShape::Square, center, 12.0, corner));
+        assert!(!shape_hits_rect(NodeShape::Triangle, center, 12.0, corner));
+        assert!(!shape_hits_rect(NodeShape::Circle, center, 12.0, corner));
     }
 
     #[test]
