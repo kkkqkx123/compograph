@@ -76,6 +76,7 @@ impl DotDocument {
             id,
             label: name.to_string(),
             position: None,
+            ..NodeEntry::default()
         });
         id
     }
@@ -121,6 +122,7 @@ impl DotDocument {
             source: source_id,
             target: target_id,
             weight,
+            ..EdgeEntry::default()
         });
     }
 

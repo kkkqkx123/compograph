@@ -8,10 +8,18 @@ use cg_graph::{
 };
 use gpui::{App, Context, Entity, Subscription, Task};
 
+use crate::compound::{CompoundSnapshot, apply_compound_postprocess};
 use crate::engine::LayoutEngine;
 use crate::force::{ForceSimulation, snapshot_of};
 use crate::reaction::{LAYOUT_FILTER, LayoutWork, work_for};
 use crate::static_view::StaticView;
+
+/// Half extent of a node body used for compound group separation.
+const COMPOUND_HALF_EXTENT: f32 = 12.0;
+
+fn polish_compound(store: &GraphStore, positions: &mut Positions) {
+    apply_compound_postprocess(store, positions, COMPOUND_HALF_EXTENT);
+}
 
 /// Maximum number of incremental placements before a full re-run is cheaper.
 ///
@@ -72,7 +80,8 @@ impl LayoutDriver {
         let store_snapshot = store.read(cx);
         let view: &dyn GraphView = store_snapshot;
         let started = Instant::now();
-        let positions = engine.layout(view, &Positions::new(), &FixedNodes::default());
+        let mut positions = engine.layout(view, &Positions::new(), &FixedNodes::default());
+        polish_compound(store_snapshot, &mut positions);
         let last_refine_ms = started.elapsed().as_secs_f64() * 1000.0;
         let subscription = subscribe_graph(cx, store, LAYOUT_FILTER, {
             let store = store.clone();
@@ -167,7 +176,9 @@ impl LayoutDriver {
         self.positions_version += 1;
         let store_snapshot = store.read(cx);
         let view: &dyn GraphView = store_snapshot;
-        self.positions = engine.layout(view, &self.positions, &self.pinned);
+        let mut positions = engine.layout(view, &self.positions, &self.pinned);
+        polish_compound(store_snapshot, &mut positions);
+        self.positions = positions;
         self.engine = engine;
         self.placements_since_full_run = 0;
     }
@@ -229,7 +240,9 @@ impl LayoutDriver {
                 let view: &dyn GraphView = store_snapshot;
                 let previous = std::mem::take(&mut self.positions);
                 let started = Instant::now();
-                self.positions = self.engine.layout(view, &previous, &self.pinned);
+                let mut positions = self.engine.layout(view, &previous, &self.pinned);
+                polish_compound(store_snapshot, &mut positions);
+                self.positions = positions;
                 self.last_refine_ms = started.elapsed().as_secs_f64() * 1000.0;
                 self.placements_since_full_run = 0;
                 self.chunks_written = 0;
@@ -243,6 +256,7 @@ impl LayoutDriver {
         self.chunks_written = 0;
         let generation = self.generation;
         let store_snapshot = store.read(cx);
+        let compound = CompoundSnapshot::capture(store_snapshot);
         let snapshot = snapshot_of(store_snapshot as &dyn GraphView);
         let live: HashSet<NodeIndex> = snapshot.nodes.iter().copied().collect();
         let mut working = self.positions.clone();
@@ -282,7 +296,11 @@ impl LayoutDriver {
                             if this.generation != generation {
                                 return true;
                             }
-                            this.positions = working.clone();
+                            let mut polished = working.clone();
+                            if let Some(snapshot) = compound.as_ref() {
+                                snapshot.polish(&mut polished, COMPOUND_HALF_EXTENT);
+                            }
+                            this.positions = polished;
                             this.positions_version += 1;
                             this.last_refine_ms = started.elapsed().as_secs_f64() * 1000.0;
                             this.chunks_written += 1;
@@ -321,7 +339,9 @@ impl LayoutDriver {
                     let previous = std::mem::take(&mut self.positions);
                     let store_snapshot = store.read(cx);
                     let view: &dyn GraphView = store_snapshot;
-                    self.positions = self.engine.layout(view, &previous, &self.pinned);
+                    let mut positions = self.engine.layout(view, &previous, &self.pinned);
+                    polish_compound(store_snapshot, &mut positions);
+                    self.positions = positions;
                     self.positions_version += 1;
                     self.placements_since_full_run += 1;
                 }
@@ -335,7 +355,9 @@ impl LayoutDriver {
         self.chunks_written = 0;
         let store_snapshot = store.read(cx);
         let view: &dyn GraphView = store_snapshot;
-        self.positions = self.engine.layout(view, &Positions::new(), &self.pinned);
+        let mut positions = self.engine.layout(view, &Positions::new(), &self.pinned);
+        polish_compound(store_snapshot, &mut positions);
+        self.positions = positions;
         self.positions_version += 1;
         self.placements_since_full_run = 0;
     }
@@ -350,7 +372,9 @@ impl LayoutDriver {
         self.generation += 1;
         self.chunks_written = 0;
         let generation = self.generation;
-        let snapshot = snapshot_of(store.read(cx) as &dyn GraphView);
+        let live = store.read(cx);
+        let compound = CompoundSnapshot::capture(live);
+        let snapshot = snapshot_of(live as &dyn GraphView);
         let previous = self.positions.clone();
         let pinned = self.pinned.clone();
         let engine_name = self.engine.name();
@@ -370,7 +394,10 @@ impl LayoutDriver {
                     if this.generation != generation {
                         return;
                     }
-                    if let Some(positions) = outcome {
+                    if let Some(mut positions) = outcome {
+                        if let Some(snapshot) = compound.as_ref() {
+                            snapshot.polish(&mut positions, COMPOUND_HALF_EXTENT);
+                        }
                         this.positions = positions;
                         this.positions_version += 1;
                         this.last_refine_ms = started.elapsed().as_secs_f64() * 1000.0;

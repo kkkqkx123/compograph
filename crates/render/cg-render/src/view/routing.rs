@@ -4,9 +4,7 @@
 //! and parallel Bezier curves through these helpers, so visual decisions stay
 //! in one place while culling and traversal remain with the callers.
 
-use cg_geometry::{
-    bezier_control_for_edge, haystack_endpoints, manhattan_route, parallel_offsets,
-};
+use cg_geometry::{bezier_control_for_edge, haystack_endpoints, manhattan_route, parallel_offsets};
 use cg_graph::NodeIndex;
 use cg_types::Point2;
 
@@ -279,11 +277,8 @@ mod tests {
             taxi: Some(OrthoDirection::HorizontalFirst),
             ..options()
         };
-        let (bend_a, bend_b) = manhattan_bends(
-            Point2::new(0.0, 0.0),
-            Point2::new(100.0, 40.0),
-            taxi,
-        );
+        let (bend_a, bend_b) =
+            manhattan_bends(Point2::new(0.0, 0.0), Point2::new(100.0, 40.0), taxi);
         assert!(bend_a.is_some());
         assert!(bend_b.is_none());
     }

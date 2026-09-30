@@ -20,6 +20,10 @@ pub enum ArrowKind {
     Dot,
     /// Four point diamond.
     Diamond,
+    /// Filled square with its front edge centered on the tip.
+    Square,
+    /// Open chevron with a deep inner notch.
+    Vee,
 }
 
 /// Screen pixel polygon of `kind` with the tip first.
@@ -85,6 +89,28 @@ pub fn arrow_polygon(
                 Point2::new(mid.x - normal.x * half_width, mid.y - normal.y * half_width),
             ]
         }
+        ArrowKind::Square => {
+            let front_left =
+                Point2::new(tip.x + normal.x * half_width, tip.y + normal.y * half_width);
+            let front_right =
+                Point2::new(tip.x - normal.x * half_width, tip.y - normal.y * half_width);
+            let back_right = Point2::new(
+                base.x - normal.x * half_width,
+                base.y - normal.y * half_width,
+            );
+            let back_left = Point2::new(
+                base.x + normal.x * half_width,
+                base.y + normal.y * half_width,
+            );
+            vec![front_left, front_right, back_right, back_left]
+        }
+        ArrowKind::Vee => {
+            let notch = Point2::new(
+                base.x + axis.x * length * 0.75,
+                base.y + axis.y * length * 0.75,
+            );
+            vec![tip, left, notch, right]
+        }
     }
 }
 
@@ -109,13 +135,23 @@ mod tests {
             arrow_polygon(ArrowKind::Diamond, tip, 0.0, 10.0, 4.0).len(),
             4
         );
+        assert_eq!(
+            arrow_polygon(ArrowKind::Square, tip, 0.0, 10.0, 4.0).len(),
+            4
+        );
+        assert_eq!(arrow_polygon(ArrowKind::Vee, tip, 0.0, 10.0, 4.0).len(), 4);
         assert_eq!(ArrowKind::default(), ArrowKind::Triangle);
     }
 
     #[test]
     fn tip_leads_and_heads_rotate_with_the_edge() {
         let tip = Point2::new(10.0, 5.0);
-        for kind in [ArrowKind::Triangle, ArrowKind::Dovetail, ArrowKind::Diamond] {
+        for kind in [
+            ArrowKind::Triangle,
+            ArrowKind::Dovetail,
+            ArrowKind::Diamond,
+            ArrowKind::Vee,
+        ] {
             let east = arrow_polygon(kind, tip, 0.0, 10.0, 4.0);
             let north = arrow_polygon(kind, tip, std::f32::consts::FRAC_PI_2, 10.0, 4.0);
             assert_eq!(east[0], tip);
@@ -138,5 +174,18 @@ mod tests {
         assert_ne!(east, north);
         assert!((east[0].x - tip.x).abs() < 1e-4);
         assert!((north[0].y - tip.y).abs() < 1e-4);
+        let square_east = arrow_polygon(ArrowKind::Square, tip, 0.0, 10.0, 4.0);
+        let square_north = arrow_polygon(
+            ArrowKind::Square,
+            tip,
+            std::f32::consts::FRAC_PI_2,
+            10.0,
+            4.0,
+        );
+        assert_eq!(square_east.len(), 4);
+        assert_ne!(square_east, square_north);
+        let vee = arrow_polygon(ArrowKind::Vee, tip, 0.0, 10.0, 4.0);
+        let dovetail = arrow_polygon(ArrowKind::Dovetail, tip, 0.0, 10.0, 4.0);
+        assert_ne!(vee, dovetail);
     }
 }

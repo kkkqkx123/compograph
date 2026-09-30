@@ -31,14 +31,26 @@ pub fn work_for(event: &GraphChangeEvent) -> LayoutWork {
         GraphChangeEvent::EdgeAdded(_) | GraphChangeEvent::EdgeRemoved(_) => {
             LayoutWork::RefreshEdgeGeometry
         }
+        GraphChangeEvent::NodeAttrChanged(_)
+        | GraphChangeEvent::EdgeAttrChanged(_)
+        | GraphChangeEvent::NodeClassChanged(_)
+        | GraphChangeEvent::EdgeClassChanged(_) => LayoutWork::None,
+        GraphChangeEvent::ParentChanged(_) | GraphChangeEvent::CollapsedChanged(_) => {
+            LayoutWork::Full
+        }
         GraphChangeEvent::StructureReset => LayoutWork::Full,
     }
 }
 
-/// Filter used by layout drivers: edge edits still arrive so the driver can
-/// refresh edge-dependent geometry, while [`work_for`] keeps node positions
-/// stable for them.
-pub const LAYOUT_FILTER: ChangeFilter = ChangeFilter::ALL;
+/// Filter used by layout drivers: data edits never arrive, while hierarchy
+/// edits do so the driver can re-run past the folding boundary.
+pub const LAYOUT_FILTER: ChangeFilter = ChangeFilter {
+    structure: true,
+    topology: true,
+    reset: true,
+    data: false,
+    hierarchy: true,
+};
 
 #[cfg(test)]
 mod tests {
@@ -72,5 +84,31 @@ mod tests {
             work_for(&GraphChangeEvent::StructureReset),
             LayoutWork::Full
         );
+    }
+
+    #[test]
+    fn data_edits_leave_positions_alone_while_hierarchy_reruns() {
+        assert_eq!(
+            work_for(&GraphChangeEvent::NodeAttrChanged(NodeIndex::new(0))),
+            LayoutWork::None
+        );
+        assert_eq!(
+            work_for(&GraphChangeEvent::EdgeAttrChanged(EdgeIndex::new(0))),
+            LayoutWork::None
+        );
+        assert_eq!(
+            work_for(&GraphChangeEvent::NodeClassChanged(NodeIndex::new(0))),
+            LayoutWork::None
+        );
+        assert_eq!(
+            work_for(&GraphChangeEvent::ParentChanged(NodeIndex::new(0))),
+            LayoutWork::Full
+        );
+        assert_eq!(
+            work_for(&GraphChangeEvent::CollapsedChanged(NodeIndex::new(0))),
+            LayoutWork::Full
+        );
+        assert!(!LAYOUT_FILTER.accepts(&GraphChangeEvent::NodeAttrChanged(NodeIndex::new(0))));
+        assert!(LAYOUT_FILTER.accepts(&GraphChangeEvent::ParentChanged(NodeIndex::new(0))));
     }
 }

@@ -13,6 +13,9 @@
 | [compograph-p3-plan.md](./compograph-p3-plan.md) | **P3 设计决策**：聚类、欧拉路、最小割、复合节点、扩展机制、动画链、实例化后端的是否做、前置条件、落点与验收口径 |
 | [compograph-p3-clustering-plan.md](./compograph-p3-clustering-plan.md) | **聚类分阶段实施方案**：基于 cytoscape 对照结论的层次、马尔可夫、k 均值三阶段落地与亲和传播暂缓结论、契约与验收 |
 | [compograph-p3-next-design.md](./compograph-p3-next-design.md) | **P3 后续任务细化设计**：欧拉路与最小割接线、聚类接线、布局动画链、规模评估的取舍、落点与验收 |
+| [cytoscape-gap-supplement-design.md](./cytoscape-gap-supplement-design.md) | **差距补充功能设计**：基于差距分析与参照清单的自由属性、选择器、复合节点、渲染填充、交互、动画、算法补齐的设计与交付顺序 |
+| [cytoscape-tasks-1-3-refinement.md](./cytoscape-tasks-1-3-refinement.md) | **任务 1-3 细化修改方案**：自由属性与数据映射、类集合与轻量选择器、复合节点的落点模块、行为契约、跨层影响与验收口径 |
+| [cytoscape-tasks-4-6-refinement.md](./cytoscape-tasks-4-6-refinement.md) | **任务 4-6 细化修改方案**：节点形状与箭头扩充、渐变填充、标签增强的落点模块、行为契约、跨层影响与验收口径 |
 
 ## 约定
 

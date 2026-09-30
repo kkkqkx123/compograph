@@ -9,14 +9,14 @@ use std::time::Instant;
 
 use algo_panel::{AlgoOutcome, EdgePair};
 use cg_graph::{
-    ChangeFilter, GraphDocument, GraphStore, GraphView, NodeEntry, NodeIndex, Positions,
-    all_pairs_shortest_paths, articulation_points, bellman_ford_paths, betweenness_centrality,
-    breadth_first_order, bridges, closeness_centrality, degree_centrality, depth_first_order,
-    eulerian_path_directed, eulerian_path_undirected, export_dot, global_min_cut,
-    heuristic_shortest_path, hierarchical_clusters, immediate_dominators, kmeans_clusters,
-    markov_clusters, minimum_spanning_forest, minimum_spanning_tree_single, negative_cycle_path,
-    node_order, rank_nodes, remap_positions, shortest_path, strongly_connected_components,
-    subscribe_graph, topological_order, transitive_reduction,
+    ChangeFilter, GraphChangeEvent, GraphDocument, GraphStore, GraphView, NodeEntry, NodeIndex,
+    Positions, all_pairs_shortest_paths, articulation_points, bellman_ford_paths,
+    betweenness_centrality, breadth_first_order, bridges, closeness_centrality, degree_centrality,
+    depth_first_order, eulerian_path_directed, eulerian_path_undirected, export_dot,
+    global_min_cut, heuristic_shortest_path, hierarchical_clusters, immediate_dominators,
+    kmeans_clusters, markov_clusters, minimum_spanning_forest, minimum_spanning_tree_single,
+    negative_cycle_path, node_order, rank_nodes, remap_positions, shortest_path,
+    strongly_connected_components, subscribe_graph, topological_order, transitive_reduction,
 };
 use cg_interact::{
     BoxSelectState, DragState, NODE_HALF_EXTENT, SelectionState, drag_position, edges_in_rect,
@@ -160,10 +160,25 @@ impl GraphWindow {
         // later topology change can never reuse plans from before the edit.
         // The counter is the structure generation: every accepted mutation
         // moves it exactly once through this subscription.
-        let structure_mark = subscribe_graph(cx, &store, ChangeFilter::ALL, |this, _event, _cx| {
-            this.structure_version += 1;
-            this.retained.mark_structure();
-        });
+        let structure_mark =
+            subscribe_graph(
+                cx,
+                &store,
+                ChangeFilter::ALL,
+                |this, event, _cx| match event {
+                    GraphChangeEvent::NodeAttrChanged(_)
+                    | GraphChangeEvent::EdgeAttrChanged(_)
+                    | GraphChangeEvent::NodeClassChanged(_)
+                    | GraphChangeEvent::EdgeClassChanged(_) => {
+                        this.style_version += 1;
+                        this.retained.mark_structure();
+                    }
+                    _ => {
+                        this.structure_version += 1;
+                        this.retained.mark_structure();
+                    }
+                },
+            );
         let layout_observer = cx.observe(&layout, |_this, _entity, cx| {
             cx.notify();
         });
@@ -835,7 +850,7 @@ impl GraphWindow {
     fn export_json(&mut self, cx: &mut Context<Self>) {
         let store = self.store.read(cx);
         let positions = self.layout.read(cx).positions().clone();
-        let document = GraphDocument::collect_from(store.graph(), &positions);
+        let document = GraphDocument::collect_from_store(store, &positions);
         let directory = working_directory();
         let receiver = cx.prompt_for_new_path(&directory, Some("compograph-graph.json"));
         let task = cx.spawn(async move |weak, async_cx| match receiver.await {
@@ -1058,11 +1073,37 @@ impl GraphWindow {
             for (entry, node) in sorted.iter().zip(order.iter().copied()) {
                 by_id.insert(entry.id, node);
             }
+            for (entry, node) in sorted.iter().zip(order.iter().copied()) {
+                for (key, value) in &entry.attrs {
+                    graph.set_node_attr(cx, node, key.clone(), value.clone());
+                }
+                for class in &entry.classes {
+                    graph.add_node_class(cx, node, class.clone());
+                }
+            }
             for edge in &document.edges {
                 if let (Some(source), Some(target)) =
                     (by_id.get(&edge.source), by_id.get(&edge.target))
                 {
-                    graph.add_edge(cx, *source, *target, edge.weight);
+                    let id = graph.add_edge(cx, *source, *target, edge.weight);
+                    for (key, value) in &edge.attrs {
+                        graph.set_edge_attr(cx, id, key.clone(), value.clone());
+                    }
+                    for class in &edge.classes {
+                        graph.add_edge_class(cx, id, class.clone());
+                    }
+                }
+            }
+            for (entry, node) in sorted.iter().zip(order.iter().copied()) {
+                if let Some(parent_id) = entry.parent {
+                    if let Some(parent) = by_id.get(&parent_id).copied() {
+                        graph.set_parent(cx, node, Some(parent)).ok();
+                    }
+                }
+            }
+            for (entry, node) in sorted.iter().zip(order.iter().copied()) {
+                if entry.collapsed {
+                    graph.set_collapsed(cx, node, true);
                 }
             }
         });
@@ -2172,17 +2213,20 @@ mod tests {
                     id: 0,
                     label: "a".to_string(),
                     position: Some([11.0, 22.0]),
+                    ..NodeEntry::default()
                 },
                 NodeEntry {
                     id: 1,
                     label: "b".to_string(),
                     position: Some([33.0, 44.0]),
+                    ..NodeEntry::default()
                 },
             ],
             edges: vec![cg_graph::EdgeEntry {
                 source: 0,
                 target: 1,
                 weight: 1.0,
+                ..cg_graph::EdgeEntry::default()
             }],
         };
         cx.update(|cx| {

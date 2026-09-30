@@ -9,12 +9,13 @@ use std::collections::HashMap;
 
 use cg_types::Point2;
 use gpui::{
-    App, Bounds, Font, Hsla, IntoElement, Pixels, Rgba, SharedString, TextAlign, TextRun, Window,
-    canvas, fill, rgb,
+    App, Background, Bounds, Font, Hsla, IntoElement, Pixels, Rgba, SharedString, TextAlign,
+    TextRun, Window, canvas, fill, linear_color_stop, linear_gradient, rgb,
 };
 
 use crate::shapes::NodeShape;
-use crate::text::{PaintedEdgeLabel, PaintedLabel};
+use crate::style::NodeFill;
+use crate::text::{LabelBackground, PaintedEdgeLabel, PaintedLabel};
 
 use super::plans::{PaintedArrow, PaintedEdge, PaintedNode, PaintedRubberBand, RUBBER_BAND_STROKE};
 
@@ -89,7 +90,7 @@ pub fn graph_view(
                             origin: gpui::point(gpui::px(node.origin.x), gpui::px(node.origin.y)),
                             size: gpui::size(gpui::px(node.side), gpui::px(node.side)),
                         },
-                        with_opacity(node.fill, node.opacity),
+                        node_background(&node.fill, node.opacity),
                     );
                     window.paint_quad(quad);
                     paint_node_stroke(&node_stroke_loop(node), node, window);
@@ -100,7 +101,7 @@ pub fn graph_view(
                     node.points.iter().map(|point| to_pixels(*point)).collect();
                 body.add_polygon(&pixels, true);
                 if let Ok(path) = body.build() {
-                    window.paint_path(path, with_opacity(node.fill, node.opacity));
+                    window.paint_path(path, node_background(&node.fill, node.opacity));
                 }
                 paint_node_stroke(&node.points, node, window);
             }
@@ -138,6 +139,24 @@ fn with_opacity(tint: u32, opacity: f32) -> Rgba {
     let mut color = rgb(tint);
     color.a = opacity.clamp(0.0, 1.0);
     color
+}
+
+/// Canvas background for a node fill.
+///
+/// Solid fills map to a single translucent color; gradients map to the
+/// framework linear gradient with the stored angle passed through. Opacity
+/// applies to both stops so translucent gradients fade uniformly.
+fn node_background(fill: &NodeFill, opacity: f32) -> Background {
+    let from = with_opacity(fill.start, opacity);
+    if fill.is_solid() {
+        return Background::from(from);
+    }
+    let to = with_opacity(fill.end, opacity);
+    linear_gradient(
+        fill.angle(),
+        linear_color_stop(from, 0.0),
+        linear_color_stop(to, 1.0),
+    )
 }
 
 /// Corners of a square node body in paint order for stroking.
@@ -178,8 +197,13 @@ fn paint_node_stroke(outline: &[Point2], node: &PaintedNode, window: &mut Window
 /// Shaping and painting both report errors rather than panicking; a failed
 /// label is skipped so one bad glyph never blanks the frame. The line height
 /// tracks the font size, and the label is centered over the node width so the
-/// text stays under its body regardless of length.
+/// text stays under its body regardless of length. Rotation lives in the plan
+/// for bounds and selection; the canvas paints horizontally because shaped
+/// text has no rotation primitive.
 fn paint_label(label: &PaintedLabel, window: &mut Window, cx: &mut App) {
+    if label.background != LabelBackground::None {
+        paint_label_background(&label.text, label.size, label.origin, window, cx);
+    }
     paint_text_at(
         &label.text,
         label.size,
@@ -193,8 +217,12 @@ fn paint_label(label: &PaintedLabel, window: &mut Window, cx: &mut App) {
 /// Shapes and paints one edge label centered on its anchor.
 ///
 /// Edge labels reuse the node label shaping path so weight text and node text
-/// share one rendering behavior; only the plan source differs.
+/// share one rendering behavior; only the plan source differs. Rotation is
+/// plan-side for now, matching node labels.
 fn paint_edge_label(label: &PaintedEdgeLabel, window: &mut Window, cx: &mut App) {
+    if label.background != LabelBackground::None {
+        paint_label_background(&label.text, label.size, label.origin, window, cx);
+    }
     paint_text_at(
         &label.text,
         label.size,
@@ -203,6 +231,61 @@ fn paint_edge_label(label: &PaintedEdgeLabel, window: &mut Window, cx: &mut App)
         window,
         cx,
     );
+}
+
+/// Paints the light plate behind a label.
+///
+/// Widths come from shaped lines so the plate hugs the real glyphs; the total
+/// height stacks every wrapped line. Rounded backgrounds currently fall back
+/// to a rectangle until a rounded primitive lands.
+fn paint_label_background(
+    text: &str,
+    size: f32,
+    origin: Point2,
+    window: &mut Window,
+    _cx: &mut App,
+) {
+    use crate::text::{
+        LABEL_BACKGROUND_FILL, LABEL_BACKGROUND_PAD, line_height, split_label_lines,
+    };
+    let size_px = gpui::px(size.max(1.0));
+    let step = line_height(size);
+    let lines = split_label_lines(text);
+    let mut max_width = 0.0f32;
+    for line in &lines {
+        if line.is_empty() {
+            continue;
+        }
+        let run = TextRun {
+            len: line.len(),
+            font: Font::default(),
+            color: rgb(LABEL_BACKGROUND_FILL).into(),
+            ..TextRun::default()
+        };
+        let shaped = window.text_system().shape_line(
+            SharedString::from(line.clone()),
+            size_px,
+            &[run],
+            None,
+        );
+        max_width = max_width.max(f32::from(shaped.width()));
+    }
+    if max_width <= 0.0 {
+        max_width = size.max(1.0) * 0.6;
+    }
+    let total = lines.len().max(1) as f32 * step;
+    let pad = LABEL_BACKGROUND_PAD;
+    let quad = fill(
+        Bounds {
+            origin: gpui::point(
+                gpui::px(origin.x - max_width / 2.0 - pad),
+                gpui::px(origin.y - pad),
+            ),
+            size: gpui::size(gpui::px(max_width + pad * 2.0), gpui::px(total + pad * 2.0)),
+        },
+        rgb(LABEL_BACKGROUND_FILL),
+    );
+    window.paint_quad(quad);
 }
 
 /// Shapes label text centered on `origin` and paints it line by line.

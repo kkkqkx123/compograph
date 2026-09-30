@@ -1,8 +1,11 @@
 //! Editable graph model with change notifications.
 
 pub mod algo;
+pub mod attrs;
 pub mod binding;
 pub mod centrality;
+pub mod classes;
+pub mod compound;
 pub mod euler;
 pub mod events;
 pub mod hierarchical;
@@ -21,10 +24,13 @@ pub use algo::{
     shortest_path_cost, shortest_paths, strongly_connected_components, topological_order,
     transitive_reduction,
 };
+pub use attrs::{DataValue, valid_attr_key};
 pub use binding::{ChangeFilter, subscribe_graph};
 pub use centrality::{
     betweenness_centrality, closeness_centrality, degree_centrality, node_order, rank_nodes,
 };
+pub use classes::valid_class_name;
+pub use compound::{CompoundError, MAX_COMPOUND_DEPTH, visible_members};
 pub use euler::{eulerian_path_directed, eulerian_path_undirected};
 pub use events::GraphChangeEvent;
 pub use hierarchical::hierarchical_clusters;

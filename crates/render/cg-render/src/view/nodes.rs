@@ -152,7 +152,13 @@ pub fn paint_single_node_for_level(
     }
     let style = node_style(node);
     let side = (NODE_SIDE * style.scale).max(4.0);
-    let shape = shape_for_level(style.shape, level == DetailLevel::Minimal);
+    let minimal = level == DetailLevel::Minimal;
+    let shape = shape_for_level(style.shape, minimal);
+    let fill = if minimal {
+        crate::style::NodeFill::solid(style.fill.solid_fallback())
+    } else {
+        style.fill
+    };
     let points = node_polygon(shape, side)
         .into_iter()
         .map(|vertex| Point2::new(screen.x + vertex.x, screen.y + vertex.y))
@@ -161,7 +167,7 @@ pub fn paint_single_node_for_level(
         id: node,
         origin: Point2::new(screen.x - side / 2.0, screen.y - side / 2.0),
         side,
-        fill: style.fill,
+        fill,
         stroke: style.stroke,
         stroke_width: style.stroke_width,
         opacity: style.opacity,
@@ -175,7 +181,9 @@ mod tests {
     use cg_graph::MockGraph;
 
     use super::*;
-    use crate::style::{BypassStore, NodeStylePatch, SELECTED_NODE_FILL, StyleMapper, StyleSheet};
+    use crate::style::{
+        BypassStore, NodeFill, NodeStylePatch, SELECTED_NODE_FILL, StyleMapper, StyleSheet,
+    };
 
     fn viewport() -> Vec2 {
         Vec2::new(1024.0, 768.0)
@@ -200,7 +208,7 @@ mod tests {
         });
         assert_eq!(plan.len(), 2);
         assert_eq!(plan[0].fill, NodeStyle::default().fill);
-        assert_eq!(plan[1].fill, SELECTED_NODE_FILL);
+        assert_eq!(plan[1].fill, NodeFill::solid(SELECTED_NODE_FILL));
     }
 
     #[test]
@@ -312,5 +320,36 @@ mod tests {
         )
         .expect("node stays visible");
         assert_eq!(minimal.shape, NodeShape::Square);
+    }
+
+    #[test]
+    fn minimal_detail_falls_back_to_a_solid_fill() {
+        let mut positions = Positions::new();
+        positions.insert(NodeIndex::new(0), Point2::new(0.0, 0.0));
+        let gradient = NodeStyle {
+            fill: NodeFill::gradient(0x112233, 0x445566, 90.0),
+            ..NodeStyle::default()
+        };
+        let full = paint_single_node_for_level(
+            NodeIndex::new(0),
+            &positions,
+            &camera(),
+            viewport(),
+            DetailLevel::Full,
+            |_| gradient,
+        )
+        .expect("node stays visible");
+        assert!(!full.fill.is_solid());
+        let minimal = paint_single_node_for_level(
+            NodeIndex::new(0),
+            &positions,
+            &camera(),
+            viewport(),
+            DetailLevel::Minimal,
+            |_| gradient,
+        )
+        .expect("node stays visible");
+        assert!(minimal.fill.is_solid());
+        assert_eq!(minimal.fill.start, 0x112233);
     }
 }

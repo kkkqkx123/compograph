@@ -91,11 +91,13 @@ mod tests {
                 id: 0,
                 label: "kept".into(),
                 position: Some([1.0, 2.0]),
+                ..NodeEntry::default()
             }],
             edges: vec![EdgeEntry {
                 source: 0,
                 target: 0,
                 weight: 1.0,
+                ..EdgeEntry::default()
             }],
         }
     }

@@ -136,6 +136,8 @@ mod tests {
             (ArrowKind::Tee, 4),
             (ArrowKind::Dot, 12),
             (ArrowKind::Diamond, 4),
+            (ArrowKind::Square, 4),
+            (ArrowKind::Vee, 4),
         ] {
             let edges = paint_edges(&graph, &positions, &camera(), viewport(), |_, _| {
                 EdgeStyle {

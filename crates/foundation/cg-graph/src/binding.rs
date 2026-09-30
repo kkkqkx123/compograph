@@ -20,6 +20,10 @@ pub struct ChangeFilter {
     pub topology: bool,
     /// React when the whole structure is replaced.
     pub reset: bool,
+    /// React when free attributes or class sets change.
+    pub data: bool,
+    /// React when parent links or collapse state change.
+    pub hierarchy: bool,
 }
 
 impl ChangeFilter {
@@ -28,6 +32,8 @@ impl ChangeFilter {
         structure: true,
         topology: true,
         reset: true,
+        data: true,
+        hierarchy: true,
     };
 
     /// Reactive to node-level edits only.
@@ -35,6 +41,8 @@ impl ChangeFilter {
         structure: true,
         topology: false,
         reset: true,
+        data: true,
+        hierarchy: true,
     };
 
     /// Reactive to edge-level edits only.
@@ -42,6 +50,17 @@ impl ChangeFilter {
         structure: false,
         topology: true,
         reset: true,
+        data: true,
+        hierarchy: false,
+    };
+
+    /// Reactive to data edits only.
+    pub const DATA: Self = Self {
+        structure: false,
+        topology: false,
+        reset: false,
+        data: true,
+        hierarchy: false,
     };
 
     /// Whether `event` should reach a consumer holding this filter.
@@ -49,6 +68,13 @@ impl ChangeFilter {
         match event {
             GraphChangeEvent::NodeAdded(_) | GraphChangeEvent::NodeRemoved(_) => self.structure,
             GraphChangeEvent::EdgeAdded(_) | GraphChangeEvent::EdgeRemoved(_) => self.topology,
+            GraphChangeEvent::NodeAttrChanged(_)
+            | GraphChangeEvent::EdgeAttrChanged(_)
+            | GraphChangeEvent::NodeClassChanged(_)
+            | GraphChangeEvent::EdgeClassChanged(_) => self.data,
+            GraphChangeEvent::ParentChanged(_) | GraphChangeEvent::CollapsedChanged(_) => {
+                self.hierarchy
+            }
             GraphChangeEvent::StructureReset => self.reset,
         }
     }
@@ -89,11 +115,28 @@ mod tests {
             GraphChangeEvent::NodeRemoved(NodeIndex::new(0)),
             GraphChangeEvent::EdgeAdded(EdgeIndex::new(0)),
             GraphChangeEvent::EdgeRemoved(EdgeIndex::new(0)),
+            GraphChangeEvent::NodeAttrChanged(NodeIndex::new(0)),
+            GraphChangeEvent::EdgeAttrChanged(EdgeIndex::new(0)),
+            GraphChangeEvent::NodeClassChanged(NodeIndex::new(0)),
+            GraphChangeEvent::EdgeClassChanged(EdgeIndex::new(0)),
+            GraphChangeEvent::ParentChanged(NodeIndex::new(0)),
+            GraphChangeEvent::CollapsedChanged(NodeIndex::new(0)),
             GraphChangeEvent::StructureReset,
         ];
         for event in &events {
             assert!(ChangeFilter::ALL.accepts(event));
         }
+    }
+
+    #[test]
+    fn data_and_hierarchy_filters_split_cleanly() {
+        let data_only = ChangeFilter::DATA;
+        assert!(data_only.accepts(&GraphChangeEvent::NodeAttrChanged(NodeIndex::new(0))));
+        assert!(data_only.accepts(&GraphChangeEvent::EdgeClassChanged(EdgeIndex::new(0))));
+        assert!(!data_only.accepts(&GraphChangeEvent::ParentChanged(NodeIndex::new(0))));
+        assert!(!data_only.accepts(&GraphChangeEvent::StructureReset));
+        assert!(ChangeFilter::NODES.accepts(&GraphChangeEvent::ParentChanged(NodeIndex::new(0))));
+        assert!(!ChangeFilter::EDGES.accepts(&GraphChangeEvent::ParentChanged(NodeIndex::new(0))));
     }
 
     #[test]

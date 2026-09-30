@@ -12,6 +12,7 @@ use cg_types::{Point2, Vec2};
 use crate::arrows::ArrowKind;
 use crate::lod::DetailLevel;
 use crate::shapes::NodeShape;
+use crate::style::NodeFill;
 
 /// Side length, in logical pixels, of the placeholder node rectangle.
 pub const NODE_SIDE: f32 = 24.0;
@@ -40,13 +41,14 @@ pub const RUBBER_BAND_STROKE: u32 = 0x4a9eff;
 /// Squares keep the fast rectangle path through `origin` and `side`; every
 /// shape also carries its screen pixel polygon in `points` so drawing, export
 /// and tests share one vertex table. The stroke outline reuses the resolved
-/// style border so the canvas and the export raster agree.
+/// style border so the canvas and the export raster agree. The fill carries
+/// the full gradient description; minimal detail falls back to its solid end.
 #[derive(Clone, Debug)]
 pub struct PaintedNode {
     pub id: NodeIndex,
     pub origin: Point2,
     pub side: f32,
-    pub fill: u32,
+    pub fill: NodeFill,
     pub stroke: u32,
     pub stroke_width: f32,
     pub opacity: f32,

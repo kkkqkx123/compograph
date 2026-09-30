@@ -10,7 +10,7 @@ use cg_geometry::{
     BEZIER_HIT_SAMPLES, OrthoDirection, bezier_control_for_edge, manhattan_route, parallel_offsets,
     polyline_intersects_rect, sample_quadratic_bezier, segment_intersects_rect, self_loop_polyline,
 };
-use cg_graph::{GraphView, NodeIndex, Positions};
+use cg_graph::{GraphStore, GraphView, NodeIndex, Positions};
 use cg_render::{
     NODE_SIDE, NodeShape, PARALLEL_STEP, SpatialIndex, point_hits_shape, shape_hits_rect,
 };
@@ -231,6 +231,28 @@ pub fn edges_in_rect_with_options(
 fn bundle_key(source: NodeIndex, target: NodeIndex) -> (usize, usize) {
     let (a, b) = (source.index(), target.index());
     if a <= b { (a, b) } else { (b, a) }
+}
+
+/// True when `node` may fold or unfold as a compound container.
+pub fn compound_toggle_target(store: &GraphStore, node: NodeIndex) -> bool {
+    store.is_container(node)
+}
+
+/// Compound-aware hit: deep children win over containers, hidden nodes never hit.
+///
+/// Falls back to none when the store holds no hierarchy, letting the caller
+/// use the shaped path instead.
+pub fn press_hit_compound(
+    world_point: Point2,
+    store: &GraphStore,
+    positions: &Positions,
+    half_extent: f32,
+    tolerance: f32,
+) -> Option<NodeIndex> {
+    if !store.has_compound() {
+        return None;
+    }
+    cg_render::pick_compound_node(store, positions, world_point, half_extent, tolerance)
 }
 
 /// Zoom factor for a scroll wheel line delta.

@@ -2,6 +2,7 @@
 
 pub mod breadthfirst;
 pub mod circle;
+pub mod compound;
 pub mod concentric;
 pub mod driver;
 pub mod engine;
@@ -18,6 +19,10 @@ pub mod static_view;
 
 pub use breadthfirst::{BfsDirection, BreadthFirstLayout, BreadthFirstOptions};
 pub use circle::{CircleLayout, CircleOptions};
+pub use compound::{
+    CompoundSnapshot, GROUP_GAP, apply_compound_postprocess, group_centers, separate_groups,
+    separate_groups_with, snap_containers, snap_containers_with,
+};
 pub use concentric::{ConcentricLayout, ConcentricOptions, ConcentricScoring};
 pub use driver::{LayoutDriver, LayoutProgress, SYNC_LAYOUT_NODE_LIMIT};
 pub use engine::LayoutEngine;

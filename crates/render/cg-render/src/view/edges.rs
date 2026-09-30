@@ -13,17 +13,17 @@ use cg_types::Vec2;
 use crate::camera::Camera;
 use crate::style::EdgeStyle;
 
-pub use super::bundles::{bundle_slot, edge_ordinals_for, loop_ordinal};
-pub use super::hits::painted_edge_hits;
 use super::bundles::BundleContext;
+pub use super::bundles::{bundle_slot, edge_ordinals_for, loop_ordinal};
 use super::culling::{
     edge_visible, loop_visible, point_in_grown_rect, polyline_visible, segment_in_grown_rect,
     spread_for, unordered_key, world_margin_for, world_viewport_rect,
 };
+pub use super::hits::painted_edge_hits;
 use super::plans::{EdgePaintOptions, NODE_SIDE, PaintedEdge};
 use super::routing::{
-    bezier_control, haystack_edge, haystack_span, loop_edge, manhattan_bends, manhattan_edge,
-    curved_edge, should_use_haystack, should_use_manhattan,
+    bezier_control, curved_edge, haystack_edge, haystack_span, loop_edge, manhattan_bends,
+    manhattan_edge, should_use_haystack, should_use_manhattan,
 };
 
 /// Transforms edges into a paint plan with parallel edges spread as curves.
@@ -180,11 +180,7 @@ pub fn paint_single_edge(
         }
         let screen = camera.world_to_viewport(viewport, *anchor);
         let entry = loop_edge(source, target, screen, loop_ordinal(pairs, ordinal), style);
-        if !loop_visible(
-            screen,
-            entry.loop_ctrls.unwrap_or([screen; 2]),
-            viewport,
-        ) {
+        if !loop_visible(screen, entry.loop_ctrls.unwrap_or([screen; 2]), viewport) {
             return None;
         }
         return Some(entry);

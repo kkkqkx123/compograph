@@ -7,8 +7,9 @@ use petgraph::Directed;
 use petgraph::stable_graph::{NodeIndex, StableGraph};
 use petgraph::visit::{EdgeRef, IntoEdgeReferences, IntoNodeIdentifiers};
 
+use crate::attrs::DataValue;
 use crate::positions::Positions;
-use crate::store::{EdgeData, NodeData};
+use crate::store::{EdgeData, GraphStore, NodeData};
 
 type Graph = StableGraph<NodeData, EdgeData, Directed>;
 
@@ -40,21 +41,33 @@ impl fmt::Display for IoError {
 impl std::error::Error for IoError {}
 
 /// One node row of the JSON schema.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 #[cfg_attr(feature = "json-io", derive(serde::Serialize, serde::Deserialize))]
 pub struct NodeEntry {
     pub id: usize,
     pub label: String,
     pub position: Option<[f32; 2]>,
+    #[cfg_attr(feature = "json-io", serde(default))]
+    pub attrs: HashMap<String, DataValue>,
+    #[cfg_attr(feature = "json-io", serde(default))]
+    pub classes: Vec<String>,
+    #[cfg_attr(feature = "json-io", serde(default))]
+    pub parent: Option<usize>,
+    #[cfg_attr(feature = "json-io", serde(default))]
+    pub collapsed: bool,
 }
 
 /// One edge row of the JSON schema.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 #[cfg_attr(feature = "json-io", derive(serde::Serialize, serde::Deserialize))]
 pub struct EdgeEntry {
     pub source: usize,
     pub target: usize,
     pub weight: f32,
+    #[cfg_attr(feature = "json-io", serde(default))]
+    pub attrs: HashMap<String, DataValue>,
+    #[cfg_attr(feature = "json-io", serde(default))]
+    pub classes: Vec<String>,
 }
 
 /// Owned snapshot of a graph and its layout, ready to encode or decode.
@@ -69,7 +82,9 @@ impl GraphDocument {
     /// Collects node labels, weights, and positions into transferable rows.
     ///
     /// Identifiers are the stable graph indices, so an edited store keeps
-    /// referring to the same rows across exports.
+    /// referring to the same rows across exports. Attribute tables, class
+    /// sets, and hierarchy are left empty; use `collect_from_store` for the
+    /// full snapshot.
     pub fn collect_from(graph: &Graph, positions: &Positions) -> Self {
         let mut nodes: Vec<NodeEntry> = graph
             .node_identifiers()
@@ -83,6 +98,7 @@ impl GraphDocument {
                     id: node.index(),
                     label,
                     position,
+                    ..NodeEntry::default()
                 }
             })
             .collect();
@@ -93,8 +109,62 @@ impl GraphDocument {
                 source: edge.source().index(),
                 target: edge.target().index(),
                 weight: edge.weight().weight,
+                ..EdgeEntry::default()
             })
             .collect();
+        edges.sort_by_key(|entry| (entry.source, entry.target));
+        Self { nodes, edges }
+    }
+
+    /// Full snapshot including attributes, classes, and hierarchy.
+    ///
+    /// The plain text exchange keeps labels and weights only; this entry
+    /// point is the one the JSON exchange uses.
+    pub fn collect_from_store(store: &GraphStore, positions: &Positions) -> Self {
+        let graph = store.graph();
+        let mut nodes: Vec<NodeEntry> = graph
+            .node_identifiers()
+            .map(|node| {
+                let label = graph
+                    .node_weight(node)
+                    .map(|data| data.label.clone())
+                    .unwrap_or_default();
+                let position = positions.get(&node).map(|point| [point.x, point.y]);
+                let mut classes: Vec<String> = store.node_classes(node).into_iter().collect();
+                classes.sort();
+                NodeEntry {
+                    id: node.index(),
+                    label,
+                    position,
+                    attrs: store.node_attrs(node),
+                    classes,
+                    parent: store.parent_of(node).map(|parent| parent.index()),
+                    collapsed: store.is_collapsed(node),
+                }
+            })
+            .collect();
+        nodes.sort_by_key(|entry| entry.id);
+        let mut edge_ids: Vec<petgraph::stable_graph::EdgeIndex> = graph.edge_indices().collect();
+        edge_ids.sort_by_key(|edge| edge.index());
+        let mut edges: Vec<EdgeEntry> = Vec::new();
+        for edge in edge_ids {
+            let Some((source, target)) = graph.edge_endpoints(edge) else {
+                continue;
+            };
+            let weight = graph
+                .edge_weight(edge)
+                .map(|data| data.weight)
+                .unwrap_or(1.0);
+            let mut classes: Vec<String> = store.edge_classes(edge).into_iter().collect();
+            classes.sort();
+            edges.push(EdgeEntry {
+                source: source.index(),
+                target: target.index(),
+                weight,
+                attrs: store.edge_attrs(edge),
+                classes,
+            });
+        }
         edges.sort_by_key(|entry| (entry.source, entry.target));
         Self { nodes, edges }
     }
@@ -120,6 +190,29 @@ impl GraphDocument {
         for entry in &self.nodes {
             if !seen.insert(entry.id) {
                 return Err(IoError::invalid(format!("duplicate node id {}", entry.id)));
+            }
+        }
+        for entry in &self.nodes {
+            if let Some(parent) = entry.parent {
+                if !seen.contains(&parent) {
+                    return Err(IoError::invalid(format!(
+                        "node {} names an unknown parent {}",
+                        entry.id, parent
+                    )));
+                }
+                if parent == entry.id {
+                    return Err(IoError::invalid(format!(
+                        "node {} cannot parent itself",
+                        entry.id
+                    )));
+                }
+            }
+            for (_, value) in &entry.attrs {
+                if let DataValue::Number(number) = value {
+                    if !number.is_finite() {
+                        return Err(IoError::invalid("attribute numbers must be finite"));
+                    }
+                }
             }
         }
         for entry in &self.edges {
@@ -201,6 +294,7 @@ mod tests {
             source: 999,
             target: 0,
             weight: 1.0,
+            ..EdgeEntry::default()
         });
         assert!(document.validate().is_err());
         let mut bad_weight = GraphDocument::collect_from(&graph, &positions);

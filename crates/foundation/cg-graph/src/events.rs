@@ -14,6 +14,12 @@ pub enum GraphChangeEvent {
     NodeRemoved(NodeIndex),
     EdgeAdded(EdgeIndex),
     EdgeRemoved(EdgeIndex),
+    NodeAttrChanged(NodeIndex),
+    EdgeAttrChanged(EdgeIndex),
+    NodeClassChanged(NodeIndex),
+    EdgeClassChanged(EdgeIndex),
+    ParentChanged(NodeIndex),
+    CollapsedChanged(NodeIndex),
     StructureReset,
 }
 

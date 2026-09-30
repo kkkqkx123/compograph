@@ -10,6 +10,7 @@ use cg_geometry::{
 use cg_types::Point2;
 
 use super::view::{PaintedArrow, PaintedEdge, PaintedNode};
+use crate::style::NodeFill;
 
 /// Fills a solid background RGB buffer.
 pub fn solid_background(width: u32, height: u32, rgb: [u8; 3]) -> Vec<u8> {
@@ -58,7 +59,16 @@ pub fn rasterize(
     }
     for node in nodes {
         if node.shape == crate::shapes::NodeShape::Square {
-            canvas.fill_rect(node.origin, node.side, tint_to_rgb(node.fill), node.opacity);
+            if node.fill.is_solid() {
+                canvas.fill_rect(
+                    node.origin,
+                    node.side,
+                    tint_to_rgb(node.fill.start),
+                    node.opacity,
+                );
+            } else {
+                canvas.fill_rect_gradient(node.origin, node.side, &node.fill, node.opacity);
+            }
             if node.stroke_width > 0.0 {
                 let origin = node.origin;
                 let side = node.side;
@@ -74,8 +84,24 @@ pub fn rasterize(
                     node.opacity,
                 );
             }
+        } else if node.fill.is_solid() {
+            canvas.fill_polygon(&node.points, tint_to_rgb(node.fill.start), node.opacity);
+            if node.stroke_width > 0.0 {
+                canvas.stroke_polygon(
+                    &node.points,
+                    tint_to_rgb(node.stroke),
+                    node.stroke_width,
+                    node.opacity,
+                );
+            }
         } else {
-            canvas.fill_polygon(&node.points, tint_to_rgb(node.fill), node.opacity);
+            canvas.fill_polygon_gradient(
+                &node.points,
+                node.origin,
+                node.side,
+                &node.fill,
+                node.opacity,
+            );
             if node.stroke_width > 0.0 {
                 canvas.stroke_polygon(
                     &node.points,
@@ -101,6 +127,41 @@ fn edge_path(edge: &PaintedEdge) -> Vec<Point2> {
         None => vec![edge.start, edge.end],
         Some(mid) => sample_quadratic_bezier(edge.start, mid, edge.end, BEZIER_HIT_SAMPLES),
     }
+}
+
+/// Gradient direction for an angle in degrees.
+///
+/// Zero runs top to bottom with values growing clockwise, matching the canvas
+/// gradient convention.
+fn gradient_direction(angle_deg: f32) -> (f32, f32) {
+    let angle = if angle_deg.is_finite() {
+        angle_deg.clamp(0.0, 360.0).to_radians()
+    } else {
+        0.0
+    };
+    (angle.sin(), angle.cos())
+}
+
+/// Normalized position of a pixel inside the node bounds along the gradient.
+fn gradient_ratio(x: f32, y: f32, origin: Point2, side: f32, angle_deg: f32) -> f32 {
+    let (dx, dy) = gradient_direction(angle_deg);
+    let corners = [
+        origin,
+        Point2::new(origin.x + side, origin.y),
+        Point2::new(origin.x, origin.y + side),
+        Point2::new(origin.x + side, origin.y + side),
+    ];
+    let mut min = f32::INFINITY;
+    let mut max = f32::NEG_INFINITY;
+    for corner in corners {
+        let projection = corner.x * dx + corner.y * dy;
+        min = min.min(projection);
+        max = max.max(projection);
+    }
+    if !(max > min) {
+        return 0.0;
+    }
+    ((x * dx + y * dy - min) / (max - min)).clamp(0.0, 1.0)
 }
 
 struct Image {
@@ -145,6 +206,29 @@ impl Image {
                 if alpha >= 1.0 {
                     self.plot(x, y, rgb);
                 } else if alpha > 0.0 {
+                    self.blend(x, y, rgb, alpha);
+                }
+            }
+        }
+    }
+
+    fn fill_rect_gradient(&mut self, origin: Point2, side: f32, fill: &NodeFill, opacity: f32) {
+        let alpha = opacity.clamp(0.0, 1.0);
+        if alpha <= 0.0 {
+            return;
+        }
+        let x0 = origin.x.floor() as i32;
+        let y0 = origin.y.floor() as i32;
+        let x1 = (origin.x + side).ceil() as i32;
+        let y1 = (origin.y + side).ceil() as i32;
+        for y in y0..y1 {
+            for x in x0..x1 {
+                let ratio =
+                    gradient_ratio(x as f32 + 0.5, y as f32 + 0.5, origin, side, fill.angle_deg);
+                let rgb = tint_to_rgb(fill.sample(ratio));
+                if alpha >= 1.0 {
+                    self.plot(x, y, rgb);
+                } else {
                     self.blend(x, y, rgb, alpha);
                 }
             }
@@ -235,6 +319,47 @@ impl Image {
             }
         }
     }
+
+    fn fill_polygon_gradient(
+        &mut self,
+        vertices: &[Point2],
+        origin: Point2,
+        side: f32,
+        fill: &NodeFill,
+        opacity: f32,
+    ) {
+        if vertices.len() < 3 {
+            return;
+        }
+        let mut x0 = f32::INFINITY;
+        let mut y0 = f32::INFINITY;
+        let mut x1 = f32::NEG_INFINITY;
+        let mut y1 = f32::NEG_INFINITY;
+        for point in vertices {
+            x0 = x0.min(point.x);
+            y0 = y0.min(point.y);
+            x1 = x1.max(point.x);
+            y1 = y1.max(point.y);
+        }
+        let alpha = opacity.clamp(0.0, 1.0);
+        if alpha <= 0.0 {
+            return;
+        }
+        for y in (y0.floor() as i32)..=(y1.ceil() as i32) {
+            for x in (x0.floor() as i32)..=(x1.ceil() as i32) {
+                let point = Point2::new(x as f32 + 0.5, y as f32 + 0.5);
+                if point_in_polygon(point, vertices) {
+                    let ratio = gradient_ratio(point.x, point.y, origin, side, fill.angle_deg);
+                    let rgb = tint_to_rgb(fill.sample(ratio));
+                    if alpha >= 1.0 {
+                        self.plot(x, y, rgb);
+                    } else {
+                        self.blend(x, y, rgb, alpha);
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -278,7 +403,7 @@ mod tests {
             id: NodeIndex::new(0),
             origin: Point2::new(1.0, 1.0),
             side: 4.0,
-            fill: 0xFF0000,
+            fill: crate::style::NodeFill::solid(0xFF0000),
             stroke: 0x000000,
             stroke_width: 0.0,
             opacity: 1.0,
@@ -308,5 +433,30 @@ mod tests {
         assert_eq!(&pixels[node_at..node_at + 3], &[255, 0, 0]);
         let edge_at = (9 * 10 + 9) * 3;
         assert_eq!(&pixels[edge_at..edge_at + 3], &[0, 255, 0]);
+    }
+
+    #[test]
+    fn gradient_rect_runs_from_start_to_end() {
+        use crate::shapes::NodeShape;
+        use crate::view::PaintedNode;
+
+        let nodes = vec![PaintedNode {
+            id: NodeIndex::new(0),
+            origin: Point2::new(0.0, 0.0),
+            side: 10.0,
+            fill: NodeFill::gradient(0x000000, 0xFFFFFF, 90.0),
+            stroke: 0x000000,
+            stroke_width: 0.0,
+            opacity: 1.0,
+            shape: NodeShape::Square,
+            points: vec![],
+        }];
+        let pixels = rasterize(10, 10, &nodes, &[], &[], [0, 0, 0]);
+        let left = (5 * 10) * 3;
+        let right = (5 * 10 + 9) * 3;
+        assert!(pixels[left] < 64);
+        assert!(pixels[right] > 192);
+        let middle = (5 * 10 + 5) * 3;
+        assert!((pixels[middle] as i16 - 128).abs() < 24);
     }
 }
