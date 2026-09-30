@@ -6,7 +6,7 @@
 //! the UI thread, then the view commits it through the generation guard, which
 //! drops write-backs from runs the user has already superseded.
 
-use cg_graph::NodeIndex;
+use cg_graph::{MinCut, NodeIndex};
 use cg_render::{EdgeStylePatch, NodeStylePatch, scale_for_rank, scc_fill};
 
 /// Ordered node pair identifying one highlighted edge.
@@ -55,24 +55,29 @@ pub fn path_outcome(path: &[NodeIndex], cost: f32, elapsed_ms: f64, label: &str)
     }
 }
 
-/// Colors one connected group per component, merging overflow groups.
-pub fn scc_outcome(components: &[Vec<NodeIndex>], elapsed_ms: f64) -> AlgoOutcome {
+/// Colors one group per cluster, merging overflow groups.
+pub fn groups_outcome(groups: &[Vec<NodeIndex>], label: &str, elapsed_ms: f64) -> AlgoOutcome {
     let mut nodes = Vec::new();
-    for (group, component) in components.iter().enumerate() {
+    for (group, members) in groups.iter().enumerate() {
         let patch = NodeStylePatch::tinted(scc_fill(group));
-        for node in component {
+        for node in members {
             nodes.push((*node, patch.clone()));
         }
     }
-    let largest = components.iter().map(Vec::len).max().unwrap_or(0);
+    let largest = groups.iter().map(Vec::len).max().unwrap_or(0);
     AlgoOutcome {
         nodes,
         edges: Vec::new(),
         summary: format!(
-            "components: {} groups, largest {largest} ({elapsed_ms:.1}ms)",
-            components.len()
+            "{label}: {} groups, largest {largest} ({elapsed_ms:.1}ms)",
+            groups.len()
         ),
     }
+}
+
+/// Colors one connected group per component, merging overflow groups.
+pub fn scc_outcome(components: &[Vec<NodeIndex>], elapsed_ms: f64) -> AlgoOutcome {
+    groups_outcome(components, "components", elapsed_ms)
 }
 
 /// Maps centrality scores to node sizes over the observed score range.
@@ -132,6 +137,65 @@ pub fn cut_outcome(
             "cuts: {} points, {} bridges ({elapsed_ms:.1}ms)",
             points.len(),
             bridges.len()
+        ),
+    }
+}
+
+/// Highlights an Eulerian trail, or reports the first blocking node.
+pub fn euler_outcome(
+    trail: &Result<Vec<NodeIndex>, NodeIndex>,
+    label: &str,
+    elapsed_ms: f64,
+) -> AlgoOutcome {
+    match trail {
+        Ok(path) => {
+            if path.is_empty() {
+                return AlgoOutcome {
+                    summary: format!("{label}: no trail ({elapsed_ms:.1}ms)"),
+                    ..AlgoOutcome::default()
+                };
+            }
+            let nodes = path
+                .iter()
+                .map(|node| (*node, NodeStylePatch::selected()))
+                .collect();
+            let mut edges = Vec::new();
+            for pair in path.windows(2) {
+                edges.push(((pair[0], pair[1]), EdgeStylePatch::highlighted()));
+            }
+            AlgoOutcome {
+                nodes,
+                edges,
+                summary: format!(
+                    "{label}: {} nodes, {} edges ({elapsed_ms:.1}ms)",
+                    path.len(),
+                    path.len().saturating_sub(1)
+                ),
+            }
+        }
+        Err(member) => AlgoOutcome {
+            summary: format!(
+                "{label}: no trail at node {} ({elapsed_ms:.1}ms)",
+                member.index()
+            ),
+            ..AlgoOutcome::default()
+        },
+    }
+}
+
+/// Highlights every edge crossing the global minimum cut.
+pub fn mincut_outcome(cut: &MinCut, elapsed_ms: f64) -> AlgoOutcome {
+    AlgoOutcome {
+        nodes: Vec::new(),
+        edges: cut
+            .edges
+            .iter()
+            .map(|(source, target)| ((*source, *target), EdgeStylePatch::highlighted()))
+            .collect(),
+        summary: format!(
+            "min cut: weight {:.2}, {} edges ({elapsed_ms:.1}ms)",
+            cut.weight,
+            cut.edges.len()
         ),
     }
 }
@@ -333,5 +397,39 @@ mod tests {
         assert_eq!(outcome.nodes.len(), 1);
         assert_eq!(outcome.edges.len(), 1);
         assert!(outcome.summary.contains("1 points"));
+    }
+
+    #[test]
+    fn euler_outcome_covers_trail_empty_and_blocked() {
+        let trail = vec![NodeIndex::new(0), NodeIndex::new(1), NodeIndex::new(2)];
+        let outcome = euler_outcome(&Ok(trail), "euler directed", 0.5);
+        assert_eq!(outcome.nodes.len(), 3);
+        assert_eq!(outcome.edges.len(), 2);
+        assert!(outcome.summary.contains("3 nodes"));
+        let empty = euler_outcome(&Ok(Vec::new()), "euler directed", 0.5);
+        assert!(empty.nodes.is_empty() && empty.summary.contains("no trail"));
+        let blocked = euler_outcome(&Err(NodeIndex::new(4)), "euler directed", 0.5);
+        assert!(blocked.nodes.is_empty() && blocked.summary.contains("node 4"));
+    }
+
+    #[test]
+    fn mincut_outcome_highlights_crossing_edges() {
+        let cut = MinCut {
+            weight: 2.5,
+            edges: vec![(NodeIndex::new(0), NodeIndex::new(1))],
+        };
+        let outcome = mincut_outcome(&cut, 0.5);
+        assert!(outcome.nodes.is_empty());
+        assert_eq!(outcome.edges.len(), 1);
+        assert!(outcome.summary.contains("2.50"));
+    }
+
+    #[test]
+    fn groups_outcome_labels_cluster_runs() {
+        let groups = vec![vec![NodeIndex::new(0)], vec![NodeIndex::new(1)]];
+        let outcome = groups_outcome(&groups, "markov", 0.5);
+        assert_eq!(outcome.nodes.len(), 2);
+        assert!(outcome.summary.contains("markov"));
+        assert!(outcome.summary.contains("2 groups"));
     }
 }

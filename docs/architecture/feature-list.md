@@ -46,7 +46,7 @@
 
 > petgraph 缺失、cytoscape 独有的部分“网络科学”算法（MCL、k-means、层次聚类、亲和传播、Euler 路径、Karger-Stein 最小割）**不在 v1 范围**，列为远期自研项（见 §6）。度/接近/介数中心性已按 P1 方案自研落地，不在远期表。
 >
-> **已桥接算法（`cg-graph/src/algo.rs`，共 18 个）**：`shortest_paths`/`shortest_path_cost`（Dijkstra）、`shortest_path`（A*）、`heuristic_shortest_path`（带位置启发式 A*）、`strongly_connected_components`（Tarjan）、`minimum_spanning_forest`（Kruskal）、`minimum_spanning_tree_single`（Prim）、`topological_order`、`immediate_dominators`、`rank_nodes`（PageRank）、`transitive_reduction`，另有 P1 新增 `all_pairs_shortest_paths`（自研 Floyd-Warshall）、`bellman_ford_paths` + `negative_cycle_path`、`articulation_points` + `bridges`（自研无向语义）、`breadth_first_order` + `depth_first_order`。中心性三件套在 `centrality.rs`（度/接近/介数，无权版本）。UI 已暴露其中 7 类（最短路/引导搜索/连通分量/PageRank/生成树/度中心性/割点桥）。
+> **已桥接算法（`cg-graph/src/algo.rs`，共 18 个）**：`shortest_paths`/`shortest_path_cost`（Dijkstra）、`shortest_path`（A*）、`heuristic_shortest_path`（带位置启发式 A*）、`strongly_connected_components`（Tarjan）、`minimum_spanning_forest`（Kruskal）、`minimum_spanning_tree_single`（Prim）、`topological_order`、`immediate_dominators`、`rank_nodes`（PageRank）、`transitive_reduction`，另有 P1 新增 `all_pairs_shortest_paths`（自研 Floyd-Warshall）、`bellman_ford_paths` + `negative_cycle_path`、`articulation_points` + `bridges`（自研无向语义）、`breadth_first_order` + `depth_first_order`。中心性三件套在 `centrality.rs`（度/接近/介数，无权版本）。UI 已暴露 21 个面板入口（最短路/引导搜索/连通分量/PageRank/生成树/度中心性/割点桥/全源/负权/遍历/拓扑与归约/接近/介数/单源生成树/支配集/有向欧拉路/无向欧拉路/最小割/层次聚类/马尔可夫聚类/k 均值）。欧拉路双语义在 `euler.rs`，全局最小割在 `min_cut.rs`，三组聚类在 `hierarchical.rs` + `markov.rs` + `kmeans.rs`。
 
 ---
 
@@ -115,7 +115,7 @@
 |---|---|---|---|---|
 | 5.1 | 窗口/画布容器 `GraphView` | `[gpui]` | P0 | ✅ 已落地（`main.rs` 的 `GraphWindow`） |
 | 5.2 | 布局切换 UI（下拉/命令面板） | `[自研]` | P1 | ✅ 已落地（`switch_layout` + 顶栏菜单） |
-| 5.3 | 算法执行面板（选算法→后台跑→结果高亮/面板展示） | `[自研]` | P2 | ✅ 已落地（15 类算法 + `algo_panel.rs` + 代次守卫，全部算法桥均可跑可看） |
+| 5.3 | 算法执行面板（选算法→后台跑→结果高亮/面板展示） | `[自研]` | P2 | ✅ 已落地（21 类算法 + `algo_panel.rs` + 代次守卫，全部算法桥与 P3 自研算法均可跑可看） |
 | 5.4 | 图导入/导出入口（文件对话框） | `[自研]` | P2 | ✅ 已落地：JSON 进出、DOT 进出、图片导出（PNG） |
 | 5.5 | 状态栏（节点/边计数、缩放比、布局耗时） | `[自研]` | P2 | ✅ 已落地（含 LOD/帧耗时/索引耗时） |
 
@@ -127,7 +127,7 @@
 
 | 功能 | 说明 |
 |---|---|
-| 聚类套件（MCL、k-means/k-medoids、层次聚类、亲和传播） | petgraph 无任何聚类，远期按需单点启动（P3-1） |
+| 聚类套件（MCL、k-means/k-medoids、层次聚类、亲和传播） | petgraph 无任何聚类，远期按需单点启动（P3-1）；已落地层次单连接阈值、马尔可夫确定性归属、确定性 k 均值（`cg-graph/src/hierarchical.rs` + `markov.rs` + `kmeans.rs`），亲和传播暂不纳入，见分阶段方案 |
 | Euler 路径（Hierholzer）、最小割 | ✅ 已落地：`cg-graph/src/euler.rs`（有向与无向双语义）+ `cg-graph/src/min_cut.rs`（Stoer-Wagner 确定性全局最小割），petgraph 0.8.3 无对应故自研（P3-2） |
 | 复合节点 | 跨三层改造，拍板前不动（P3-3） |
 | 扩展机制 | 需求出现时再设计，不预做框架（P3-4） |

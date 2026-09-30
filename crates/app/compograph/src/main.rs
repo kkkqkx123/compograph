@@ -12,10 +12,11 @@ use cg_graph::{
     ChangeFilter, GraphDocument, GraphStore, GraphView, NodeEntry, NodeIndex, Positions,
     all_pairs_shortest_paths, articulation_points, bellman_ford_paths, betweenness_centrality,
     breadth_first_order, bridges, closeness_centrality, degree_centrality, depth_first_order,
-    export_dot, heuristic_shortest_path, immediate_dominators, minimum_spanning_forest,
-    minimum_spanning_tree_single, negative_cycle_path, node_order, rank_nodes, remap_positions,
-    shortest_path, strongly_connected_components, subscribe_graph, topological_order,
-    transitive_reduction,
+    eulerian_path_directed, eulerian_path_undirected, export_dot, global_min_cut,
+    heuristic_shortest_path, hierarchical_clusters, immediate_dominators, kmeans_clusters,
+    markov_clusters, minimum_spanning_forest, minimum_spanning_tree_single, negative_cycle_path,
+    node_order, rank_nodes, remap_positions, shortest_path, strongly_connected_components,
+    subscribe_graph, topological_order, transitive_reduction,
 };
 use cg_interact::{
     BoxSelectState, DragState, NODE_HALF_EXTENT, SelectionState, drag_position, edges_in_rect,
@@ -52,6 +53,18 @@ const DISMISS_KEY: &str = "escape";
 
 /// PageRank refinement rounds per panel run.
 const PAGERANK_ITERATIONS: usize = 20;
+
+/// Markov inflation per panel run; larger values yield finer groups.
+const MARKOV_INFLATION: f32 = 2.0;
+
+/// Markov iteration budget per panel run.
+const MARKOV_ITERATIONS: usize = 20;
+
+/// K-means iteration budget per panel run.
+const KMEANS_ITERATIONS: usize = 20;
+
+/// Single-linkage distance threshold per panel run, in model units.
+const HIERARCHICAL_THRESHOLD: f32 = 120.0;
 
 /// Damping step of the panel controls, clamped to the unit interval.
 const DAMPING_STEP: f32 = 0.05;
@@ -720,6 +733,102 @@ impl GraphWindow {
             dominated.sort_unstable_by_key(|node| node.index());
             let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
             algo_panel::dominators_outcome(&dominated, start, elapsed_ms)
+        });
+    }
+
+    fn run_euler_directed(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.store.read(cx).graph().clone();
+        let generation = self.begin_algo_run();
+        self.spawn_algo_task(cx, generation, move || {
+            let started = Instant::now();
+            let trail = eulerian_path_directed(&snapshot);
+            let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+            algo_panel::euler_outcome(&trail, "euler directed", elapsed_ms)
+        });
+    }
+
+    fn run_euler_undirected(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.store.read(cx).graph().clone();
+        let generation = self.begin_algo_run();
+        self.spawn_algo_task(cx, generation, move || {
+            let started = Instant::now();
+            let trail = eulerian_path_undirected(&snapshot);
+            let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+            algo_panel::euler_outcome(&trail, "euler undirected", elapsed_ms)
+        });
+    }
+
+    fn run_min_cut(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.store.read(cx).graph().clone();
+        let generation = self.begin_algo_run();
+        self.spawn_algo_task(cx, generation, move || {
+            let started = Instant::now();
+            let cut = global_min_cut(&snapshot);
+            let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+            algo_panel::mincut_outcome(&cut, elapsed_ms)
+        });
+    }
+
+    fn run_hierarchical(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.store.read(cx).graph().clone();
+        let positions: Positions = self.layout.read(cx).positions().clone();
+        let generation = self.begin_algo_run();
+        self.spawn_algo_task(cx, generation, move || {
+            let started = Instant::now();
+            let elapsed_ms = || started.elapsed().as_secs_f64() * 1000.0;
+            match hierarchical_clusters(&snapshot, &positions, HIERARCHICAL_THRESHOLD) {
+                Ok(groups) => algo_panel::groups_outcome(&groups, "hierarchical", elapsed_ms()),
+                Err(member) => AlgoOutcome {
+                    summary: format!(
+                        "hierarchical: invalid input at node {} ({:.1}ms)",
+                        member.index(),
+                        elapsed_ms()
+                    ),
+                    ..AlgoOutcome::default()
+                },
+            }
+        });
+    }
+
+    fn run_markov(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.store.read(cx).graph().clone();
+        let generation = self.begin_algo_run();
+        self.spawn_algo_task(cx, generation, move || {
+            let started = Instant::now();
+            let elapsed_ms = || started.elapsed().as_secs_f64() * 1000.0;
+            match markov_clusters(&snapshot, MARKOV_INFLATION, MARKOV_ITERATIONS) {
+                Ok(groups) => algo_panel::groups_outcome(&groups, "markov", elapsed_ms()),
+                Err(member) => AlgoOutcome {
+                    summary: format!(
+                        "markov: invalid input at node {} ({:.1}ms)",
+                        member.index(),
+                        elapsed_ms()
+                    ),
+                    ..AlgoOutcome::default()
+                },
+            }
+        });
+    }
+
+    fn run_kmeans(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.store.read(cx).graph().clone();
+        let positions: Positions = self.layout.read(cx).positions().clone();
+        let classes = snapshot.node_count().clamp(1, 2);
+        let generation = self.begin_algo_run();
+        self.spawn_algo_task(cx, generation, move || {
+            let started = Instant::now();
+            let elapsed_ms = || started.elapsed().as_secs_f64() * 1000.0;
+            match kmeans_clusters(&snapshot, &positions, classes, KMEANS_ITERATIONS) {
+                Ok(groups) => algo_panel::groups_outcome(&groups, "k-means", elapsed_ms()),
+                Err(member) => AlgoOutcome {
+                    summary: format!(
+                        "k-means: invalid input at node {} ({:.1}ms)",
+                        member.index(),
+                        elapsed_ms()
+                    ),
+                    ..AlgoOutcome::default()
+                },
+            }
         });
     }
 
@@ -1791,6 +1900,66 @@ impl Render for GraphWindow {
                                     .on_click(cx.listener(
                                         |this, _event: &ClickEvent, _window, cx| {
                                             this.run_dominators(cx);
+                                        },
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .id(("algo-run", 15usize))
+                                    .child("euler directed")
+                                    .on_click(cx.listener(
+                                        |this, _event: &ClickEvent, _window, cx| {
+                                            this.run_euler_directed(cx);
+                                        },
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .id(("algo-run", 16usize))
+                                    .child("euler undirected")
+                                    .on_click(cx.listener(
+                                        |this, _event: &ClickEvent, _window, cx| {
+                                            this.run_euler_undirected(cx);
+                                        },
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .id(("algo-run", 17usize))
+                                    .child("min cut")
+                                    .on_click(cx.listener(
+                                        |this, _event: &ClickEvent, _window, cx| {
+                                            this.run_min_cut(cx);
+                                        },
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .id(("algo-run", 18usize))
+                                    .child("hierarchical")
+                                    .on_click(cx.listener(
+                                        |this, _event: &ClickEvent, _window, cx| {
+                                            this.run_hierarchical(cx);
+                                        },
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .id(("algo-run", 19usize))
+                                    .child("markov")
+                                    .on_click(cx.listener(
+                                        |this, _event: &ClickEvent, _window, cx| {
+                                            this.run_markov(cx);
+                                        },
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .id(("algo-run", 20usize))
+                                    .child("k-means")
+                                    .on_click(cx.listener(
+                                        |this, _event: &ClickEvent, _window, cx| {
+                                            this.run_kmeans(cx);
                                         },
                                     )),
                             )

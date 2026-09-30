@@ -5,7 +5,10 @@ pub mod binding;
 pub mod centrality;
 pub mod euler;
 pub mod events;
+pub mod hierarchical;
 pub mod io;
+pub mod kmeans;
+pub mod markov;
 pub mod min_cut;
 pub mod positions;
 pub mod store;
@@ -22,6 +25,9 @@ pub use binding::{ChangeFilter, subscribe_graph};
 pub use centrality::{betweenness_centrality, closeness_centrality, degree_centrality, node_order};
 pub use euler::{eulerian_path_directed, eulerian_path_undirected};
 pub use events::GraphChangeEvent;
+pub use hierarchical::hierarchical_clusters;
+pub use kmeans::kmeans_clusters;
+pub use markov::markov_clusters;
 pub use min_cut::{MinCut, global_min_cut};
 pub use io::{
     EdgeEntry, GraphDocument, IoError, NodeEntry, export_dot, import_dot, remap_positions,

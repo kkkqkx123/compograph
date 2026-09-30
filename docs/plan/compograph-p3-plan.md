@@ -1,9 +1,9 @@
 # compograph P3 设计决策
 
 > 版本：v1.0 · 日期：2026-09-30
-> 关联文档：[P2 与远期方案](./compograph-p2-plan.md) · [功能清单](../architecture/feature-list.md) · [借鉴设计说明](../architecture/borrowing-design.md) · [功能实测分析报告](./feature-analysis-report.md) · [AGENTS.md](../../AGENTS.md)
-> 事实基线：compograph 本次克隆；工具链 1.98.1；petgraph 0.8.3；zed-gpui `212afa4`；P2 六项已落地，P3-2（欧拉路与最小割）已落地，其余 P3 项未开工。
-> 落地状态：P3-2 已按本文契约落地（`cg-graph/src/euler.rs` + `cg-graph/src/min_cut.rs`）；聚类、动画链仍为纯远期，按需单点启动；复合节点与实例化后端拍板前不启动；扩展机制不预做框架。
+> 关联文档：[P2 与远期方案](./compograph-p2-plan.md) · [功能清单](../architecture/feature-list.md) · [借鉴设计说明](../architecture/borrowing-design.md) · [功能实测分析报告](./feature-analysis-report.md) · [聚类分阶段实施方案](./compograph-p3-clustering-plan.md) · [AGENTS.md](../../AGENTS.md)
+> 事实基线：compograph 本次克隆；工具链 1.98.1；petgraph 0.8.3；zed-gpui `212afa4`；P2 六项已落地，P3-2（欧拉路与最小割）已落地，聚类前三阶段已落地。
+> 落地状态：P3-2 已按本文契约落地（`cg-graph/src/euler.rs` + `cg-graph/src/min_cut.rs`）；聚类中层次、马尔可夫、k 均值已按分阶段方案落地（`cg-graph/src/hierarchical.rs` + `markov.rs` + `kmeans.rs`），亲和传播暂不纳入；动画链仍为纯远期；复合节点与实例化后端拍板前不启动；扩展机制不预做框架。
 
 ---
 
@@ -34,6 +34,8 @@ P2 之后，剩余事项均为低频或高成本。目标是为每一项定死�
 风险在于算法复杂度与参数敏感，处置是单点启动，一次只做被明确要求的一种，不一次铺开四种。
 
 四类与 cytoscape.js 实现的逐行核验及实测对照已完成（见 `docs/analysis/cytoscape-clustering-reference.md`）：单点启动顺序按该文第 7 节执行；该文第 5 节列出的五处契约冲突（活引用与纯数据、随机性、默认参数、输出形态、副作用）在自研时须自行修正，不照搬参考实现。
+
+分阶段落地按 [聚类分阶段实施方案](./compograph-p3-clustering-plan.md) 执行：层次聚类取单连接阈值模式，马尔可夫聚类取按列最大吸引子的一次性归属，k 均值取确定性初始中心并丢弃空组，三者均已落地；亲和传播因参考实现漏分且代价最高，版本一不纳入。
 
 ---
 
@@ -98,5 +100,5 @@ P2 之后，剩余事项均为低频或高成本。目标是为每一项定死�
 ## 9. 下一步
 
 1. 复合节点与实例化后端等待各自拍板，拍板前不分配实现工作。
-2. 聚类、欧拉路、最小割、动画链按需单点启动，一次一项，启动时按本文契约落地并回改功能清单；其中欧拉路与最小割已落地，聚类仅先行分析（见 `docs/analysis/clustering-analysis.md`），cytoscape.js 逐行核验与单点启动排序已补齐（见 `docs/analysis/cytoscape-clustering-reference.md`）。
+2. 聚类、欧拉路、最小割、动画链按需单点启动，一次一项，启动时按本文契约落地并回改功能清单；其中欧拉路与最小割已落地，聚类中层次、马尔可夫、k 均值已按分阶段方案落地（见 `./compograph-p3-clustering-plan.md`），亲和传播暂不纳入；聚类先行分析见 `docs/analysis/clustering-analysis.md`，cytoscape.js 逐行核验见 `docs/analysis/cytoscape-clustering-reference.md`。
 3. 扩展机制在第二个真实用例出现前不设计。

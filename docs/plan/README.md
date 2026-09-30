@@ -11,6 +11,8 @@
 | [compograph-p1-plan.md](./compograph-p1-plan.md) | **P1 阶段方案**：算法桥补齐、中心性三件套、Radial 布局、节点形状族、箭头形状族的实施设计与验证（0/5 未开工） |
 | [compograph-p2-plan.md](./compograph-p2-plan.md) | **P2 与远期方案**：边标签、界面接线、换行、曲线、样式扩展、PNG，以及聚类/复合节点/动画链/实例化后端的归属与拍板条件 |
 | [compograph-p3-plan.md](./compograph-p3-plan.md) | **P3 设计决策**：聚类、欧拉路、最小割、复合节点、扩展机制、动画链、实例化后端的是否做、前置条件、落点与验收口径 |
+| [compograph-p3-clustering-plan.md](./compograph-p3-clustering-plan.md) | **聚类分阶段实施方案**：基于 cytoscape 对照结论的层次、马尔可夫、k 均值三阶段落地与亲和传播暂缓结论、契约与验收 |
+| [compograph-p3-next-design.md](./compograph-p3-next-design.md) | **P3 后续任务细化设计**：欧拉路与最小割接线、聚类接线、布局动画链、规模评估的取舍、落点与验收 |
 
 ## 约定
 
