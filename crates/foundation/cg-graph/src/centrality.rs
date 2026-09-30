@@ -9,13 +9,16 @@
 //! All three read the store as undirected: traversal follows neighbours in
 //! either direction, matching the cut searches in [`crate::algo`]. Scores
 //! arrive as plain vectors parallel to [`node_order`], the same convention
-//! as [`crate::algo::rank_nodes`]. Isolated nodes score zero; empty graphs
+//! as [`rank_nodes`]. Isolated nodes score zero; empty graphs
 //! yield empty vectors.
 
 use std::collections::{HashMap, VecDeque};
 
-use petgraph::stable_graph::NodeIndex;
+use petgraph::Directed;
+use petgraph::algo::page_rank;
+use petgraph::stable_graph::{NodeIndex, StableGraph};
 
+use crate::store::{EdgeData, NodeData};
 use crate::view::GraphView;
 
 /// Node identifiers in the order the centrality vectors follow.
@@ -140,6 +143,17 @@ pub fn betweenness_centrality(graph: &dyn GraphView) -> Vec<f32> {
     }
     let scale = ((count - 1) * (count - 2)) as f64;
     raw.iter().map(|score| (score / scale) as f32).collect()
+}
+
+/// PageRank scores, parallel to the node order of the store graph.
+///
+/// Returns an empty vector for an empty graph. `damping` must lie in `[0, 1]`.
+pub fn rank_nodes(
+    graph: &StableGraph<NodeData, EdgeData, Directed>,
+    damping: f32,
+    iterations: usize,
+) -> Vec<f32> {
+    page_rank(graph, damping, iterations)
 }
 
 /// Undirected adjacency in ordinal space for the trio searches.
@@ -284,5 +298,32 @@ mod tests {
                 NodeIndex::new(4),
             ]
         );
+    }
+
+    fn rank_diamond() -> StableGraph<NodeData, EdgeData, Directed> {
+        let mut graph: StableGraph<NodeData, EdgeData, Directed> = StableGraph::default();
+        let a = graph.add_node(NodeData { label: "a".into() });
+        let b = graph.add_node(NodeData { label: "b".into() });
+        let c = graph.add_node(NodeData { label: "c".into() });
+        let d = graph.add_node(NodeData { label: "d".into() });
+        graph.add_edge(a, b, EdgeData { weight: 1.0 });
+        graph.add_edge(b, d, EdgeData { weight: 2.0 });
+        graph.add_edge(a, c, EdgeData { weight: 4.0 });
+        graph.add_edge(c, d, EdgeData { weight: 1.0 });
+        graph
+    }
+
+    #[test]
+    fn rank_nodes_returns_one_score_per_node() {
+        let graph = rank_diamond();
+        let ranks = rank_nodes(&graph, 0.85, 20);
+        assert_eq!(ranks.len(), graph.node_count());
+        assert!(ranks.iter().all(|rank| rank.is_finite() && *rank >= 0.0));
+    }
+
+    #[test]
+    fn ranking_an_empty_graph_yields_no_scores() {
+        let graph: StableGraph<NodeData, EdgeData, Directed> = StableGraph::default();
+        assert!(rank_nodes(&graph, 0.85, 10).is_empty());
     }
 }
