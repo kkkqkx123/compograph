@@ -13,6 +13,8 @@ pub mod radial;
 pub mod random;
 pub mod reaction;
 pub mod registry;
+pub mod ring;
+pub mod static_view;
 
 pub use breadthfirst::{BfsDirection, BreadthFirstLayout, BreadthFirstOptions};
 pub use circle::{CircleLayout, CircleOptions};

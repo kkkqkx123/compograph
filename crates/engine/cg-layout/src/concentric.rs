@@ -12,6 +12,7 @@ use cg_graph::{FixedNodes, GraphView, NodeIndex, Positions};
 use cg_types::Point2;
 
 use crate::engine::LayoutEngine;
+use crate::ring::{level_width, ring_radii, ring_step, scores_with_table, to_levels};
 
 /// Tuning parameters of the concentric arrangement.
 #[derive(Clone, Debug)]
@@ -110,7 +111,13 @@ impl LayoutEngine for ConcentricLayout {
             &values,
             level_width(&ids, &values, self.options.level_width),
         );
-        let radii = ring_radii(&levels, &self.options);
+        let radii = ring_radii(
+            &levels,
+            self.options.sweep,
+            self.options.node_size + self.options.min_node_spacing,
+            self.options.avoid_overlap,
+            self.options.equidistant,
+        );
         let direction = if self.options.clockwise { 1.0 } else { -1.0 };
         for (level, radius) in levels.iter().zip(radii.iter()) {
             let step = ring_step(self.options.sweep, level.len());
@@ -145,102 +152,10 @@ fn node_values(
     ids: &[NodeIndex],
     scoring: &ConcentricScoring,
 ) -> HashMap<NodeIndex, f32> {
-    let mut values = HashMap::new();
-    for node in ids {
-        let score = match scoring {
-            ConcentricScoring::Degree => graph.degree(*node) as f32,
-            ConcentricScoring::Scores(table) => table
-                .get(node)
-                .copied()
-                .unwrap_or_else(|| graph.degree(*node) as f32),
-        };
-        values.insert(*node, score);
+    match scoring {
+        ConcentricScoring::Degree => scores_with_table(graph, ids, None),
+        ConcentricScoring::Scores(table) => scores_with_table(graph, ids, Some(table)),
     }
-    values
-}
-
-/// Width of one ring: explicit value wins, else a quarter of the largest.
-fn level_width(ids: &[NodeIndex], values: &HashMap<NodeIndex, f32>, explicit: Option<f32>) -> f32 {
-    if let Some(width) = explicit {
-        return width.max(0.0);
-    }
-    let largest = ids
-        .iter()
-        .map(|node| values.get(node).copied().unwrap_or(0.0))
-        .fold(0.0f32, f32::max);
-    largest / 4.0
-}
-
-/// Rings of nodes from the highest values inward, in index order within a ring.
-fn to_levels(
-    ids: &[NodeIndex],
-    values: &HashMap<NodeIndex, f32>,
-    level_width: f32,
-) -> Vec<Vec<NodeIndex>> {
-    let mut ordered: Vec<NodeIndex> = ids.to_vec();
-    ordered.sort_by(|a, b| {
-        values[b]
-            .partial_cmp(&values[a])
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| a.index().cmp(&b.index()))
-    });
-    let mut levels: Vec<Vec<NodeIndex>> = vec![Vec::new()];
-    for node in ordered {
-        let starts_new_ring = levels
-            .last()
-            .and_then(|level| level.first())
-            .map(|first| (values[first] - values[&node]).abs() >= level_width)
-            .unwrap_or(false);
-        if starts_new_ring {
-            levels.push(Vec::new());
-        }
-        if let Some(level) = levels.last_mut() {
-            level.push(node);
-        }
-    }
-    for level in levels.iter_mut() {
-        level.sort_unstable_by_key(|node| node.index());
-    }
-    levels
-}
-
-/// Angular step between adjacent members of a ring.
-fn ring_step(sweep: Option<f32>, members: usize) -> f32 {
-    let sweep = sweep
-        .unwrap_or(2.0 * std::f32::consts::PI - 2.0 * std::f32::consts::PI / members.max(1) as f32);
-    sweep / members.saturating_sub(1).max(1) as f32
-}
-
-/// Radius per ring, accumulating the minimum gap outward.
-fn ring_radii(levels: &[Vec<NodeIndex>], options: &ConcentricOptions) -> Vec<f32> {
-    let gap = options.node_size + options.min_node_spacing;
-    let mut radii = Vec::with_capacity(levels.len());
-    let mut ring = 0.0f32;
-    for level in levels {
-        let step = ring_step(options.sweep, level.len());
-        if level.len() > 1 && options.avoid_overlap {
-            let chord = ((step.cos() - 1.0).powi(2) + step.sin().powi(2)).sqrt();
-            if chord > f32::EPSILON {
-                ring = ring.max(gap / chord);
-            }
-        }
-        radii.push(ring);
-        ring += gap;
-    }
-    if options.equidistant && radii.len() > 1 {
-        let widest = radii
-            .windows(2)
-            .map(|pair| pair[1] - pair[0])
-            .fold(0.0f32, f32::max);
-        let mut even = Vec::with_capacity(radii.len());
-        even.push(radii[0]);
-        for _ in 1..radii.len() {
-            let last = even.last().copied().unwrap_or(0.0);
-            even.push(last + widest);
-        }
-        return even;
-    }
-    radii
 }
 
 #[cfg(test)]
