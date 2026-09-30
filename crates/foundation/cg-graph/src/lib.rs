@@ -28,14 +28,14 @@ pub use centrality::{
 pub use euler::{eulerian_path_directed, eulerian_path_undirected};
 pub use events::GraphChangeEvent;
 pub use hierarchical::hierarchical_clusters;
-pub use kmeans::kmeans_clusters;
-pub use markov::markov_clusters;
-pub use min_cut::{MinCut, global_min_cut};
 pub use io::{
     EdgeEntry, GraphDocument, IoError, NodeEntry, export_dot, import_dot, remap_positions,
 };
 #[cfg(feature = "json-io")]
 pub use io::{export_json, import_json};
+pub use kmeans::kmeans_clusters;
+pub use markov::markov_clusters;
+pub use min_cut::{MinCut, global_min_cut};
 pub use positions::{FixedNodes, Positions};
 pub use store::{EdgeData, GraphStore, NodeData};
 pub use view::{GraphView, MockGraph};

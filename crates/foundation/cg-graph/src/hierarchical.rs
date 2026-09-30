@@ -123,7 +123,8 @@ fn sorted_groups(mut groups: Vec<Vec<NodeIndex>>) -> Vec<Vec<NodeIndex>> {
         group.sort_unstable_by_key(|node| node.index());
     }
     groups.retain(|group| !group.is_empty());
-    groups.sort_unstable_by_key(|group| group.first().map(|node| node.index()).unwrap_or(usize::MAX));
+    groups
+        .sort_unstable_by_key(|group| group.first().map(|node| node.index()).unwrap_or(usize::MAX));
     groups
 }
 
@@ -172,8 +173,7 @@ mod tests {
         let mut sets: Vec<Vec<usize>> = groups
             .iter()
             .map(|group| {
-                let mut members: Vec<usize> =
-                    group.iter().map(|node| node.index()).collect();
+                let mut members: Vec<usize> = group.iter().map(|node| node.index()).collect();
                 members.sort_unstable();
                 members
             })
@@ -225,12 +225,9 @@ mod tests {
         let mut graph: Graph = StableGraph::default();
         let a = graph.add_node(labelled("a"));
         let b = graph.add_node(labelled("b"));
-        let positions: Positions = [
-            (a, Point2::new(0.0, 0.0)),
-            (b, Point2::new(100.0, 0.0)),
-        ]
-        .into_iter()
-        .collect();
+        let positions: Positions = [(a, Point2::new(0.0, 0.0)), (b, Point2::new(100.0, 0.0))]
+            .into_iter()
+            .collect();
         let groups = hierarchical_clusters(&graph, &positions, 10.0).expect("valid input");
         assert_eq!(groups.len(), 2);
         covers_each_node_once(&graph, &groups);
@@ -260,8 +257,7 @@ mod tests {
         let mut sparse = positions;
         let missing = graph.node_indices().next().expect("a node exists");
         sparse.remove(&missing);
-        let absent =
-            hierarchical_clusters(&graph, &sparse, 50.0).expect_err("missing position");
+        let absent = hierarchical_clusters(&graph, &sparse, 50.0).expect_err("missing position");
         assert_eq!(absent, missing);
     }
 }

@@ -159,10 +159,7 @@ fn converged(previous: &[f32], next: &[f32]) -> bool {
 ///
 /// The node order lookup keeps group order stable even when attractor rows
 /// are sparse. Empty groups are dropped.
-fn sorted_groups(
-    mut groups: Vec<Vec<NodeIndex>>,
-    order: &[NodeIndex],
-) -> Vec<Vec<NodeIndex>> {
+fn sorted_groups(mut groups: Vec<Vec<NodeIndex>>, order: &[NodeIndex]) -> Vec<Vec<NodeIndex>> {
     let rank: HashMap<NodeIndex, usize> = order
         .iter()
         .enumerate()

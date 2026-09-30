@@ -108,15 +108,17 @@ pub fn global_min_cut(graph: &Graph) -> MinCut {
                 }
                 let take = match pick {
                     None => true,
-                    Some(current) => reached[ordinal]
-                        .partial_cmp(&reached[current])
-                        .unwrap_or(Ordering::Equal)
-                        == Ordering::Greater
-                        || (reached[ordinal]
+                    Some(current) => {
+                        reached[ordinal]
                             .partial_cmp(&reached[current])
                             .unwrap_or(Ordering::Equal)
-                            == Ordering::Equal
-                            && ordinal < current),
+                            == Ordering::Greater
+                            || (reached[ordinal]
+                                .partial_cmp(&reached[current])
+                                .unwrap_or(Ordering::Equal)
+                                == Ordering::Equal
+                                && ordinal < current)
+                    }
                 };
                 if take {
                     pick = Some(ordinal);

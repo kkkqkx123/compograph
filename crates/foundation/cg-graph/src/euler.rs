@@ -194,10 +194,7 @@ pub fn eulerian_path_undirected(graph: &Graph) -> Result<Vec<NodeIndex>, NodeInd
     let mut circuit = Vec::new();
     while let Some(node) = stack.last().copied() {
         let mut next: Option<NodeIndex> = None;
-        while let Some((neighbour, ordinal)) = adjacent
-            .get_mut(&node)
-            .and_then(|list| list.pop())
-        {
+        while let Some((neighbour, ordinal)) = adjacent.get_mut(&node).and_then(|list| list.pop()) {
             if used.insert(ordinal) {
                 next = Some(neighbour);
                 break;
@@ -287,9 +284,9 @@ mod tests {
             let slot = if directed {
                 remaining.iter().position(|(s, t)| *s == from && *t == to)
             } else {
-                remaining.iter().position(|(s, t)| {
-                    (*s == from && *t == to) || (*s == to && *t == from)
-                })
+                remaining
+                    .iter()
+                    .position(|(s, t)| (*s == from && *t == to) || (*s == to && *t == from))
             };
             match slot {
                 Some(index) => {
@@ -368,16 +365,8 @@ mod tests {
     #[test]
     fn empty_and_isolated_graphs_yield_empty_paths() {
         let empty: Graph = StableGraph::default();
-        assert!(
-            eulerian_path_directed(&empty)
-                .expect("empty")
-                .is_empty()
-        );
-        assert!(
-            eulerian_path_undirected(&empty)
-                .expect("empty")
-                .is_empty()
-        );
+        assert!(eulerian_path_directed(&empty).expect("empty").is_empty());
+        assert!(eulerian_path_undirected(&empty).expect("empty").is_empty());
         let mut lonely: Graph = StableGraph::default();
         lonely.add_node(labelled("lonely"));
         assert!(

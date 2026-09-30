@@ -82,8 +82,8 @@ pub(crate) fn to_levels(
 
 /// Angular step between adjacent members of a ring.
 pub(crate) fn ring_step(sweep: Option<f32>, members: usize) -> f32 {
-    let sweep =
-        sweep.unwrap_or(2.0 * std::f32::consts::PI - 2.0 * std::f32::consts::PI / members.max(1) as f32);
+    let sweep = sweep
+        .unwrap_or(2.0 * std::f32::consts::PI - 2.0 * std::f32::consts::PI / members.max(1) as f32);
     sweep / members.saturating_sub(1).max(1) as f32
 }
 

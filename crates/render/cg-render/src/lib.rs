@@ -17,8 +17,8 @@ pub mod view;
 pub use arrows::ArrowKind;
 pub use camera::{Camera, MAX_ZOOM, MIN_ZOOM};
 pub use export::{
-    ExportRequest, ExportScope, ExportSnapshot, encode_png, export_pixels,
-    graph_bounds, rasterize, scale_arrows, scale_edges, scale_nodes, solid_background,
+    ExportRequest, ExportScope, ExportSnapshot, encode_png, export_pixels, graph_bounds, rasterize,
+    scale_arrows, scale_edges, scale_nodes, solid_background,
 };
 pub use lod::{DetailLevel, LodParams};
 pub use metrics::{FrameMetrics, FrameSample, PlanCounts, measure_ms};

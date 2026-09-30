@@ -40,8 +40,7 @@ mod tests {
         StableGraph<NodeData, EdgeData, petgraph::Directed>,
         Positions,
     ) {
-        let mut graph: StableGraph<NodeData, EdgeData, petgraph::Directed> =
-            StableGraph::default();
+        let mut graph: StableGraph<NodeData, EdgeData, petgraph::Directed> = StableGraph::default();
         let a = graph.add_node(NodeData { label: "a".into() });
         let b = graph.add_node(NodeData { label: "b".into() });
         graph.add_edge(a, b, EdgeData { weight: 2.5 });

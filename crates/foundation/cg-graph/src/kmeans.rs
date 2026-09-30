@@ -108,7 +108,8 @@ fn sorted_groups(mut groups: Vec<Vec<NodeIndex>>) -> Vec<Vec<NodeIndex>> {
         group.sort_unstable_by_key(|node| node.index());
     }
     groups.retain(|group| !group.is_empty());
-    groups.sort_unstable_by_key(|group| group.first().map(|node| node.index()).unwrap_or(usize::MAX));
+    groups
+        .sort_unstable_by_key(|group| group.first().map(|node| node.index()).unwrap_or(usize::MAX));
     groups
 }
 
