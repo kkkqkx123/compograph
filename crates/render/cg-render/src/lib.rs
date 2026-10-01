@@ -1,13 +1,24 @@
 //! Graph canvas rendering on top of gpui paint primitives.
 
+pub mod appearance;
 pub mod arrows;
+pub mod bypass;
 pub mod camera;
 pub mod compound;
+pub mod edge_rules;
 pub mod export;
+pub mod fill;
 pub mod glyph;
 pub mod image;
+pub mod label_envelope;
+pub mod label_plan;
+pub mod label_style;
+pub mod label_wrap;
 pub mod lod;
+pub mod mapping;
 pub mod metrics;
+pub mod node_rules;
+pub mod palette;
 pub mod png;
 pub mod raster;
 pub mod refresh;

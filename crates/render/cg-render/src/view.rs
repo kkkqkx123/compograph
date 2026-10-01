@@ -14,6 +14,8 @@ pub mod bundles;
 pub mod canvas;
 pub mod culling;
 pub mod edges;
+#[cfg(test)]
+mod edge_tests;
 pub mod heads;
 pub mod hits;
 pub mod nodes;

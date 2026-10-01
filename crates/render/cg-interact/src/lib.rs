@@ -1,8 +1,14 @@
 //! Pointer interaction state for the graph canvas.
 
+pub mod compound_hit;
+pub mod edge_select;
 pub mod edit;
 pub mod handlers;
+pub mod hits;
 pub mod input;
+pub mod neighborhood;
+pub mod node_select;
+pub mod policy;
 
 pub use edit::{ConnectDraft, EditAction, EditTool};
 
