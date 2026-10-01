@@ -107,9 +107,9 @@ fn wrap_label_line(line: &str, out: &mut Vec<String>) {
 /// One label scheduled for painting, in screen pixels.
 ///
 /// `origin` is the label's horizontal center and its top edge; the renderer
-/// resolves the baseline from the line height. `rotation` is the label angle
-/// in radians with zero meaning horizontal; the canvas currently paints text
-/// horizontally and the angle feeds the bounding envelope and selection.
+/// resolves the baseline from the line height. `rotation` stays zero because
+/// the canvas paints horizontally; selection and bounds use the same
+/// horizontal envelope so hits match the visible text.
 /// `background` draws a light plate behind the text; the default keeps the
 /// historical bare text look.
 #[derive(Clone, Debug, PartialEq)]
@@ -135,8 +135,9 @@ pub fn draws_labels(level: DetailLevel) -> bool {
 ///
 /// `origin` follows the node label convention: the label's horizontal center
 /// and its top edge. The text shows the edge weight, the only edge payload
-/// the store carries, so labels never need a schema change. `rotation` tracks
-/// the edge end tangent with readability folding; see [`edge_label_angle`].
+/// the store carries, so labels never need a schema change. `rotation` stays
+/// zero to match the horizontal canvas paint; [`edge_label_angle`] remains as
+/// a geometry helper for a future rotated paint path.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PaintedEdgeLabel {
     pub source: NodeIndex,
@@ -185,7 +186,8 @@ pub fn edge_label_anchor(edge: &PaintedEdge) -> Point2 {
 /// The tangent matches the arrow orientation rule: self loops use the return
 /// tangent, curves use their control point, polylines use their last bend.
 /// Angles fold into the readable half circle so text never renders upside
-/// down. Horizontal edges report zero.
+/// down. Horizontal edges report zero. The paint plan keeps zero until the
+/// canvas can draw rotated text; this helper is reserved for that path.
 pub fn edge_label_angle(edge: &PaintedEdge) -> f32 {
     let reference = edge
         .loop_ctrls
@@ -233,7 +235,8 @@ pub fn estimate_label_block(text: &str, size: f32) -> Vec2 {
 /// The unrotated block centers horizontally on the origin and extends downward
 /// from its top edge; its corners rotate around the origin before the
 /// background padding expands the box. Unrotated bare labels return the tight
-/// block.
+/// block. Callers pass zero rotation to match the horizontal canvas paint;
+/// the rotated branch is reserved for a future rotated paint path.
 pub fn label_envelope(
     origin: Point2,
     text: &str,
@@ -314,7 +317,7 @@ pub fn paint_edge_labels_for(
             origin,
             size,
             color: DEFAULT_EDGE_LABEL_COLOR,
-            rotation: edge_label_angle(edge),
+            rotation: 0.0,
             background: LabelBackground::None,
         });
     }
@@ -594,14 +597,16 @@ mod tests {
         let backwards = edge(Point2::new(100.0, 0.0), Point2::new(0.0, 0.0));
         assert!((edge_label_angle(&backwards)).abs() < 1e-4);
         let labels = paint_edge_labels_for(
-            &[horizontal],
+            &[horizontal, vertical],
             DetailLevel::Full,
             |_, _| Some("1".to_string()),
             |_, _| 11.0,
         );
-        assert_eq!(labels.len(), 1);
-        assert!((labels[0].rotation).abs() < 1e-4);
-        assert_eq!(labels[0].background, LabelBackground::None);
+        assert_eq!(labels.len(), 2);
+        for label in &labels {
+            assert!((label.rotation).abs() < 1e-4);
+            assert_eq!(label.background, LabelBackground::None);
+        }
     }
 
     #[test]
@@ -612,23 +617,10 @@ mod tests {
         assert!(backed.size.x > plain.size.x);
         assert!(backed.size.y > plain.size.y);
         assert!((backed.size.x - plain.size.x - LABEL_BACKGROUND_PAD * 2.0).abs() < 1e-3);
-        let rotated = label_envelope(
-            origin,
-            "hello",
-            12.0,
-            std::f32::consts::FRAC_PI_2,
-            LabelBackground::None,
-        );
-        assert!(rotated.size.x <= plain.size.x + 1e-3);
-        assert!(rotated.size.y >= plain.size.x - 1e-3);
-        let rotated_backed = label_envelope(
-            origin,
-            "hello",
-            12.0,
-            std::f32::consts::FRAC_PI_2,
-            LabelBackground::RoundRect,
-        );
-        assert!(rotated_backed.size.x >= rotated.size.x);
-        assert!(rotated_backed.size.y >= rotated.size.y);
+        let block = estimate_label_block("hello", 12.0);
+        assert!((plain.size.x - block.x).abs() < 1e-3);
+        assert!((plain.size.y - block.y).abs() < 1e-3);
+        assert!((plain.origin.x - (origin.x - block.x / 2.0)).abs() < 1e-3);
+        assert!((plain.origin.y - origin.y).abs() < 1e-3);
     }
 }

@@ -118,7 +118,7 @@ impl ElementSelector {
                 return false;
             }
         }
-        if store.graph().node_weight(node).is_none() {
+        if !store.contains_node(node) {
             return false;
         }
         let held = store.node_classes(node);
@@ -155,11 +155,7 @@ impl ElementSelector {
                 return false;
             }
         }
-        let edge = store
-            .graph()
-            .edge_indices()
-            .find(|edge| store.edge_endpoints(*edge) == Some((source, target)));
-        let Some(found) = edge else {
+        let Some(found) = store.find_edge(source, target) else {
             return false;
         };
         let held = store.edge_classes(found);

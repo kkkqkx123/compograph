@@ -67,17 +67,26 @@ const MARKOV_ITERATIONS: usize = 20;
 /// K-means iteration budget per panel run.
 const KMEANS_ITERATIONS: usize = 20;
 
-/// Single-linkage distance threshold per panel run, in model units.
-const HIERARCHICAL_THRESHOLD: f32 = 120.0;
-
 /// Affinity propagation damping per panel run.
 const AFFINITY_DAMPING: f32 = 0.5;
 
 /// Affinity propagation iteration budget per panel run.
 const AFFINITY_ITERATIONS: usize = 100;
 
-/// Metric clustering threshold per panel run, in model units.
-const METRIC_THRESHOLD: f32 = 120.0;
+/// Default cluster count for k-means panel runs.
+const CLUSTER_K_DEFAULT: usize = 2;
+
+/// Largest cluster count selectable from the panel.
+const CLUSTER_K_MAX: usize = 10;
+
+/// Default distance threshold for hierarchical and metric panel runs.
+const CLUSTER_THRESHOLD_DEFAULT: f32 = 120.0;
+
+/// Step of the panel threshold controls, in model units.
+const CLUSTER_THRESHOLD_STEP: f32 = 20.0;
+
+/// Largest distance threshold selectable from the panel.
+const CLUSTER_THRESHOLD_MAX: f32 = 1000.0;
 
 /// Damping step of the panel controls, clamped to the unit interval.
 const DAMPING_STEP: f32 = 0.05;
@@ -141,6 +150,9 @@ struct GraphWindow {
     algo_start: usize,
     algo_goal: usize,
     damping: f32,
+    cluster_k: usize,
+    cluster_metric: ClusterMetric,
+    cluster_threshold: f32,
     io_message: String,
     lod: DetailLevel,
     lod_params: LodParams,
@@ -239,6 +251,9 @@ impl GraphWindow {
             algo_start: 0,
             algo_goal: 1,
             damping: 0.85,
+            cluster_k: CLUSTER_K_DEFAULT,
+            cluster_metric: ClusterMetric::Euclidean,
+            cluster_threshold: CLUSTER_THRESHOLD_DEFAULT,
             io_message: String::new(),
             lod: DetailLevel::Full,
             lod_params: LodParams::default(),
@@ -551,11 +566,7 @@ impl GraphWindow {
         std::collections::HashMap<String, cg_graph::DataValue>,
         std::collections::BTreeSet<String>,
     ) {
-        let found = store
-            .graph()
-            .edge_indices()
-            .find(|edge| store.edge_endpoints(*edge) == Some((source, target)));
-        match found {
+        match store.find_edge(source, target) {
             Some(edge) => (store.edge_attrs(edge), store.edge_classes(edge)),
             None => (
                 std::collections::HashMap::new(),
@@ -972,11 +983,12 @@ impl GraphWindow {
     fn run_hierarchical(&mut self, cx: &mut Context<Self>) {
         let snapshot = self.store.read(cx).graph().clone();
         let positions: Positions = self.layout.read(cx).positions().clone();
+        let threshold = self.cluster_threshold;
         let generation = self.begin_algo_run();
         self.spawn_algo_task(cx, generation, move || {
             let started = Instant::now();
             let elapsed_ms = || started.elapsed().as_secs_f64() * 1000.0;
-            match hierarchical_clusters(&snapshot, &positions, HIERARCHICAL_THRESHOLD) {
+            match hierarchical_clusters(&snapshot, &positions, threshold) {
                 Ok(groups) => algo_panel::groups_outcome(&groups, "hierarchical", elapsed_ms()),
                 Err(member) => AlgoOutcome {
                     summary: format!(
@@ -1013,7 +1025,7 @@ impl GraphWindow {
     fn run_kmeans(&mut self, cx: &mut Context<Self>) {
         let snapshot = self.store.read(cx).graph().clone();
         let positions: Positions = self.layout.read(cx).positions().clone();
-        let classes = snapshot.node_count().clamp(1, 2);
+        let classes = self.cluster_k;
         let generation = self.begin_algo_run();
         self.spawn_algo_task(cx, generation, move || {
             let started = Instant::now();
@@ -1056,16 +1068,13 @@ impl GraphWindow {
     fn run_metric_clusters(&mut self, cx: &mut Context<Self>) {
         let snapshot = self.store.read(cx).graph().clone();
         let positions: Positions = self.layout.read(cx).positions().clone();
+        let metric = self.cluster_metric;
+        let threshold = self.cluster_threshold;
         let generation = self.begin_algo_run();
         self.spawn_algo_task(cx, generation, move || {
             let started = Instant::now();
             let elapsed_ms = || started.elapsed().as_secs_f64() * 1000.0;
-            match metric_clusters(
-                &snapshot,
-                &positions,
-                ClusterMetric::Euclidean,
-                METRIC_THRESHOLD,
-            ) {
+            match metric_clusters(&snapshot, &positions, metric, threshold) {
                 Ok(groups) => algo_panel::groups_outcome(&groups, "metric", elapsed_ms()),
                 Err(member) => AlgoOutcome {
                     summary: format!(
@@ -1547,6 +1556,26 @@ impl GraphWindow {
         cx.notify();
     }
 
+    fn shift_cluster_k(&mut self, delta: i32, cx: &mut Context<Self>) {
+        let next = (self.cluster_k as i32 + delta).clamp(1, CLUSTER_K_MAX as i32);
+        self.cluster_k = next as usize;
+        cx.notify();
+    }
+
+    fn shift_cluster_threshold(&mut self, delta: f32, cx: &mut Context<Self>) {
+        self.cluster_threshold = (self.cluster_threshold + delta).clamp(0.0, CLUSTER_THRESHOLD_MAX);
+        cx.notify();
+    }
+
+    fn cycle_cluster_metric(&mut self, cx: &mut Context<Self>) {
+        self.cluster_metric = match self.cluster_metric {
+            ClusterMetric::Euclidean => ClusterMetric::Manhattan,
+            ClusterMetric::Manhattan => ClusterMetric::Chebyshev,
+            ClusterMetric::Chebyshev => ClusterMetric::Euclidean,
+        };
+        cx.notify();
+    }
+
     fn clear_highlights(&mut self, cx: &mut Context<Self>) {
         self.clear_algo_highlights();
         self.algo_summary = "highlights cleared".to_string();
@@ -1819,6 +1848,14 @@ impl Render for GraphWindow {
         let start_label = self.endpoint_label(self.algo_start, cx);
         let goal_label = self.endpoint_label(self.algo_goal, cx);
         let damping = self.damping;
+        let cluster_k = self.cluster_k;
+        let cluster_metric = self.cluster_metric;
+        let cluster_threshold = self.cluster_threshold;
+        let cluster_metric_label = match cluster_metric {
+            ClusterMetric::Euclidean => "euclidean",
+            ClusterMetric::Manhattan => "manhattan",
+            ClusterMetric::Chebyshev => "chebyshev",
+        };
         let algo_busy = self.algo_busy;
         let algo_summary = self.algo_summary.clone();
         let io_message = self.io_message.clone();
@@ -2592,6 +2629,78 @@ impl Render for GraphWindow {
                                             .on_click(cx.listener(
                                                 |this, _event: &ClickEvent, _window, cx| {
                                                     this.shift_damping(DAMPING_STEP, cx);
+                                                },
+                                            )),
+                                    ),
+                            )
+                            .child(format!("clusters: k={cluster_k}"))
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .id("algo-k-down")
+                                            .child("-")
+                                            .on_click(cx.listener(
+                                                |this, _event: &ClickEvent, _window, cx| {
+                                                    this.shift_cluster_k(-1, cx);
+                                                },
+                                            )),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("algo-k-up")
+                                            .child("+")
+                                            .on_click(cx.listener(
+                                                |this, _event: &ClickEvent, _window, cx| {
+                                                    this.shift_cluster_k(1, cx);
+                                                },
+                                            )),
+                                    ),
+                            )
+                            .child(format!(
+                                "metric: {cluster_metric_label} threshold: {cluster_threshold:.0}"
+                            ))
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .id("algo-metric-cycle")
+                                            .child("cycle metric")
+                                            .on_click(cx.listener(
+                                                |this, _event: &ClickEvent, _window, cx| {
+                                                    this.cycle_cluster_metric(cx);
+                                                },
+                                            )),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("algo-threshold-down")
+                                            .child("-")
+                                            .on_click(cx.listener(
+                                                |this, _event: &ClickEvent, _window, cx| {
+                                                    this.shift_cluster_threshold(
+                                                        -CLUSTER_THRESHOLD_STEP,
+                                                        cx,
+                                                    );
+                                                },
+                                            )),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("algo-threshold-up")
+                                            .child("+")
+                                            .on_click(cx.listener(
+                                                |this, _event: &ClickEvent, _window, cx| {
+                                                    this.shift_cluster_threshold(
+                                                        CLUSTER_THRESHOLD_STEP,
+                                                        cx,
+                                                    );
                                                 },
                                             )),
                                     ),

@@ -272,6 +272,23 @@ mod tests {
         let left = group_bounds(&groups[0], &positions, 12.0).expect("left bounds exist");
         let right = group_bounds(&groups[1], &positions, 12.0).expect("right bounds exist");
         assert!(left.origin.x + left.size.x + GROUP_GAP - 1.0 <= right.origin.x);
+        assert!(!left.intersects(right));
+    }
+
+    #[test]
+    fn separated_groups_stay_disjoint_with_vertical_overlap() {
+        let first = vec![NodeIndex::new(0), NodeIndex::new(1)];
+        let second = vec![NodeIndex::new(2), NodeIndex::new(3)];
+        let groups = vec![first, second];
+        let mut positions = Positions::new();
+        positions.insert(NodeIndex::new(0), Point2::new(0.0, 0.0));
+        positions.insert(NodeIndex::new(1), Point2::new(0.0, 200.0));
+        positions.insert(NodeIndex::new(2), Point2::new(0.0, 100.0));
+        positions.insert(NodeIndex::new(3), Point2::new(0.0, 110.0));
+        separate_groups_with(&groups, &mut positions, 12.0);
+        let left = group_bounds(&groups[0], &positions, 12.0).expect("left bounds exist");
+        let right = group_bounds(&groups[1], &positions, 12.0).expect("right bounds exist");
+        assert!(!left.intersects(right));
     }
 
     #[test]
@@ -288,5 +305,40 @@ mod tests {
         empty.insert(container, Point2::new(7.0, 7.0));
         snap_containers_with(&[(container, Vec::new())], &mut empty);
         assert_eq!(empty.get(&container), Some(&Point2::new(7.0, 7.0)));
+    }
+
+    #[test]
+    fn container_center_matches_visible_descendant_bounds() {
+        let container = NodeIndex::new(20);
+        let leaves = vec![NodeIndex::new(21), NodeIndex::new(22), NodeIndex::new(23)];
+        let mut positions = Positions::new();
+        positions.insert(NodeIndex::new(21), Point2::new(-30.0, 10.0));
+        positions.insert(NodeIndex::new(22), Point2::new(10.0, -20.0));
+        positions.insert(NodeIndex::new(23), Point2::new(50.0, 40.0));
+        positions.insert(container, Point2::new(0.0, 0.0));
+        snap_containers_with(&[(container, leaves)], &mut positions);
+        let placed = positions
+            .get(&container)
+            .copied()
+            .expect("container placed");
+        assert!((placed.x - 10.0).abs() < 1e-4);
+        assert!((placed.y - 10.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn folding_keeps_position_and_unfolding_restores_center() {
+        let container = NodeIndex::new(30);
+        let leaves = vec![NodeIndex::new(31), NodeIndex::new(32)];
+        let mut positions = Positions::new();
+        positions.insert(NodeIndex::new(31), Point2::new(0.0, 0.0));
+        positions.insert(NodeIndex::new(32), Point2::new(20.0, 10.0));
+        positions.insert(container, Point2::new(-100.0, -100.0));
+        snap_containers_with(&[(container, leaves.clone())], &mut positions);
+        let expanded = positions.get(&container).copied().expect("snapped");
+        assert_eq!(expanded, Point2::new(10.0, 5.0));
+        snap_containers_with(&[(container, Vec::new())], &mut positions);
+        assert_eq!(positions.get(&container), Some(&Point2::new(10.0, 5.0)));
+        snap_containers_with(&[(container, leaves)], &mut positions);
+        assert_eq!(positions.get(&container), Some(&Point2::new(10.0, 5.0)));
     }
 }

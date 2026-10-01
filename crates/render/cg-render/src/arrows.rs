@@ -24,6 +24,8 @@ pub enum ArrowKind {
     Square,
     /// Open chevron with a deep inner notch.
     Vee,
+    /// Filled triangle closed by a perpendicular bar.
+    TriangleTee,
 }
 
 /// Screen pixel polygon of `kind` with the tip first.
@@ -111,6 +113,20 @@ pub fn arrow_polygon(
             );
             vec![tip, left, notch, right]
         }
+        ArrowKind::TriangleTee => {
+            let wide = half_width * 1.4;
+            let thickness = 2.0f32.max(length * 0.18);
+            let bar_back = Point2::new(base.x - axis.x * thickness, base.y - axis.y * thickness);
+            vec![
+                tip,
+                left,
+                Point2::new(base.x + normal.x * wide, base.y + normal.y * wide),
+                Point2::new(bar_back.x + normal.x * wide, bar_back.y + normal.y * wide),
+                Point2::new(bar_back.x - normal.x * wide, bar_back.y - normal.y * wide),
+                Point2::new(base.x - normal.x * wide, base.y - normal.y * wide),
+                right,
+            ]
+        }
     }
 }
 
@@ -140,6 +156,10 @@ mod tests {
             4
         );
         assert_eq!(arrow_polygon(ArrowKind::Vee, tip, 0.0, 10.0, 4.0).len(), 4);
+        assert_eq!(
+            arrow_polygon(ArrowKind::TriangleTee, tip, 0.0, 10.0, 4.0).len(),
+            7
+        );
         assert_eq!(ArrowKind::default(), ArrowKind::Triangle);
     }
 
@@ -151,6 +171,7 @@ mod tests {
             ArrowKind::Dovetail,
             ArrowKind::Diamond,
             ArrowKind::Vee,
+            ArrowKind::TriangleTee,
         ] {
             let east = arrow_polygon(kind, tip, 0.0, 10.0, 4.0);
             let north = arrow_polygon(kind, tip, std::f32::consts::FRAC_PI_2, 10.0, 4.0);

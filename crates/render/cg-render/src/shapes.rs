@@ -35,6 +35,10 @@ pub enum NodeShape {
     Octagon,
     /// Five point star pointing up.
     Star,
+    /// Upward chevron with an inner notch.
+    Vee,
+    /// Slanted parallelogram, the diamond variant with shear.
+    Rhomboid,
 }
 
 /// Shape used when the detail level cannot afford polygons.
@@ -47,7 +51,7 @@ pub fn shape_for_level(shape: NodeShape, minimal: bool) -> NodeShape {
 /// Vertices wind counterclockwise around the origin without repeating the
 /// first point. The square returns its four corners; the circle and ellipse
 /// sample their outline; the rounded rectangle walks its edges with corner
-/// arcs; the triangle and diamond return their corners.
+/// arcs; the triangle, diamond, vee and rhomboid return their corners.
 pub fn node_polygon(shape: NodeShape, side: f32) -> Vec<Point2> {
     let side = side.max(4.0);
     let half = side / 2.0;
@@ -78,6 +82,21 @@ pub fn node_polygon(shape: NodeShape, side: f32) -> Vec<Point2> {
         NodeShape::Hexagon => regular_polygon(6, half),
         NodeShape::Octagon => regular_polygon(8, half),
         NodeShape::Star => star_points(half),
+        NodeShape::Vee => vec![
+            Point2::new(0.0, -half),
+            Point2::new(half, half * 0.5),
+            Point2::new(0.0, 0.0),
+            Point2::new(-half, half * 0.5),
+        ],
+        NodeShape::Rhomboid => {
+            let shear = half * 0.5;
+            vec![
+                Point2::new(-half + shear, -half),
+                Point2::new(half, -half),
+                Point2::new(half - shear, half),
+                Point2::new(-half, half),
+            ]
+        }
     }
 }
 
@@ -118,7 +137,9 @@ pub fn point_hits_shape(
         | NodeShape::Pentagon
         | NodeShape::Hexagon
         | NodeShape::Octagon
-        | NodeShape::Star => {
+        | NodeShape::Star
+        | NodeShape::Vee
+        | NodeShape::Rhomboid => {
             let side = half * 2.0;
             let relative: Vec<Point2> = node_polygon(shape, side)
                 .into_iter()
@@ -255,6 +276,8 @@ mod tests {
             NodeShape::Hexagon,
             NodeShape::Octagon,
             NodeShape::Star,
+            NodeShape::Vee,
+            NodeShape::Rhomboid,
         ] {
             let vertices = node_polygon(shape, 24.0);
             assert!(vertices.len() >= 3);
@@ -271,6 +294,8 @@ mod tests {
         assert_eq!(node_polygon(NodeShape::Hexagon, 24.0).len(), 6);
         assert_eq!(node_polygon(NodeShape::Octagon, 24.0).len(), 8);
         assert_eq!(node_polygon(NodeShape::Star, 24.0).len(), 10);
+        assert_eq!(node_polygon(NodeShape::Vee, 24.0).len(), 4);
+        assert_eq!(node_polygon(NodeShape::Rhomboid, 24.0).len(), 4);
     }
 
     #[test]
@@ -299,6 +324,8 @@ mod tests {
             NodeShape::Hexagon,
             NodeShape::Octagon,
             NodeShape::Star,
+            NodeShape::Vee,
+            NodeShape::Rhomboid,
         ] {
             assert!(shape_hits_rect(shape, center, 12.0, over));
             assert!(!shape_hits_rect(shape, center, 12.0, far));
@@ -327,6 +354,8 @@ mod tests {
             NodeShape::Hexagon,
             NodeShape::Octagon,
             NodeShape::Star,
+            NodeShape::Vee,
+            NodeShape::Rhomboid,
         ] {
             assert!(point_hits_shape(shape, center, center, 12.0, 2.0));
             assert!(!point_hits_shape(

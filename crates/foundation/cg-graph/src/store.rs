@@ -109,9 +109,25 @@ impl GraphStore {
         self.graph.node_weight(node)
     }
 
+    /// True when `node` is still present in the graph.
+    pub fn contains_node(&self, node: NodeIndex) -> bool {
+        self.graph.node_weight(node).is_some()
+    }
+
     /// Endpoints of `edge` as (source, target), if it is still present.
     pub fn edge_endpoints(&self, edge: EdgeIndex) -> Option<(NodeIndex, NodeIndex)> {
         self.graph.edge_endpoints(edge)
+    }
+
+    /// First edge from `source` to `target` in index order, if one exists.
+    ///
+    /// Parallel edges share one slot in paint and selection plans, so callers
+    /// read the first match rather than tracking identities.
+    pub fn find_edge(&self, source: NodeIndex, target: NodeIndex) -> Option<EdgeIndex> {
+        self.graph
+            .edge_references()
+            .find(|edge| edge.source() == source && edge.target() == target)
+            .map(|edge| edge.id())
     }
 
     /// Weight of the first edge from `source` to `target`, if one exists.
@@ -441,5 +457,16 @@ mod tests {
         let store = store_of(graph);
         assert_eq!(store.edge_endpoints(EdgeIndex::new(0)), Some((a, b)));
         assert_eq!(store.edge_endpoints(EdgeIndex::new(99)), None);
+    }
+
+    #[test]
+    fn existence_and_edge_lookup_use_purpose_queries() {
+        let (graph, [a, b, _, _]) = diamond();
+        let store = store_of(graph);
+        assert!(store.contains_node(a));
+        assert!(store.contains_node(b));
+        assert!(!store.contains_node(NodeIndex::new(99)));
+        assert_eq!(store.find_edge(a, b), Some(EdgeIndex::new(0)));
+        assert_eq!(store.find_edge(b, a), None);
     }
 }

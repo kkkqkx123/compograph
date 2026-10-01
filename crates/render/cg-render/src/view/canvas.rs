@@ -245,9 +245,9 @@ fn paint_node_stroke(outline: &[Point2], node: &PaintedNode, window: &mut Window
 /// Shaping and painting both report errors rather than panicking; a failed
 /// label is skipped so one bad glyph never blanks the frame. The line height
 /// tracks the font size, and the label is centered over the node width so the
-/// text stays under its body regardless of length. Rotation lives in the plan
-/// for bounds and selection; the canvas paints horizontally because shaped
-/// text has no rotation primitive.
+/// text stays under its body regardless of length. The plan keeps zero
+/// rotation and the canvas paints horizontally, so bounds and selection use
+/// the same envelope as the visible text.
 fn paint_label(label: &PaintedLabel, window: &mut Window, cx: &mut App) {
     if label.background != LabelBackground::None {
         paint_label_background(&label.text, label.size, label.origin, window, cx);
@@ -265,8 +265,8 @@ fn paint_label(label: &PaintedLabel, window: &mut Window, cx: &mut App) {
 /// Shapes and paints one edge label centered on its anchor.
 ///
 /// Edge labels reuse the node label shaping path so weight text and node text
-/// share one rendering behavior; only the plan source differs. Rotation is
-/// plan-side for now, matching node labels.
+/// share one rendering behavior; only the plan source differs. The plan keeps
+/// zero rotation to match the horizontal paint.
 fn paint_edge_label(label: &PaintedEdgeLabel, window: &mut Window, cx: &mut App) {
     if label.background != LabelBackground::None {
         paint_label_background(&label.text, label.size, label.origin, window, cx);
