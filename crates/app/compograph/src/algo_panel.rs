@@ -269,6 +269,131 @@ pub fn pairs_outcome(reachable: usize, possible: usize, elapsed_ms: f64) -> Algo
     }
 }
 
+/// Thickens every edge carrying flow and totals the flow value.
+pub fn flow_outcome(
+    detailed: &[(NodeIndex, NodeIndex, f32)],
+    value: f32,
+    elapsed_ms: f64,
+) -> AlgoOutcome {
+    AlgoOutcome {
+        nodes: Vec::new(),
+        edges: detailed
+            .iter()
+            .map(|(source, target, _)| ((*source, *target), EdgeStylePatch::highlighted()))
+            .collect(),
+        summary: format!(
+            "max flow: value {value:.2}, {} edges ({elapsed_ms:.1}ms)",
+            detailed.len()
+        ),
+    }
+}
+
+/// Highlights every matched pair as one edge.
+pub fn matching_outcome(
+    pairs: &[(NodeIndex, NodeIndex)],
+    label: &str,
+    elapsed_ms: f64,
+) -> AlgoOutcome {
+    AlgoOutcome {
+        nodes: Vec::new(),
+        edges: pairs
+            .iter()
+            .map(|(source, target)| ((*source, *target), EdgeStylePatch::highlighted()))
+            .collect(),
+        summary: format!("{label}: {} pairs ({elapsed_ms:.1}ms)", pairs.len()),
+    }
+}
+
+/// Highlights every feedback edge whose removal breaks all directed cycles.
+pub fn feedback_outcome(edges: &[(NodeIndex, NodeIndex)], elapsed_ms: f64) -> AlgoOutcome {
+    AlgoOutcome {
+        nodes: Vec::new(),
+        edges: edges
+            .iter()
+            .map(|(source, target)| ((*source, *target), EdgeStylePatch::highlighted()))
+            .collect(),
+        summary: format!("feedback arcs: {} edges ({elapsed_ms:.1}ms)", edges.len()),
+    }
+}
+
+/// Highlights the union of up to `limit` simple paths.
+pub fn simple_paths_outcome(paths: &[Vec<NodeIndex>], elapsed_ms: f64) -> AlgoOutcome {
+    if paths.is_empty() {
+        return AlgoOutcome {
+            summary: format!("simple paths: no path ({elapsed_ms:.1}ms)"),
+            ..AlgoOutcome::default()
+        };
+    }
+    use std::collections::BTreeSet;
+    let mut node_set: BTreeSet<NodeIndex> = BTreeSet::new();
+    let mut edge_set: BTreeSet<EdgePair> = BTreeSet::new();
+    for path in paths {
+        for node in path {
+            node_set.insert(*node);
+        }
+        for pair in path.windows(2) {
+            edge_set.insert((pair[0], pair[1]));
+        }
+    }
+    AlgoOutcome {
+        nodes: node_set
+            .into_iter()
+            .map(|node| (node, NodeStylePatch::selected()))
+            .collect(),
+        edges: edge_set
+            .into_iter()
+            .map(|pair| (pair, EdgeStylePatch::highlighted()))
+            .collect(),
+        summary: format!(
+            "simple paths: {} paths, longest {} ({elapsed_ms:.1}ms)",
+            paths.len(),
+            paths.iter().map(Vec::len).max().unwrap_or(0)
+        ),
+    }
+}
+
+/// Colors undirected components and summarizes directed reachability and cycles.
+pub fn connectivity_outcome(
+    groups: &[Vec<NodeIndex>],
+    reachable: bool,
+    directed_cyclic: bool,
+    undirected_cyclic: bool,
+    bipartite: bool,
+    elapsed_ms: f64,
+) -> AlgoOutcome {
+    let mut outcome = groups_outcome(groups, "connectivity", elapsed_ms);
+    outcome.summary = format!(
+        "connectivity: {} groups, reachable {}, directed cyclic {}, undirected cyclic {}, bipartite {} ({:.1}ms)",
+        groups.len(),
+        reachable,
+        directed_cyclic,
+        undirected_cyclic,
+        bipartite,
+        elapsed_ms
+    );
+    outcome
+}
+
+/// Colors condensation groups and highlights edges crossing groups.
+pub fn condensation_outcome(
+    groups: &[Vec<NodeIndex>],
+    crossing: &[(NodeIndex, NodeIndex)],
+    elapsed_ms: f64,
+) -> AlgoOutcome {
+    let mut outcome = groups_outcome(groups, "condensation", elapsed_ms);
+    for (source, target) in crossing {
+        outcome
+            .edges
+            .push(((*source, *target), EdgeStylePatch::highlighted()));
+    }
+    outcome.summary = format!(
+        "condensation: {} groups, {} crossing edges ({elapsed_ms:.1}ms)",
+        groups.len(),
+        crossing.len()
+    );
+    outcome
+}
+
 /// Highlights every node dominated from the root.
 pub fn dominators_outcome(
     dominated: &[NodeIndex],
@@ -431,5 +556,37 @@ mod tests {
         assert_eq!(outcome.nodes.len(), 2);
         assert!(outcome.summary.contains("markov"));
         assert!(outcome.summary.contains("2 groups"));
+    }
+
+    #[test]
+    fn flow_matching_feedback_and_simple_paths_highlight_edges() {
+        let flow = flow_outcome(&[(NodeIndex::new(0), NodeIndex::new(1), 2.0)], 2.0, 0.5);
+        assert_eq!(flow.edges.len(), 1);
+        assert!(flow.summary.contains("2.00"));
+        let matched = matching_outcome(&[(NodeIndex::new(0), NodeIndex::new(1))], "matching", 0.5);
+        assert_eq!(matched.edges.len(), 1);
+        assert!(matched.summary.contains("1 pairs"));
+        let feedback = feedback_outcome(&[(NodeIndex::new(1), NodeIndex::new(0))], 0.5);
+        assert_eq!(feedback.edges.len(), 1);
+        assert!(feedback.summary.contains("feedback"));
+        let paths = vec![vec![NodeIndex::new(0), NodeIndex::new(1)]];
+        let simple = simple_paths_outcome(&paths, 0.5);
+        assert_eq!(simple.nodes.len(), 2);
+        assert_eq!(simple.edges.len(), 1);
+        let empty = simple_paths_outcome(&[], 0.5);
+        assert!(empty.nodes.is_empty() && empty.summary.contains("no path"));
+    }
+
+    #[test]
+    fn connectivity_and_condensation_summarize_structure() {
+        let groups = vec![vec![NodeIndex::new(0)], vec![NodeIndex::new(1)]];
+        let connected = connectivity_outcome(&groups, true, false, false, true, 0.5);
+        assert_eq!(connected.nodes.len(), 2);
+        assert!(connected.summary.contains("2 groups"));
+        let condensed =
+            condensation_outcome(&groups, &[(NodeIndex::new(0), NodeIndex::new(1))], 0.5);
+        assert_eq!(condensed.nodes.len(), 2);
+        assert_eq!(condensed.edges.len(), 1);
+        assert!(condensed.summary.contains("crossing"));
     }
 }

@@ -3,6 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use petgraph::Directed;
+use petgraph::algo::{has_path_connecting, is_cyclic_directed};
 use petgraph::stable_graph::{NodeIndex, StableGraph};
 use petgraph::visit::{EdgeRef, IntoEdgeReferences};
 
@@ -62,6 +63,135 @@ pub fn bridges(graph: &Graph) -> Vec<(NodeIndex, NodeIndex)> {
         .found
         .sort_unstable_by_key(|(source, target)| (source.index(), target.index()));
     search.found
+}
+
+/// Undirected connected components, each sorted by node index.
+///
+/// Reads the directed store as undirected with self loops ignored. Groups are
+/// ordered by their smallest member, so repeated runs agree. An empty graph
+/// yields no groups.
+pub fn undirected_connected_components(graph: &Graph) -> Vec<Vec<NodeIndex>> {
+    let (order, adjacency) = undirected_adjacency(graph);
+    let mut seen: HashSet<NodeIndex> = HashSet::new();
+    let mut groups = Vec::new();
+    for root in &order {
+        if !seen.insert(*root) {
+            continue;
+        }
+        let mut group = vec![*root];
+        let mut stack = vec![*root];
+        while let Some(node) = stack.pop() {
+            let neighbours = adjacency.get(&node).cloned().unwrap_or_default();
+            for (next, _) in neighbours {
+                if seen.insert(next) {
+                    group.push(next);
+                    stack.push(next);
+                }
+            }
+        }
+        group.sort_unstable_by_key(|node| node.index());
+        groups.push(group);
+    }
+    groups.sort_unstable_by_key(|group| group.first().map(|node| node.index()).unwrap_or(usize::MAX));
+    groups
+}
+
+/// True when a directed path leads from `from` to `to`.
+///
+/// Missing endpoints yield false rather than an error. A node always reaches
+/// itself when present.
+pub fn has_directed_path(graph: &Graph, from: NodeIndex, to: NodeIndex) -> bool {
+    if graph.node_weight(from).is_none() || graph.node_weight(to).is_none() {
+        return false;
+    }
+    if from == to {
+        return true;
+    }
+    has_path_connecting(graph, from, to, None)
+}
+
+/// True when the directed store holds a directed cycle.
+///
+/// Self loops count as cycles. An empty graph is acyclic.
+pub fn is_cyclic_directed_graph(graph: &Graph) -> bool {
+    is_cyclic_directed(graph)
+}
+
+/// True when the store read as undirected holds a cycle.
+///
+/// Self loops count as cycles and parallel pairs count as cycles. An empty or
+/// edgeless graph is acyclic.
+pub fn is_cyclic_undirected_graph(graph: &Graph) -> bool {
+    let mut parent: HashMap<NodeIndex, NodeIndex> = HashMap::new();
+    for node in graph.node_indices() {
+        parent.insert(node, node);
+    }
+    fn find(parent: &mut HashMap<NodeIndex, NodeIndex>, node: NodeIndex) -> NodeIndex {
+        let mut root = node;
+        while parent.get(&root).copied().unwrap_or(root) != root {
+            root = parent.get(&root).copied().unwrap_or(root);
+        }
+        root
+    }
+    let mut pairs: HashSet<(usize, usize)> = HashSet::new();
+    for reference in graph.edge_references() {
+        let source = reference.source();
+        let target = reference.target();
+        if source == target {
+            return true;
+        }
+        let (low, high) = if source.index() <= target.index() {
+            (source.index(), target.index())
+        } else {
+            (target.index(), source.index())
+        };
+        if !pairs.insert((low, high)) {
+            return true;
+        }
+        let left = find(&mut parent, source);
+        let right = find(&mut parent, target);
+        if left == right {
+            return true;
+        }
+        parent.insert(left, right);
+    }
+    false
+}
+
+/// True when every undirected component is two colorable.
+///
+/// Isolated nodes and empty graphs are bipartite. Self loops break the
+/// property because one node would need both colors.
+pub fn is_bipartite_graph(graph: &Graph) -> bool {
+    let (order, adjacency) = undirected_adjacency(graph);
+    for reference in graph.edge_references() {
+        if reference.source() == reference.target() {
+            return false;
+        }
+    }
+    let mut color: HashMap<NodeIndex, bool> = HashMap::new();
+    for root in &order {
+        if color.contains_key(root) {
+            continue;
+        }
+        color.insert(*root, false);
+        let mut stack = vec![*root];
+        while let Some(node) = stack.pop() {
+            let shade = color.get(&node).copied().unwrap_or(false);
+            let neighbours = adjacency.get(&node).cloned().unwrap_or_default();
+            for (next, _) in neighbours {
+                if let Some(known) = color.get(&next).copied() {
+                    if known == shade {
+                        return false;
+                    }
+                } else {
+                    color.insert(next, !shade);
+                    stack.push(next);
+                }
+            }
+        }
+    }
+    true
 }
 
 /// Sorted node order plus undirected adjacency with per-edge identities.
@@ -275,5 +405,39 @@ mod tests {
         parallel.add_edge(x, y, EdgeData { weight: 2.0 });
         assert!(bridges(&parallel).is_empty());
         assert!(bridges(&StableGraph::default()).is_empty());
+    }
+
+    #[test]
+    fn components_paths_cycles_and_bipartite_cover_basics() {
+        let (chain, a, _, c) = chain3();
+        assert_eq!(undirected_connected_components(&chain).len(), 1);
+        assert!(has_directed_path(&chain, a, c));
+        assert!(!has_directed_path(&chain, c, a));
+        assert!(!is_cyclic_directed_graph(&chain));
+        assert!(!is_cyclic_undirected_graph(&chain));
+        assert!(is_bipartite_graph(&chain));
+        assert!(undirected_connected_components(&StableGraph::default()).is_empty());
+        assert!(!has_directed_path(&chain, a, NodeIndex::new(99)));
+    }
+
+    #[test]
+    fn cycles_and_odd_rings_report_correctly() {
+        let mut graph: Graph = StableGraph::default();
+        let nodes: Vec<NodeIndex> = (0..3)
+            .map(|ordinal| {
+                graph.add_node(NodeData {
+                    label: ordinal.to_string(),
+                })
+            })
+            .collect();
+        graph.add_edge(nodes[0], nodes[1], EdgeData { weight: 1.0 });
+        graph.add_edge(nodes[1], nodes[2], EdgeData { weight: 1.0 });
+        graph.add_edge(nodes[2], nodes[0], EdgeData { weight: 1.0 });
+        assert!(is_cyclic_directed_graph(&graph));
+        assert!(is_cyclic_undirected_graph(&graph));
+        assert!(!is_bipartite_graph(&graph));
+        let mut lonely: Graph = StableGraph::default();
+        lonely.add_node(NodeData { label: "lonely".into() });
+        assert!(is_bipartite_graph(&lonely));
     }
 }

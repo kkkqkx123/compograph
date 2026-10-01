@@ -9,7 +9,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 
 use cg_graph::{
-    ChangeFilter, ClusterMetric, GraphChangeEvent, GraphStore, NodeIndex, subscribe_graph,
+    ChangeFilter, ClusterMetric, GraphChangeEvent, GraphStore, Linkage, NodeIndex, subscribe_graph,
 };
 use cg_interact::{BoxSelectState, DragState, InteractLocks, SelectMode, SelectionState};
 use cg_layout::{LayoutDriver, LayoutRegistry};
@@ -67,6 +67,26 @@ pub(crate) const CLUSTER_THRESHOLD_MAX: f32 = 1000.0;
 
 /// Damping step of the panel controls, clamped to the unit interval.
 pub(crate) const DAMPING_STEP: f32 = 0.05;
+
+/// Default K for the K-th shortest cost panel run.
+pub(crate) const PATH_K_DEFAULT: usize = 2;
+
+/// Largest K selectable for the K-th shortest cost panel run.
+pub(crate) const PATH_K_MAX: usize = 10;
+
+/// Default path count cap for the bounded simple-path panel run.
+pub(crate) const SIMPLE_LIMIT_DEFAULT: usize = 5;
+
+/// Largest path count cap selectable for the bounded simple-path panel run.
+pub(crate) const SIMPLE_LIMIT_MAX: usize = 20;
+
+/// Default alpha for the weighted degree panel run.
+pub(crate) const WEIGHTED_ALPHA_DEFAULT: f32 = 0.5;
+
+/// Fuzziness exponent for the fuzzy C-means panel run.
+pub(crate) const FUZZY_M: f32 = 2.0;
+/// Step of the weighted alpha panel controls.
+pub(crate) const WEIGHTED_ALPHA_STEP: f32 = 0.1;
 
 /// Magnification applied to exported images.
 pub(crate) const EXPORT_SCALE: f32 = 2.0;
@@ -130,6 +150,11 @@ pub(crate) struct GraphWindow {
     pub(crate) cluster_k: usize,
     pub(crate) cluster_metric: ClusterMetric,
     pub(crate) cluster_threshold: f32,
+    pub(crate) linkage: Linkage,
+    pub(crate) weighted_alpha: f32,
+    pub(crate) weighted_directed: bool,
+    pub(crate) path_k: usize,
+    pub(crate) simple_limit: usize,
     pub(crate) io_message: String,
     pub(crate) lod: DetailLevel,
     pub(crate) lod_params: LodParams,
@@ -231,6 +256,11 @@ impl GraphWindow {
             cluster_k: CLUSTER_K_DEFAULT,
             cluster_metric: ClusterMetric::Euclidean,
             cluster_threshold: CLUSTER_THRESHOLD_DEFAULT,
+            linkage: Linkage::Min,
+            weighted_alpha: WEIGHTED_ALPHA_DEFAULT,
+            weighted_directed: false,
+            path_k: PATH_K_DEFAULT,
+            simple_limit: SIMPLE_LIMIT_DEFAULT,
             io_message: String::new(),
             lod: DetailLevel::Full,
             lod_params: LodParams::default(),

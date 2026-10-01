@@ -8,20 +8,27 @@
 use std::time::Instant;
 
 use cg_graph::{
-    NodeIndex, Positions, affinity_clusters, all_pairs_shortest_paths, articulation_points,
-    bellman_ford_paths, betweenness_centrality, breadth_first_order, bridges, closeness_centrality,
-    degree_centrality, depth_first_order, eulerian_path_directed, eulerian_path_undirected,
-    global_min_cut, heuristic_shortest_path, hierarchical_clusters, immediate_dominators,
-    kmeans_clusters, markov_clusters, metric_clusters, minimum_spanning_forest,
-    minimum_spanning_tree_single, negative_cycle_path, node_order, rank_nodes, shortest_path,
-    strongly_connected_components, topological_order, transitive_reduction,
+    GraphView, NodeIndex, Positions, affinity_clusters, all_pairs_shortest_paths,
+    articulation_points, bellman_ford_paths, betweenness_centrality, bidirectional_path_cost,
+    breadth_first_order, bridges, closeness_centrality, condensation_groups, degree_centrality,
+    depth_first_order, dsatur_groups, eulerian_path_directed, eulerian_path_undirected,
+    feedback_arc_edges, fuzzy_cmeans_groups, global_min_cut, greedy_matching_pairs,
+    has_directed_path, heuristic_shortest_path, hierarchical_clusters,
+    hierarchical_clusters_with_linkage, immediate_dominators, is_bipartite_graph,
+    is_cyclic_directed_graph, is_cyclic_undirected_graph, johnson_paths, kmeans_clusters,
+    kmedoids_clusters, kosaraju_components, kth_shortest_costs, markov_clusters,
+    maximal_clique_groups, maximum_flow_value, maximum_matching_pairs, metric_clusters,
+    minimum_spanning_forest, minimum_spanning_tree_single, negative_cycle_path, node_order,
+    post_order, rank_nodes, shortest_path, simple_paths_limited, spfa_paths,
+    strongly_connected_components, topo_order, topological_order, transitive_reduction,
+    undirected_connected_components, weighted_degree_centrality,
 };
 use gpui::Context;
 
 use crate::algo_panel::{self, AlgoOutcome};
 use crate::app_state::{
-    AFFINITY_DAMPING, AFFINITY_ITERATIONS, GraphWindow, KMEANS_ITERATIONS, MARKOV_INFLATION,
-    MARKOV_ITERATIONS, PAGERANK_ITERATIONS,
+    AFFINITY_DAMPING, AFFINITY_ITERATIONS, FUZZY_M, GraphWindow, KMEANS_ITERATIONS,
+    MARKOV_INFLATION, MARKOV_ITERATIONS, PAGERANK_ITERATIONS,
 };
 
 impl GraphWindow {
@@ -543,6 +550,393 @@ impl GraphWindow {
                     ..AlgoOutcome::default()
                 },
             }
+        });
+    }
+
+    // Gap-plan bridges: every cg-graph algorithm reachable from the panel.
+
+    pub(crate) fn run_bidirectional(&mut self, cx: &mut Context<Self>) {
+        let Some((start, goal)) = self.algo_endpoints(cx) else {
+            self.algo_summary = "bidirectional needs at least one node".to_string();
+            cx.notify();
+            return;
+        };
+        let snapshot = self.store.read(cx).graph().clone();
+        let generation = self.begin_algo_run();
+        self.spawn_algo_task(cx, generation, move || {
+            let started = Instant::now();
+            let cost = bidirectional_path_cost(&snapshot, start, goal);
+            let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+            match cost {
+                Some(value) => algo_panel::path_outcome(&[start, goal], value, elapsed_ms, "bidirectional"),
+                None => algo_panel::path_outcome(&[], 0.0, elapsed_ms, "bidirectional"),
+            }
+        });
+    }
+
+    pub(crate) fn run_spfa(&mut self, cx: &mut Context<Self>) {
+        let Some((start, goal)) = self.algo_endpoints(cx) else {
+            self.algo_summary = "spfa needs at least one node".to_string();
+            cx.notify();
+            return;
+        };
+        let snapshot = self.store.read(cx).graph().clone();
+        let generation = self.begin_algo_run();
+        self.spawn_algo_task(cx, generation, move || {
+            let started = Instant::now();
+            let elapsed = || started.elapsed().as_secs_f64() * 1000.0;
+            match spfa_paths(&snapshot, start) {
+                Ok((distances, predecessors)) => {
+                    let cost = distances.get(&goal).copied().unwrap_or(f32::INFINITY);
+                    if !cost.is_finite() {
+                        return algo_panel::path_outcome(&[], 0.0, elapsed(), "spfa");
+                    }
+                    let mut path = vec![goal];
+                    while let Some(parent) =
+                        predecessors.get(&path.last().copied().unwrap_or(goal)).copied().flatten()
+                    {
+                        path.push(parent);
+                        if parent == start || path.len() > snapshot.node_count() + 1 {
+                            break;
+                        }
+                    }
+                    path.reverse();
+                    if path.first() != Some(&start) {
+                        return algo_panel::path_outcome(&[], 0.0, elapsed(), "spfa");
+                    }
+                    algo_panel::path_outcome(&path, cost, elapsed(), "spfa")
+                }
+                Err(member) => AlgoOutcome {
+                    summary: format!(
+                        "spfa: negative cycle at node {} ({:.1}ms)",
+                        member.index(),
+                        elapsed()
+                    ),
+                    ..AlgoOutcome::default()
+                },
+            }
+        });
+    }
+
+    pub(crate) fn run_johnson(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.store.read(cx).graph().clone();
+        let generation = self.begin_algo_run();
+        self.spawn_algo_task(cx, generation, move || {
+            let started = Instant::now();
+            let count = snapshot.node_count();
+            match johnson_paths(&snapshot) {
+                Ok(matrix) => algo_panel::pairs_outcome(
+                    matrix.len(),
+                    count * count,
+                    started.elapsed().as_secs_f64() * 1000.0,
+                ),
+                Err(member) => AlgoOutcome {
+                    summary: format!(
+                        "johnson: negative cycle at node {} ({:.1}ms)",
+                        member.index(),
+                        started.elapsed().as_secs_f64() * 1000.0
+                    ),
+                    ..AlgoOutcome::default()
+                },
+            }
+        });
+    }
+
+    pub(crate) fn run_kth_shortest(&mut self, cx: &mut Context<Self>) {
+        let Some((start, _)) = self.algo_endpoints(cx) else {
+            self.algo_summary = "kth shortest needs at least one node".to_string();
+            cx.notify();
+            return;
+        };
+        let snapshot = self.store.read(cx).graph().clone();
+        let k = self.path_k;
+        let generation = self.begin_algo_run();
+        self.spawn_algo_task(cx, generation, move || {
+            let started = Instant::now();
+            let costs = kth_shortest_costs(&snapshot, start, k);
+            let mut nodes: Vec<NodeIndex> = costs.keys().copied().collect();
+            nodes.sort_unstable_by_key(|node| node.index());
+            let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+            let mut outcome = algo_panel::traversal_outcome(&nodes, "kth shortest", elapsed_ms);
+            outcome.summary = format!(
+                "kth shortest k={k} from {}: {} nodes ({elapsed_ms:.1}ms)",
+                start.index(),
+                nodes.len()
+            );
+            outcome
+        });
+    }
+
+    pub(crate) fn run_kosaraju(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.store.read(cx).graph().clone();
+        let generation = self.begin_algo_run();
+        self.spawn_algo_task(cx, generation, move || {
+            let started = Instant::now();
+            let groups = kosaraju_components(&snapshot);
+            let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+            algo_panel::groups_outcome(&groups, "kosaraju", elapsed_ms)
+        });
+    }
+
+    pub(crate) fn run_condensation(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.store.read(cx).graph().clone();
+        let generation = self.begin_algo_run();
+        self.spawn_algo_task(cx, generation, move || {
+            let started = Instant::now();
+            let (groups, _) = condensation_groups(&snapshot);
+            let mut owner = std::collections::HashMap::new();
+            for (ordinal, group) in groups.iter().enumerate() {
+                for node in group {
+                    owner.insert(*node, ordinal);
+                }
+            }
+            let mut crossing = Vec::new();
+            for (source, target) in GraphView::edges(&snapshot) {
+                let from = owner.get(&source).copied();
+                let to = owner.get(&target).copied();
+                if let (Some(from), Some(to)) = (from, to)
+                    && from != to
+                {
+                    crossing.push((source, target));
+                }
+            }
+            crossing.sort_unstable_by_key(|(source, target)| (source.index(), target.index()));
+            crossing.dedup();
+            let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+            algo_panel::condensation_outcome(&groups, &crossing, elapsed_ms)
+        });
+    }
+
+    pub(crate) fn run_connectivity(&mut self, cx: &mut Context<Self>) {
+        let endpoints = self.algo_endpoints(cx);
+        let snapshot = self.store.read(cx).graph().clone();
+        let generation = self.begin_algo_run();
+        self.spawn_algo_task(cx, generation, move || {
+            let started = Instant::now();
+            let groups = undirected_connected_components(&snapshot);
+            let reachable = endpoints
+                .map(|(start, goal)| has_directed_path(&snapshot, start, goal))
+                .unwrap_or(false);
+            let directed_cyclic = is_cyclic_directed_graph(&snapshot);
+            let undirected_cyclic = is_cyclic_undirected_graph(&snapshot);
+            let bipartite = is_bipartite_graph(&snapshot);
+            let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+            algo_panel::connectivity_outcome(
+                &groups,
+                reachable,
+                directed_cyclic,
+                undirected_cyclic,
+                bipartite,
+                elapsed_ms,
+            )
+        });
+    }
+
+    pub(crate) fn run_order_walk(&mut self, cx: &mut Context<Self>) {
+        let Some((start, _)) = self.algo_endpoints(cx) else {
+            self.algo_summary = "order walk needs at least one node".to_string();
+            cx.notify();
+            return;
+        };
+        let snapshot = self.store.read(cx).graph().clone();
+        let generation = self.begin_algo_run();
+        self.spawn_algo_task(cx, generation, move || {
+            let started = Instant::now();
+            let post = post_order(&snapshot, start);
+            let topo = topo_order(&snapshot);
+            let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+            let mut outcome = algo_panel::traversal_outcome(&post, "post order", elapsed_ms);
+            outcome.summary = format!(
+                "order walk from {}: post {}, topo {} ({elapsed_ms:.1}ms)",
+                start.index(),
+                post.len(),
+                topo.len()
+            );
+            outcome
+        });
+    }
+
+    pub(crate) fn run_kmedoids(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.store.read(cx).graph().clone();
+        let positions: Positions = self.layout.read(cx).positions().clone();
+        let classes = self.cluster_k;
+        let generation = self.begin_algo_run();
+        self.spawn_algo_task(cx, generation, move || {
+            let started = Instant::now();
+            let elapsed_ms = || started.elapsed().as_secs_f64() * 1000.0;
+            match kmedoids_clusters(&snapshot, &positions, classes, KMEANS_ITERATIONS) {
+                Ok(groups) => algo_panel::groups_outcome(&groups, "k-medoids", elapsed_ms()),
+                Err(member) => AlgoOutcome {
+                    summary: format!(
+                        "k-medoids: invalid input at node {} ({:.1}ms)",
+                        member.index(),
+                        elapsed_ms()
+                    ),
+                    ..AlgoOutcome::default()
+                },
+            }
+        });
+    }
+
+    pub(crate) fn run_fuzzy(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.store.read(cx).graph().clone();
+        let positions: Positions = self.layout.read(cx).positions().clone();
+        let classes = self.cluster_k;
+        let generation = self.begin_algo_run();
+        self.spawn_algo_task(cx, generation, move || {
+            let started = Instant::now();
+            let elapsed_ms = || started.elapsed().as_secs_f64() * 1000.0;
+            match fuzzy_cmeans_groups(&snapshot, &positions, classes, KMEANS_ITERATIONS, FUZZY_M) {
+                Ok(groups) => algo_panel::groups_outcome(&groups, "fuzzy c-means", elapsed_ms()),
+                Err(member) => AlgoOutcome {
+                    summary: format!(
+                        "fuzzy c-means: invalid input at node {} ({:.1}ms)",
+                        member.index(),
+                        elapsed_ms()
+                    ),
+                    ..AlgoOutcome::default()
+                },
+            }
+        });
+    }
+
+    pub(crate) fn run_linkage(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.store.read(cx).graph().clone();
+        let positions: Positions = self.layout.read(cx).positions().clone();
+        let threshold = self.cluster_threshold;
+        let linkage = self.linkage;
+        let generation = self.begin_algo_run();
+        self.spawn_algo_task(cx, generation, move || {
+            let started = Instant::now();
+            let elapsed_ms = || started.elapsed().as_secs_f64() * 1000.0;
+            let label = match linkage {
+                cg_graph::Linkage::Min => "hierarchical min",
+                cg_graph::Linkage::Max => "hierarchical max",
+                cg_graph::Linkage::Mean => "hierarchical mean",
+            };
+            match hierarchical_clusters_with_linkage(&snapshot, &positions, threshold, linkage) {
+                Ok(groups) => algo_panel::groups_outcome(&groups, label, elapsed_ms()),
+                Err(member) => AlgoOutcome {
+                    summary: format!(
+                        "{label}: invalid input at node {} ({:.1}ms)",
+                        member.index(),
+                        elapsed_ms()
+                    ),
+                    ..AlgoOutcome::default()
+                },
+            }
+        });
+    }
+
+    pub(crate) fn run_weighted_degree(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.store.read(cx).graph().clone();
+        let alpha = self.weighted_alpha;
+        let directed = self.weighted_directed;
+        let generation = self.begin_algo_run();
+        self.spawn_algo_task(cx, generation, move || {
+            let started = Instant::now();
+            let order = node_order(&snapshot);
+            let scores = weighted_degree_centrality(&snapshot, alpha, directed);
+            let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+            let label = if directed {
+                format!("weighted degree a={alpha:.2} directed")
+            } else {
+                format!("weighted degree a={alpha:.2} undirected")
+            };
+            algo_panel::centrality_outcome(&order, &scores, &label, elapsed_ms)
+        });
+    }
+
+    pub(crate) fn run_max_flow(&mut self, cx: &mut Context<Self>) {
+        let Some((start, goal)) = self.algo_endpoints(cx) else {
+            self.algo_summary = "max flow needs at least one node".to_string();
+            cx.notify();
+            return;
+        };
+        let snapshot = self.store.read(cx).graph().clone();
+        let generation = self.begin_algo_run();
+        self.spawn_algo_task(cx, generation, move || {
+            let started = Instant::now();
+            let (value, detailed) = maximum_flow_value(&snapshot, start, goal);
+            let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+            algo_panel::flow_outcome(&detailed, value, elapsed_ms)
+        });
+    }
+
+    pub(crate) fn run_greedy_matching(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.store.read(cx).graph().clone();
+        let generation = self.begin_algo_run();
+        self.spawn_algo_task(cx, generation, move || {
+            let started = Instant::now();
+            let pairs = greedy_matching_pairs(&snapshot);
+            let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+            algo_panel::matching_outcome(&pairs, "greedy matching", elapsed_ms)
+        });
+    }
+
+    pub(crate) fn run_max_matching(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.store.read(cx).graph().clone();
+        let generation = self.begin_algo_run();
+        self.spawn_algo_task(cx, generation, move || {
+            let started = Instant::now();
+            let pairs = maximum_matching_pairs(&snapshot);
+            let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+            algo_panel::matching_outcome(&pairs, "maximum matching", elapsed_ms)
+        });
+    }
+
+    pub(crate) fn run_dsatur(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.store.read(cx).graph().clone();
+        let generation = self.begin_algo_run();
+        self.spawn_algo_task(cx, generation, move || {
+            let started = Instant::now();
+            let (groups, count) = dsatur_groups(&snapshot);
+            let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+            let mut outcome = algo_panel::groups_outcome(&groups, "dsatur", elapsed_ms);
+            outcome.summary = format!(
+                "dsatur: {count} colors, {} groups ({elapsed_ms:.1}ms)",
+                groups.len()
+            );
+            outcome
+        });
+    }
+
+    pub(crate) fn run_cliques(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.store.read(cx).graph().clone();
+        let generation = self.begin_algo_run();
+        self.spawn_algo_task(cx, generation, move || {
+            let started = Instant::now();
+            let groups = maximal_clique_groups(&snapshot);
+            let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+            algo_panel::groups_outcome(&groups, "maximal cliques", elapsed_ms)
+        });
+    }
+
+    pub(crate) fn run_feedback(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.store.read(cx).graph().clone();
+        let generation = self.begin_algo_run();
+        self.spawn_algo_task(cx, generation, move || {
+            let started = Instant::now();
+            let edges = feedback_arc_edges(&snapshot);
+            let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+            algo_panel::feedback_outcome(&edges, elapsed_ms)
+        });
+    }
+
+    pub(crate) fn run_simple_paths(&mut self, cx: &mut Context<Self>) {
+        let Some((start, goal)) = self.algo_endpoints(cx) else {
+            self.algo_summary = "simple paths needs at least one node".to_string();
+            cx.notify();
+            return;
+        };
+        let snapshot = self.store.read(cx).graph().clone();
+        let limit = self.simple_limit;
+        let generation = self.begin_algo_run();
+        self.spawn_algo_task(cx, generation, move || {
+            let started = Instant::now();
+            let paths = simple_paths_limited(&snapshot, start, goal, limit);
+            let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+            algo_panel::simple_paths_outcome(&paths, elapsed_ms)
         });
     }
 }

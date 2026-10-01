@@ -1,16 +1,14 @@
-//! Single-linkage hierarchical clustering over layout positions.
+//! Hierarchical clustering over layout positions.
 //!
-//! Each node starts alone and pairs whose Euclidean distance does not exceed
-//! the caller supplied threshold join the same group. The merge uses a
-//! disjoint-set union over sorted pairs, which matches the threshold stopping
-//! rule of agglomerative clustering with the minimum distance rule while
-//! staying deterministic and free of graph writes.
+//! Each node starts alone and nearby groups merge until the closest pair is
+//! farther apart than the caller supplied threshold. The minimum distance
+//! rule merges through a disjoint-set union over sorted pairs, while the
+//! maximum and mean rules merge the closest pair iteratively. All rules stay
+//! deterministic and free of graph writes.
 //!
-//! Only the minimum distance rule is supported: it needs no cluster size
-//! bookkeeping and avoids the broken mean update of the reference
-//! implementation. Results are plain index groups with inner and outer order
-//! sorted, so repeated runs agree. Failures report the first relevant node in
-//! index order and never panic. Empty graphs yield no groups.
+//! Results are plain index groups with inner and outer order sorted, so
+//! repeated runs agree. Failures report the first relevant node in index
+//! order and never panic. Empty graphs yield no groups.
 
 use std::collections::HashMap;
 
@@ -23,6 +21,14 @@ use crate::store::{EdgeData, NodeData};
 /// Directed graph type the store owns, named here to keep signatures readable.
 type Graph = StableGraph<NodeData, EdgeData, Directed>;
 
+/// How the distance between two groups is measured during merging.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Linkage {
+    Min,
+    Max,
+    Mean,
+}
+
 /// Groups nodes whose single-linkage distance does not exceed `threshold`.
 ///
 /// `threshold` must be finite and non-negative. Every node must have a finite
@@ -32,6 +38,20 @@ pub fn hierarchical_clusters(
     graph: &Graph,
     positions: &Positions,
     threshold: f32,
+) -> Result<Vec<Vec<NodeIndex>>, NodeIndex> {
+    hierarchical_clusters_with_linkage(graph, positions, threshold, Linkage::Min)
+}
+
+/// Groups nodes with the chosen linkage rule and threshold.
+///
+/// Shares the validation and ordering contract of [`hierarchical_clusters`].
+/// The minimum rule delegates to the union fast path; the maximum and mean
+/// rules merge the closest pair iteratively with deterministic tie breaks.
+pub fn hierarchical_clusters_with_linkage(
+    graph: &Graph,
+    positions: &Positions,
+    threshold: f32,
+    linkage: Linkage,
 ) -> Result<Vec<Vec<NodeIndex>>, NodeIndex> {
     let mut order: Vec<NodeIndex> = graph.node_indices().collect();
     order.sort_unstable_by_key(|node| node.index());
@@ -51,6 +71,17 @@ pub fn hierarchical_clusters(
             _ => return Err(*node),
         }
     }
+    if linkage == Linkage::Min {
+        return min_linkage_groups(&points, threshold);
+    }
+    agglomerative_groups(&points, threshold, linkage)
+}
+
+/// Union fast path for the minimum distance rule.
+fn min_linkage_groups(
+    points: &[(NodeIndex, f32, f32)],
+    threshold: f32,
+) -> Result<Vec<Vec<NodeIndex>>, NodeIndex> {
     let mut sets = DisjointSets::new(points.len());
     let limit = threshold * threshold;
     for left in 0..points.len() {
@@ -70,9 +101,96 @@ pub fn hierarchical_clusters(
     Ok(sorted_groups(buckets.into_values().collect()))
 }
 
+/// Iterative closest pair merging for the maximum and mean rules.
+///
+/// Each round merges the closest pair of groups while their linkage distance
+/// stays within `threshold`. Ties break towards smaller member ordinals so
+/// repeated runs agree.
+fn agglomerative_groups(
+    points: &[(NodeIndex, f32, f32)],
+    threshold: f32,
+    linkage: Linkage,
+) -> Result<Vec<Vec<NodeIndex>>, NodeIndex> {
+    let mut clusters: Vec<Vec<usize>> = (0..points.len()).map(|ordinal| vec![ordinal]).collect();
+    loop {
+        let mut best: Option<(usize, usize, f32)> = None;
+        for left in 0..clusters.len() {
+            for right in (left + 1)..clusters.len() {
+                let distance = linkage_distance(points, &clusters[left], &clusters[right], linkage);
+                let take = match best {
+                    None => true,
+                    Some((best_left, best_right, best_distance)) => {
+                        distance < best_distance
+                            || (distance == best_distance
+                                && (left, right) < (best_left, best_right))
+                    }
+                };
+                if take {
+                    best = Some((left, right, distance));
+                }
+            }
+        }
+        let Some((left, right, distance)) = best else {
+            break;
+        };
+        if distance > threshold {
+            break;
+        }
+        let mut merged = clusters[left].clone();
+        merged.extend(clusters[right].iter().copied());
+        merged.sort_unstable();
+        let (low, high) = if left < right { (left, right) } else { (right, left) };
+        clusters[low] = merged;
+        clusters.remove(high);
+    }
+    let groups: Vec<Vec<NodeIndex>> = clusters
+        .into_iter()
+        .map(|members| members.into_iter().map(|ordinal| points[ordinal].0).collect())
+        .collect();
+    Ok(sorted_groups(groups))
+}
+
+/// Distance between two groups under the chosen linkage rule.
+fn linkage_distance(
+    points: &[(NodeIndex, f32, f32)],
+    first: &[usize],
+    second: &[usize],
+    linkage: Linkage,
+) -> f32 {
+    let mut min = f32::INFINITY;
+    let mut max = 0.0f32;
+    let mut total = 0.0f32;
+    let mut count = 0usize;
+    for left in first {
+        for right in second {
+            let dx = points[*left].1 - points[*right].1;
+            let dy = points[*left].2 - points[*right].2;
+            let distance = dx.hypot(dy);
+            if distance < min {
+                min = distance;
+            }
+            if distance > max {
+                max = distance;
+            }
+            total += distance;
+            count += 1;
+        }
+    }
+    match linkage {
+        Linkage::Min => min,
+        Linkage::Max => max,
+        Linkage::Mean => {
+            if count == 0 {
+                f32::INFINITY
+            } else {
+                total / count as f32
+            }
+        }
+    }
+}
+
 /// Disjoint-set union with path compression and union by rank.
-struct DisjointSets {
-    parent: Vec<usize>,
+struct DisjointSets {    parent: Vec<usize>,
     rank: Vec<u8>,
 }
 
@@ -259,5 +377,35 @@ mod tests {
         sparse.remove(&missing);
         let absent = hierarchical_clusters(&graph, &sparse, 50.0).expect_err("missing position");
         assert_eq!(absent, missing);
+    }
+
+    #[test]
+    fn every_linkage_splits_two_clusters_at_medium_threshold() {
+        let (graph, positions) = two_clusters();
+        for linkage in [Linkage::Min, Linkage::Max, Linkage::Mean] {
+            let groups = hierarchical_clusters_with_linkage(&graph, &positions, 50.0, linkage)
+                .expect("valid input");
+            assert_eq!(groups.len(), 2, "linkage {linkage:?} keeps two clusters");
+            covers_each_node_once(&graph, &groups);
+        }
+    }
+
+    #[test]
+    fn max_linkage_is_stricter_than_min_on_a_chain() {
+        let mut graph: Graph = StableGraph::default();
+        let nodes: Vec<NodeIndex> = (0..3).map(|ordinal| graph.add_node(labelled(&ordinal.to_string()))).collect();
+        let positions: Positions = [
+            (nodes[0], Point2::new(0.0, 0.0)),
+            (nodes[1], Point2::new(2.0, 0.0)),
+            (nodes[2], Point2::new(3.0, 0.0)),
+        ]
+        .into_iter()
+        .collect();
+        let min = hierarchical_clusters_with_linkage(&graph, &positions, 2.5, Linkage::Min)
+            .expect("valid input");
+        assert_eq!(min.len(), 1);
+        let max = hierarchical_clusters_with_linkage(&graph, &positions, 2.5, Linkage::Max)
+            .expect("valid input");
+        assert_eq!(max.len(), 2);
     }
 }

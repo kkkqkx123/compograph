@@ -156,6 +156,82 @@ pub fn rank_nodes(
     page_rank(graph, damping, iterations)
 }
 
+/// Weighted degree centrality mixing neighbour count and edge strength.
+///
+/// Each raw score is `degree^(1 - alpha) * strength^alpha` with non negative
+/// strength summed from incident edge weights; parallel edges add up and self
+/// loops are ignored. The directed mode counts outgoing edges only, otherwise
+/// both directions count once per neighbour pair for the degree part while
+/// strength still sums every incident edge. Scores are normalized by the
+/// maximum raw value so they stay within zero and one; empty and single node
+/// graphs yield zeros. `alpha` must be finite within zero and one.
+pub fn weighted_degree_centrality(
+    graph: &StableGraph<NodeData, EdgeData, Directed>,
+    alpha: f32,
+    directed: bool,
+) -> Vec<f32> {
+    use petgraph::Direction;
+    use petgraph::visit::EdgeRef;
+
+    let mut order: Vec<NodeIndex> = graph.node_indices().collect();
+    order.sort_unstable_by_key(|node| node.index());
+    if order.len() < 2 || !alpha.is_finite() || alpha < 0.0 || alpha > 1.0 {
+        return vec![0.0; order.len()];
+    }
+    let mut raw = vec![0.0f64; order.len()];
+    for (ordinal, node) in order.iter().enumerate() {
+        let mut neighbours: HashMap<NodeIndex, bool> = HashMap::new();
+        let mut strength = 0.0f64;
+        let mut edge_count = 0usize;
+        if directed {
+            for edge in graph.edges_directed(*node, Direction::Outgoing) {
+                if edge.target() == *node {
+                    continue;
+                }
+                edge_count += 1;
+                strength += edge.weight().weight.max(0.0) as f64;
+                neighbours.insert(edge.target(), true);
+            }
+        } else {
+            for edge in graph.edges_directed(*node, Direction::Outgoing) {
+                if edge.target() == *node {
+                    continue;
+                }
+                edge_count += 1;
+                strength += edge.weight().weight.max(0.0) as f64;
+                neighbours.insert(edge.target(), true);
+            }
+            for edge in graph.edges_directed(*node, Direction::Incoming) {
+                if edge.source() == *node {
+                    continue;
+                }
+                edge_count += 1;
+                strength += edge.weight().weight.max(0.0) as f64;
+                neighbours.insert(edge.source(), true);
+            }
+        }
+        let degree = if directed {
+            edge_count as f64
+        } else {
+            neighbours.len() as f64
+        };
+        let degree_part = degree.powf(1.0 - alpha as f64);
+        let strength_part = strength.powf(alpha as f64);
+        raw[ordinal] = if degree == 0.0 && (alpha >= 1.0 || strength == 0.0) && alpha != 0.0 {
+            0.0
+        } else if alpha == 0.0 {
+            degree
+        } else {
+            degree_part * strength_part
+        };
+    }
+    let peak = raw.iter().copied().fold(0.0f64, f64::max);
+    if peak <= 0.0 {
+        return vec![0.0; order.len()];
+    }
+    raw.iter().map(|score| (score / peak) as f32).collect()
+}
+
 /// Undirected adjacency in ordinal space for the trio searches.
 ///
 /// Neighbours collapse parallel edges through [`GraphView::neighbors`], and
@@ -325,5 +401,18 @@ mod tests {
     fn ranking_an_empty_graph_yields_no_scores() {
         let graph: StableGraph<NodeData, EdgeData, Directed> = StableGraph::default();
         assert!(rank_nodes(&graph, 0.85, 10).is_empty());
+    }
+
+    #[test]
+    fn weighted_degree_matches_unweighted_at_zero_alpha() {
+        let graph = rank_diamond();
+        let scores = weighted_degree_centrality(&graph, 0.0, false);
+        assert_eq!(scores.len(), graph.node_count());
+        assert!(scores.iter().all(|score| score.is_finite()));
+        assert_eq!(scores.iter().copied().fold(0.0f32, f32::max), 1.0);
+        let directed = weighted_degree_centrality(&graph, 0.5, true);
+        assert!(directed.iter().all(|score| score.is_finite()));
+        let empty: StableGraph<NodeData, EdgeData, Directed> = StableGraph::default();
+        assert!(weighted_degree_centrality(&empty, 0.5, false).is_empty());
     }
 }

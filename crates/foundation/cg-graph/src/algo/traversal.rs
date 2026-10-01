@@ -2,7 +2,7 @@
 
 use petgraph::Directed;
 use petgraph::stable_graph::{NodeIndex, StableGraph};
-use petgraph::visit::{Bfs, Dfs};
+use petgraph::visit::{Bfs, Dfs, DfsPostOrder, Topo};
 
 use crate::store::{EdgeData, NodeData};
 
@@ -31,6 +31,36 @@ pub fn depth_first_order(graph: &Graph, start: NodeIndex) -> Vec<NodeIndex> {
         return Vec::new();
     }
     let mut search = Dfs::new(graph, start);
+    let mut order = Vec::new();
+    while let Some(node) = search.next(graph) {
+        order.push(node);
+    }
+    order
+}
+
+/// Nodes in post order from `start` along outgoing edges.
+///
+/// Children appear before their parent, which suits teardown style passes. A
+/// missing source yields an empty order rather than an error.
+pub fn post_order(graph: &Graph, start: NodeIndex) -> Vec<NodeIndex> {
+    if graph.node_weight(start).is_none() {
+        return Vec::new();
+    }
+    let mut search = DfsPostOrder::new(graph, start);
+    let mut order = Vec::new();
+    while let Some(node) = search.next(graph) {
+        order.push(node);
+    }
+    order
+}
+
+/// Nodes in topological walk order over the whole graph.
+///
+/// Sources without incoming edges lead the walk, which suits layout passes
+/// that need a stable global sequence. Cyclic input simply visits fewer
+/// nodes; cycle reporting stays with the fallible global order.
+pub fn topo_order(graph: &Graph) -> Vec<NodeIndex> {
+    let mut search = Topo::new(graph);
     let mut order = Vec::new();
     while let Some(node) = search.next(graph) {
         order.push(node);
@@ -67,5 +97,22 @@ mod tests {
         assert_eq!(depth.len(), graph.node_count());
         assert!(breadth_first_order(&graph, NodeIndex::new(99)).is_empty());
         assert!(depth_first_order(&graph, NodeIndex::new(99)).is_empty());
+    }
+
+    #[test]
+    fn postorder_places_children_before_parents() {
+        let (graph, a, _, _, _) = diamond();
+        let post = post_order(&graph, a);
+        assert_eq!(post.len(), graph.node_count());
+        assert_eq!(post.last(), Some(&a));
+        assert!(post_order(&graph, NodeIndex::new(99)).is_empty());
+    }
+
+    #[test]
+    fn topo_walk_covers_acyclic_graphs() {
+        let (graph, _, _, _, _) = diamond();
+        let order = topo_order(&graph);
+        assert_eq!(order.len(), graph.node_count());
+        assert!(topo_order(&StableGraph::default()).is_empty());
     }
 }

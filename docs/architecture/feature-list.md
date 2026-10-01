@@ -46,7 +46,7 @@
 
 > petgraph 缺失、cytoscape 独有的部分“网络科学”算法中，层次聚类、马尔可夫聚类、k 均值、亲和传播、距离度量、Euler 路径、确定性全局最小割已单点落地（见 §6）。度/接近/介数中心性已按 P1 方案自研落地，不在远期表。
 >
-> **已桥接算法（`cg-graph/src/algo.rs`，共 18 个）**：`shortest_paths`/`shortest_path_cost`（Dijkstra）、`shortest_path`（A*）、`heuristic_shortest_path`（带位置启发式 A*）、`strongly_connected_components`（Tarjan）、`minimum_spanning_forest`（Kruskal）、`minimum_spanning_tree_single`（Prim）、`topological_order`、`immediate_dominators`、`rank_nodes`（PageRank）、`transitive_reduction`，另有 P1 新增 `all_pairs_shortest_paths`（自研 Floyd-Warshall）、`bellman_ford_paths` + `negative_cycle_path`、`articulation_points` + `bridges`（自研无向语义）、`breadth_first_order` + `depth_first_order`。中心性三件套在 `centrality.rs`（度/接近/介数，无权版本）。UI 已暴露 23 个面板入口（最短路/引导搜索/连通分量/PageRank/生成树/度中心性/割点桥/全源/负权/遍历/拓扑与归约/接近/介数/单源生成树/支配集/有向欧拉路/无向欧拉路/最小割/层次聚类/马尔可夫聚类/k 均值/亲和传播/度量分组）。欧拉路双语义在 `euler.rs`，全局最小割在 `min_cut.rs`，五组聚类在 `hierarchical.rs` + `markov.rs` + `kmeans.rs` + `affinity.rs` + `distances.rs`。
+> **已桥接算法（`cg-graph/src/algo.rs`）**：`shortest_paths`/`shortest_path_cost`（Dijkstra）、`bidirectional_path_cost`（双向 Dijkstra）、`shortest_path`（A*）、`heuristic_shortest_path`（带位置启发式 A*）、`spfa_paths`、`johnson_paths`、`kth_shortest_costs`、`strongly_connected_components`（Tarjan）、`kosaraju_components` + `condensation_groups`、`undirected_connected_components` + `has_directed_path` + `is_cyclic_*` + `is_bipartite_graph`、`minimum_spanning_forest`（Kruskal）、`minimum_spanning_tree_single`（Prim）、`topological_order` + `topo_order`、`post_order`、`immediate_dominators`、`rank_nodes`（PageRank）、`weighted_degree_centrality`（加权度中心性）、`transitive_reduction`，另有 `all_pairs_shortest_paths`（自研 Floyd-Warshall）、`bellman_ford_paths` + `negative_cycle_path`、`articulation_points` + `bridges`（自研无向语义）、`breadth_first_order` + `depth_first_order`、组合优化 `maximum_flow_value` + `greedy/maximum_matching_pairs` + `dsatur_groups` + `maximal_clique_groups` + `feedback_arc_edges` + `simple_paths_limited`（`algo/combinatorial.rs`）。中心性三件套在 `centrality.rs`（度/接近/介数，无权版本）。聚类在 `hierarchical.rs`（最小/最大/均值连接） + `markov.rs` + `kmeans.rs`（k 均值/k-medoids/模糊 C 均值） + `affinity.rs` + `distances.rs`。
 
 ---
 
@@ -115,7 +115,7 @@
 |---|---|---|---|---|
 | 5.1 | 窗口/画布容器 `GraphView` | `[gpui]` | P0 | ✅ 已落地（`main.rs` 的 `GraphWindow`） |
 | 5.2 | 布局切换 UI（下拉/命令面板） | `[自研]` | P1 | ✅ 已落地（`switch_layout` + 顶栏菜单） |
-| 5.3 | 算法执行面板（选算法→后台跑→结果高亮/面板展示） | `[自研]` | P2 | ✅ 已落地（21 类算法 + `algo_panel.rs` + 代次守卫，全部算法桥与 P3 自研算法均可跑可看） |
+| 5.3 | 算法执行面板（选算法→后台跑→结果高亮/面板展示） | `[自研]` | P2 | ✅ 已落地（42 类算法 + `algo_panel.rs` + 代次守卫，全部算法桥与 P3 自研算法均可跑可看：最短路变体、连通判定、遍历、聚类、中心性、组合优化均已接线） |
 | 5.4 | 图导入/导出入口（文件对话框） | `[自研]` | P2 | ✅ 已落地：JSON 进出、DOT 进出、图片导出（PNG） |
 | 5.5 | 状态栏（节点/边计数、缩放比、布局耗时） | `[自研]` | P2 | ✅ 已落地（含 LOD/帧耗时/索引耗时） |
 

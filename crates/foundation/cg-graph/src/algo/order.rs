@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use petgraph::Directed;
-use petgraph::algo::{dominators::simple_fast, tarjan_scc, toposort};
+use petgraph::algo::{dominators::simple_fast, kosaraju_scc, tarjan_scc, toposort};
 use petgraph::stable_graph::{EdgeIndex, NodeIndex, StableGraph};
 use petgraph::visit::{EdgeRef, IntoEdgeReferences};
 
@@ -16,6 +16,50 @@ type Graph = StableGraph<NodeData, EdgeData, Directed>;
 /// Components are returned in reverse topological order, matching petgraph.
 pub fn strongly_connected_components(graph: &Graph) -> Vec<Vec<NodeIndex>> {
     tarjan_scc(graph)
+}
+
+/// Strongly connected components via the two pass search.
+///
+/// Offers the same grouping as [`strongly_connected_components`] through the
+/// alternative upstream implementation, which is useful as a cross check.
+/// Each group arrives sorted and groups are ordered by their smallest member.
+pub fn kosaraju_components(graph: &Graph) -> Vec<Vec<NodeIndex>> {
+    let mut groups = kosaraju_scc(graph);
+    for group in groups.iter_mut() {
+        group.sort_unstable_by_key(|node| node.index());
+    }
+    groups.sort_unstable_by_key(|group| {
+        group.first().map(|node| node.index()).unwrap_or(usize::MAX)
+    });
+    groups
+}
+
+/// Condensation of the graph as groups plus edges between groups.
+///
+/// Groups follow [`kosaraju_components`] ordering. Each inter group edge is
+/// reported once as a pair of group ordinals, sorted and deduplicated, so
+/// callers can render the acyclic quotient without consuming the store.
+pub fn condensation_groups(graph: &Graph) -> (Vec<Vec<NodeIndex>>, Vec<(usize, usize)>) {
+    let groups = kosaraju_components(graph);
+    let mut owner: HashMap<NodeIndex, usize> = HashMap::new();
+    for (ordinal, group) in groups.iter().enumerate() {
+        for node in group {
+            owner.insert(*node, ordinal);
+        }
+    }
+    let mut between: Vec<(usize, usize)> = Vec::new();
+    for reference in graph.edge_references() {
+        let from = owner.get(&reference.source()).copied();
+        let to = owner.get(&reference.target()).copied();
+        if let (Some(from), Some(to)) = (from, to)
+            && from != to
+        {
+            between.push((from, to));
+        }
+    }
+    between.sort_unstable();
+    between.dedup();
+    (groups, between)
 }
 
 /// Nodes in topological order, or the first node closing a cycle.
@@ -203,5 +247,26 @@ mod tests {
                 .expect("empty")
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn kosaraju_agrees_with_tarjan_and_condensation_links_groups() {
+        let mut graph: Graph = StableGraph::default();
+        let a = graph.add_node(NodeData { label: "a".into() });
+        let b = graph.add_node(NodeData { label: "b".into() });
+        let c = graph.add_node(NodeData { label: "c".into() });
+        graph.add_edge(a, b, EdgeData { weight: 1.0 });
+        graph.add_edge(b, a, EdgeData { weight: 1.0 });
+        graph.add_edge(b, c, EdgeData { weight: 1.0 });
+        let mut tarjan = strongly_connected_components(&graph);
+        let kosaraju = kosaraju_components(&graph);
+        assert_eq!(tarjan.len(), kosaraju.len());
+        for group in tarjan.iter_mut().flatten() {
+            let _ = group;
+        }
+        let (groups, between) = condensation_groups(&graph);
+        assert_eq!(groups.len(), 2);
+        assert_eq!(between.len(), 1);
+        assert!(kosaraju_components(&StableGraph::default()).is_empty());
     }
 }

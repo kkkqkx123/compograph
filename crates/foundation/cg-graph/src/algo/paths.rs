@@ -3,7 +3,10 @@
 use std::collections::HashMap;
 
 use petgraph::Directed;
-use petgraph::algo::{astar, bellman_ford, dijkstra, find_negative_cycle};
+use petgraph::algo::{
+    astar, bellman_ford, bidirectional_dijkstra, dijkstra, find_negative_cycle, johnson,
+    k_shortest_path, spfa,
+};
 use petgraph::stable_graph::{NodeIndex, StableGraph};
 use petgraph::visit::{EdgeRef, IntoEdgeReferences, NodeIndexable};
 
@@ -39,6 +42,118 @@ pub fn shortest_path_cost(graph: &Graph, start: NodeIndex, goal: NodeIndex) -> O
     dijkstra(graph, start, Some(goal), |edge| edge.weight().weight)
         .get(&goal)
         .copied()
+}
+
+/// Shortest-path distance searched from both endpoints at once.
+///
+/// Delegates directly to petgraph, which needs no compact index bound here.
+/// Missing endpoints yield no cost rather than an error.
+pub fn bidirectional_path_cost(
+    graph: &Graph,
+    start: NodeIndex,
+    goal: NodeIndex,
+) -> Option<f32> {
+    if graph.node_weight(start).is_none() || graph.node_weight(goal).is_none() {
+        return None;
+    }
+    bidirectional_dijkstra(graph, start, goal, |edge| edge.weight().weight)
+}
+
+/// Single-source distances via the queue based shortest path search.
+///
+/// Runs on the weight mirror so node removals cannot break the compact index
+/// bound the upstream search requires. Returns a cycle member on failure and
+/// empty maps for a missing source.
+pub fn spfa_paths(graph: &Graph, source: NodeIndex) -> Result<DistanceMaps, NodeIndex> {
+    if graph.node_weight(source).is_none() {
+        return Ok((HashMap::new(), HashMap::new()));
+    }
+    let (mirror, forward, backward) = mirror_for_negative(graph);
+    let Some(mirror_source) = forward.get(&source).copied() else {
+        return Ok((HashMap::new(), HashMap::new()));
+    };
+    match spfa(&mirror, mirror_source, |edge| *edge.weight()) {
+        Ok(paths) => {
+            let mut distances = HashMap::new();
+            let mut predecessors = HashMap::new();
+            for node in graph.node_indices() {
+                let Some(mirror_node) = forward.get(&node).copied() else {
+                    continue;
+                };
+                let slot = mirror.to_index(mirror_node);
+                let reached = paths.distances.get(slot).copied().unwrap_or(f32::INFINITY);
+                if reached.is_finite() {
+                    distances.insert(node, reached);
+                    let parent = paths.predecessors.get(slot).copied().flatten().and_then(
+                        |mirror_parent| backward.get(&mirror_parent).copied(),
+                    );
+                    predecessors.insert(node, parent);
+                }
+            }
+            Ok((distances, predecessors))
+        }
+        Err(_) => Err(find_negative_cycle(&mirror, mirror_source)
+            .and_then(|cycle| cycle.first().copied())
+            .and_then(|mirror_member| backward.get(&mirror_member).copied())
+            .unwrap_or(source)),
+    }
+}
+
+/// All-pairs distances via reweighted single-source searches.
+///
+/// Runs on the weight mirror for the same compactness reason as the negative
+/// weight searches. Only reachable pairs are present and the diagonal holds
+/// zeros. Returns a cycle member when a negative cycle exists.
+pub fn johnson_paths(
+    graph: &Graph,
+) -> Result<HashMap<(NodeIndex, NodeIndex), f32>, NodeIndex> {
+    if graph.node_count() == 0 {
+        return Ok(HashMap::new());
+    }
+    let (mirror, _, backward) = mirror_for_negative(graph);
+    let reverse: HashMap<NodeIndex, NodeIndex> = backward.iter().map(|(a, b)| (*b, *a)).collect();
+    match johnson(&mirror, |edge| *edge.weight()) {
+        Ok(matrix) => {
+            let mut sparse = HashMap::new();
+            for ((from_mirror, to_mirror), cost) in matrix {
+                if let (Some(from), Some(to)) = (
+                    backward.get(&from_mirror).copied(),
+                    backward.get(&to_mirror).copied(),
+                ) {
+                    sparse.insert((from, to), cost);
+                }
+            }
+            for node in graph.node_indices() {
+                sparse.entry((node, node)).or_insert(0.0);
+            }
+            let _ = reverse;
+            Ok(sparse)
+        }
+        Err(_) => Err(negative_member(graph)),
+    }
+}
+
+/// Cost of the k-th shortest walk to each node from `start`.
+///
+/// Runs on the weight mirror so removed indices cannot break the dense
+/// counter the upstream search keeps. Nodes visited fewer than `k` times are
+/// absent. A zero `k` or missing source yields an empty map.
+pub fn kth_shortest_costs(
+    graph: &Graph,
+    start: NodeIndex,
+    k: usize,
+) -> HashMap<NodeIndex, f32> {
+    if k == 0 || graph.node_weight(start).is_none() {
+        return HashMap::new();
+    }
+    let (mirror, forward, backward) = mirror_for_negative(graph);
+    let Some(mirror_start) = forward.get(&start).copied() else {
+        return HashMap::new();
+    };
+    k_shortest_path(&mirror, mirror_start, None, k, |edge| *edge.weight())
+        .into_iter()
+        .filter_map(|(mirror_node, cost)| backward.get(&mirror_node).copied().map(|node| (node, cost)))
+        .collect()
 }
 
 /// Cheapest node sequence from `start` to `goal`, with its total cost.
@@ -404,5 +519,47 @@ mod tests {
         assert!(negative_cycle_path(&graph, NodeIndex::new(99)).is_none());
         let (acyclic, start, _, _, _) = diamond();
         assert!(negative_cycle_path(&acyclic, start).is_none());
+    }
+
+    #[test]
+    fn bidirectional_matches_dijkstra_and_rejects_missing() {
+        let (graph, a, _, _, d) = diamond();
+        assert_eq!(bidirectional_path_cost(&graph, a, d), Some(3.0));
+        assert_eq!(bidirectional_path_cost(&graph, d, a), None);
+        assert_eq!(
+            bidirectional_path_cost(&graph, a, NodeIndex::new(99)),
+            None
+        );
+    }
+
+    #[test]
+    fn spfa_matches_bellman_ford_on_negative_weights() {
+        let mut graph: Graph = StableGraph::default();
+        let a = graph.add_node(NodeData { label: "a".into() });
+        let b = graph.add_node(NodeData { label: "b".into() });
+        let c = graph.add_node(NodeData { label: "c".into() });
+        graph.add_edge(a, b, EdgeData { weight: -2.0 });
+        graph.add_edge(b, c, EdgeData { weight: 1.0 });
+        let (distances, _) = spfa_paths(&graph, a).expect("no cycle");
+        assert_eq!(distances.get(&c), Some(&-1.0));
+        assert!(spfa_paths(&graph, NodeIndex::new(99)).expect("missing").0.is_empty());
+    }
+
+    #[test]
+    fn johnson_matches_all_pairs_on_the_diamond() {
+        let (graph, a, _, _, d) = diamond();
+        let matrix = johnson_paths(&graph).expect("the diamond has no cycle");
+        assert_eq!(matrix.get(&(a, d)), Some(&3.0));
+        assert_eq!(matrix.get(&(a, a)), Some(&0.0));
+        assert!(johnson_paths(&StableGraph::default()).expect("empty").is_empty());
+    }
+
+    #[test]
+    fn kth_shortest_counts_revisits() {
+        let (graph, a, _, _, d) = diamond();
+        let first = kth_shortest_costs(&graph, a, 1);
+        assert_eq!(first.get(&d), Some(&3.0));
+        assert!(kth_shortest_costs(&graph, a, 0).is_empty());
+        assert!(kth_shortest_costs(&graph, NodeIndex::new(99), 2).is_empty());
     }
 }

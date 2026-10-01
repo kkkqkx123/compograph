@@ -9,7 +9,9 @@ use gpui::{
     StatefulInteractiveElement, Styled, div, px,
 };
 
-use crate::app_state::{CLUSTER_THRESHOLD_STEP, DAMPING_STEP, GraphWindow};
+use crate::app_state::{
+    CLUSTER_THRESHOLD_STEP, DAMPING_STEP, WEIGHTED_ALPHA_STEP, GraphWindow,
+};
 
 impl GraphWindow {
     pub(crate) fn sidebar_view(&self, cx: &Context<Self>) -> impl IntoElement {
@@ -24,6 +26,16 @@ impl GraphWindow {
             cg_graph::ClusterMetric::Manhattan => "manhattan",
             cg_graph::ClusterMetric::Chebyshev => "chebyshev",
         };
+        let linkage = self.linkage;
+        let linkage_label = match linkage {
+            cg_graph::Linkage::Min => "min",
+            cg_graph::Linkage::Max => "max",
+            cg_graph::Linkage::Mean => "mean",
+        };
+        let weighted_alpha = self.weighted_alpha;
+        let weighted_directed = self.weighted_directed;
+        let path_k = self.path_k;
+        let simple_limit = self.simple_limit;
         let algo_busy = self.algo_busy;
         let algo_summary = self.algo_summary.clone();
         div()
@@ -264,6 +276,196 @@ impl GraphWindow {
                         },
                     )),
             )
+            .child(
+                div()
+                    .id(("algo-run", 23usize))
+                    .child("bidirectional")
+                    .on_click(cx.listener(
+                        |this, _event: &ClickEvent, _window, cx| {
+                            this.run_bidirectional(cx);
+                        },
+                    )),
+            )
+            .child(
+                div()
+                    .id(("algo-run", 24usize))
+                    .child("spfa")
+                    .on_click(cx.listener(
+                        |this, _event: &ClickEvent, _window, cx| {
+                            this.run_spfa(cx);
+                        },
+                    )),
+            )
+            .child(
+                div()
+                    .id(("algo-run", 25usize))
+                    .child("johnson")
+                    .on_click(cx.listener(
+                        |this, _event: &ClickEvent, _window, cx| {
+                            this.run_johnson(cx);
+                        },
+                    )),
+            )
+            .child(
+                div()
+                    .id(("algo-run", 26usize))
+                    .child("kth shortest")
+                    .on_click(cx.listener(
+                        |this, _event: &ClickEvent, _window, cx| {
+                            this.run_kth_shortest(cx);
+                        },
+                    )),
+            )
+            .child(
+                div()
+                    .id(("algo-run", 27usize))
+                    .child("kosaraju")
+                    .on_click(cx.listener(
+                        |this, _event: &ClickEvent, _window, cx| {
+                            this.run_kosaraju(cx);
+                        },
+                    )),
+            )
+            .child(
+                div()
+                    .id(("algo-run", 28usize))
+                    .child("condensation")
+                    .on_click(cx.listener(
+                        |this, _event: &ClickEvent, _window, cx| {
+                            this.run_condensation(cx);
+                        },
+                    )),
+            )
+            .child(
+                div()
+                    .id(("algo-run", 29usize))
+                    .child("connectivity")
+                    .on_click(cx.listener(
+                        |this, _event: &ClickEvent, _window, cx| {
+                            this.run_connectivity(cx);
+                        },
+                    )),
+            )
+            .child(
+                div()
+                    .id(("algo-run", 30usize))
+                    .child("order walk")
+                    .on_click(cx.listener(
+                        |this, _event: &ClickEvent, _window, cx| {
+                            this.run_order_walk(cx);
+                        },
+                    )),
+            )
+            .child(
+                div()
+                    .id(("algo-run", 31usize))
+                    .child("k-medoids")
+                    .on_click(cx.listener(
+                        |this, _event: &ClickEvent, _window, cx| {
+                            this.run_kmedoids(cx);
+                        },
+                    )),
+            )
+            .child(
+                div()
+                    .id(("algo-run", 32usize))
+                    .child("fuzzy c-means")
+                    .on_click(cx.listener(
+                        |this, _event: &ClickEvent, _window, cx| {
+                            this.run_fuzzy(cx);
+                        },
+                    )),
+            )
+            .child(
+                div()
+                    .id(("algo-run", 33usize))
+                    .child("linkage")
+                    .on_click(cx.listener(
+                        |this, _event: &ClickEvent, _window, cx| {
+                            this.run_linkage(cx);
+                        },
+                    )),
+            )
+            .child(
+                div()
+                    .id(("algo-run", 34usize))
+                    .child("weighted degree")
+                    .on_click(cx.listener(
+                        |this, _event: &ClickEvent, _window, cx| {
+                            this.run_weighted_degree(cx);
+                        },
+                    )),
+            )
+            .child(
+                div()
+                    .id(("algo-run", 35usize))
+                    .child("max flow")
+                    .on_click(cx.listener(
+                        |this, _event: &ClickEvent, _window, cx| {
+                            this.run_max_flow(cx);
+                        },
+                    )),
+            )
+            .child(
+                div()
+                    .id(("algo-run", 36usize))
+                    .child("greedy matching")
+                    .on_click(cx.listener(
+                        |this, _event: &ClickEvent, _window, cx| {
+                            this.run_greedy_matching(cx);
+                        },
+                    )),
+            )
+            .child(
+                div()
+                    .id(("algo-run", 37usize))
+                    .child("maximum matching")
+                    .on_click(cx.listener(
+                        |this, _event: &ClickEvent, _window, cx| {
+                            this.run_max_matching(cx);
+                        },
+                    )),
+            )
+            .child(
+                div()
+                    .id(("algo-run", 38usize))
+                    .child("dsatur")
+                    .on_click(cx.listener(
+                        |this, _event: &ClickEvent, _window, cx| {
+                            this.run_dsatur(cx);
+                        },
+                    )),
+            )
+            .child(
+                div()
+                    .id(("algo-run", 39usize))
+                    .child("maximal cliques")
+                    .on_click(cx.listener(
+                        |this, _event: &ClickEvent, _window, cx| {
+                            this.run_cliques(cx);
+                        },
+                    )),
+            )
+            .child(
+                div()
+                    .id(("algo-run", 40usize))
+                    .child("feedback arcs")
+                    .on_click(cx.listener(
+                        |this, _event: &ClickEvent, _window, cx| {
+                            this.run_feedback(cx);
+                        },
+                    )),
+            )
+            .child(
+                div()
+                    .id(("algo-run", 41usize))
+                    .child("simple paths")
+                    .on_click(cx.listener(
+                        |this, _event: &ClickEvent, _window, cx| {
+                            this.run_simple_paths(cx);
+                        },
+                    )),
+            )
             .child(format!("from: {start_label}"))
             .child(
                 div()
@@ -401,6 +603,108 @@ impl GraphWindow {
                                         CLUSTER_THRESHOLD_STEP,
                                         cx,
                                     );
+                                },
+                            )),
+                    ),
+            )
+            .child(format!("linkage: {linkage_label}"))
+            .child(
+                div()
+                    .id("algo-linkage-cycle")
+                    .child("cycle linkage")
+                    .on_click(cx.listener(
+                        |this, _event: &ClickEvent, _window, cx| {
+                            this.cycle_linkage(cx);
+                        },
+                    )),
+            )
+            .child(format!(
+                "weighted: a={weighted_alpha:.2} {}",
+                if weighted_directed {
+                    "directed"
+                } else {
+                    "undirected"
+                }
+            ))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap_2()
+                    .child(
+                        div()
+                            .id("algo-alpha-down")
+                            .child("-")
+                            .on_click(cx.listener(
+                                |this, _event: &ClickEvent, _window, cx| {
+                                    this.shift_weighted_alpha(-WEIGHTED_ALPHA_STEP, cx);
+                                },
+                            )),
+                    )
+                    .child(
+                        div()
+                            .id("algo-alpha-up")
+                            .child("+")
+                            .on_click(cx.listener(
+                                |this, _event: &ClickEvent, _window, cx| {
+                                    this.shift_weighted_alpha(WEIGHTED_ALPHA_STEP, cx);
+                                },
+                            )),
+                    )
+                    .child(
+                        div()
+                            .id("algo-directed-toggle")
+                            .child("toggle directed")
+                            .on_click(cx.listener(
+                                |this, _event: &ClickEvent, _window, cx| {
+                                    this.toggle_weighted_directed(cx);
+                                },
+                            )),
+                    ),
+            )
+            .child(format!("path k: {path_k} limit: {simple_limit}"))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap_2()
+                    .child(
+                        div()
+                            .id("algo-path-k-down")
+                            .child("k-")
+                            .on_click(cx.listener(
+                                |this, _event: &ClickEvent, _window, cx| {
+                                    this.shift_path_k(-1, cx);
+                                },
+                            )),
+                    )
+                    .child(
+                        div()
+                            .id("algo-path-k-up")
+                            .child("k+")
+                            .on_click(cx.listener(
+                                |this, _event: &ClickEvent, _window, cx| {
+                                    this.shift_path_k(1, cx);
+                                },
+                            )),
+                    )
+                    .child(
+                        div()
+                            .id("algo-limit-down")
+                            .child("limit-")
+                            .on_click(cx.listener(
+                                |this, _event: &ClickEvent, _window, cx| {
+                                    this.shift_simple_limit(-1, cx);
+                                },
+                            )),
+                    )
+                    .child(
+                        div()
+                            .id("algo-limit-up")
+                            .child("limit+")
+                            .on_click(cx.listener(
+                                |this, _event: &ClickEvent, _window, cx| {
+                                    this.shift_simple_limit(1, cx);
                                 },
                             )),
                     ),

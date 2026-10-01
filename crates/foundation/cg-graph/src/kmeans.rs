@@ -1,10 +1,11 @@
-//! Deterministic k-means clustering over layout positions.
+//! Partitional clustering over layout positions.
 //!
-//! Initial centers are the positions of the first nodes in index order, so no
-//! random source is involved and repeated runs agree. Each round assigns every
-//! node to its nearest center and then moves each center to the mean of its
-//! members. Empty clusters keep their previous center during iteration and
-//! are dropped from the final output, so callers never observe vacant slots.
+//! Initial centers and medoids are the positions of the first nodes in index
+//! order, so no random source is involved and repeated runs agree. Each round
+//! assigns every node to its nearest representative and then refreshes the
+//! representatives from their members. Empty clusters keep their previous
+//! representative during iteration and are dropped from the final output, so
+//! callers never observe vacant slots.
 //!
 //! Results are plain index groups with inner and outer order sorted. Failures
 //! report the first relevant node in index order and never panic. Empty
@@ -91,6 +92,220 @@ pub fn kmeans_clusters(
         buckets.entry(assignment[ordinal]).or_default().push(*node);
     }
     Ok(sorted_groups(buckets.into_values().collect()))
+}
+
+/// Groups nodes into `k` clusters around member medoids.
+///
+/// Medoids stay on input points: each round assigns nodes to the nearest
+/// medoid and then picks the member minimizing the within group distance sum
+/// as the new medoid. Shares the validation and ordering contract of
+/// [`kmeans_clusters`].
+pub fn kmedoids_clusters(
+    graph: &Graph,
+    positions: &Positions,
+    k: usize,
+    max_iterations: usize,
+) -> Result<Vec<Vec<NodeIndex>>, NodeIndex> {
+    let points = collect_points(graph, positions, k, max_iterations)?;
+    if points.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut medoids: Vec<usize> = (0..k).collect();
+    let mut assignment = vec![0usize; points.len()];
+    for _ in 0..max_iterations {
+        let mut changed = false;
+        for (ordinal, (_, x, y)) in points.iter().enumerate() {
+            let mut best = 0usize;
+            let mut best_distance = squared_distance(
+                *x,
+                *y,
+                points[medoids[0]].1,
+                points[medoids[0]].2,
+            );
+            for (slot, medoid) in medoids.iter().enumerate().skip(1) {
+                let distance =
+                    squared_distance(*x, *y, points[*medoid].1, points[*medoid].2);
+                if distance < best_distance {
+                    best_distance = distance;
+                    best = slot;
+                }
+            }
+            if assignment[ordinal] != best {
+                assignment[ordinal] = best;
+                changed = true;
+            }
+        }
+        for slot in 0..k {
+            let members: Vec<usize> = assignment
+                .iter()
+                .enumerate()
+                .filter(|(_, assigned)| **assigned == slot)
+                .map(|(ordinal, _)| ordinal)
+                .collect();
+            if members.is_empty() {
+                continue;
+            }
+            let mut best_member = members[0];
+            let mut best_sum = f32::INFINITY;
+            for candidate in &members {
+                let mut total = 0.0f32;
+                for other in &members {
+                    total += squared_distance(
+                        points[*candidate].1,
+                        points[*candidate].2,
+                        points[*other].1,
+                        points[*other].2,
+                    );
+                }
+                if total < best_sum {
+                    best_sum = total;
+                    best_member = *candidate;
+                }
+            }
+            medoids[slot] = best_member;
+        }
+        if !changed {
+            break;
+        }
+    }
+    let mut buckets: HashMap<usize, Vec<NodeIndex>> = HashMap::new();
+    for (ordinal, (node, _, _)) in points.iter().enumerate() {
+        buckets.entry(assignment[ordinal]).or_default().push(*node);
+    }
+    Ok(sorted_groups(buckets.into_values().collect()))
+}
+
+/// Groups nodes by fuzzy C-means membership, hardened to the nearest center.
+///
+/// Membership rows start from a deterministic skew and are refined with the
+/// fuzziness exponent `m`, which must exceed one. Centroids weight members by
+/// membership to the power of `m`; membership then follows inverse distance
+/// ratios. Coincident centers fall back to equal shares. Shares the
+/// validation and ordering contract of [`kmeans_clusters`], with an extra
+/// error for a non finite or non eligible `m`.
+pub fn fuzzy_cmeans_groups(
+    graph: &Graph,
+    positions: &Positions,
+    k: usize,
+    max_iterations: usize,
+    m: f32,
+) -> Result<Vec<Vec<NodeIndex>>, NodeIndex> {
+    if !m.is_finite() || m <= 1.0 {
+        let fallback = graph.node_indices().next().unwrap_or(NodeIndex::new(0));
+        return Err(fallback);
+    }
+    let points = collect_points(graph, positions, k, max_iterations)?;
+    if points.is_empty() {
+        return Ok(Vec::new());
+    }
+    let count = points.len();
+    let mut membership = vec![vec![0.0f32; k]; count];
+    for (ordinal, _) in points.iter().enumerate() {
+        let mut row_sum = 0.0f32;
+        for slot in 0..k {
+            let skew = (((ordinal + slot) % k) + 1) as f32;
+            membership[ordinal][slot] = skew;
+            row_sum += skew;
+        }
+        for slot in 0..k {
+            membership[ordinal][slot] /= row_sum;
+        }
+    }
+    let mut centers = vec![(0.0f32, 0.0f32); k];
+    for _ in 0..max_iterations {
+        for slot in 0..k {
+            let mut weight_sum = 0.0f32;
+            let mut weighted_x = 0.0f32;
+            let mut weighted_y = 0.0f32;
+            for (ordinal, (_, x, y)) in points.iter().enumerate() {
+                let weight = membership[ordinal][slot].powf(m);
+                weight_sum += weight;
+                weighted_x += weight * *x;
+                weighted_y += weight * *y;
+            }
+            if weight_sum > 0.0 {
+                centers[slot] = (weighted_x / weight_sum, weighted_y / weight_sum);
+            }
+        }
+        for (ordinal, (_, x, y)) in points.iter().enumerate() {
+            let mut distances: Vec<f32> = centers
+                .iter()
+                .map(|center| squared_distance(*x, *y, center.0, center.1).sqrt())
+                .collect();
+            let mut coincident = Vec::new();
+            for (slot, distance) in distances.iter().enumerate() {
+                if *distance == 0.0 {
+                    coincident.push(slot);
+                }
+            }
+            if !coincident.is_empty() {
+                for slot in 0..k {
+                    membership[ordinal][slot] = if coincident.contains(&slot) {
+                        1.0 / coincident.len() as f32
+                    } else {
+                        0.0
+                    };
+                }
+                continue;
+            }
+            for distance in distances.iter_mut() {
+                if *distance < 1e-9 {
+                    *distance = 1e-9;
+                }
+            }
+            let mut row_sum = 0.0f32;
+            for slot in 0..k {
+                let mut denom = 0.0f32;
+                for other in 0..k {
+                    denom += (distances[slot] / distances[other]).powf(2.0 / (m - 1.0));
+                }
+                membership[ordinal][slot] = 1.0 / denom;
+                row_sum += membership[ordinal][slot];
+            }
+            for slot in 0..k {
+                membership[ordinal][slot] /= row_sum;
+            }
+        }
+    }
+    let mut buckets: HashMap<usize, Vec<NodeIndex>> = HashMap::new();
+    for (ordinal, (node, _, _)) in points.iter().enumerate() {
+        let mut best = 0usize;
+        for slot in 1..k {
+            if membership[ordinal][slot] > membership[ordinal][best] {
+                best = slot;
+            }
+        }
+        buckets.entry(best).or_default().push(*node);
+    }
+    Ok(sorted_groups(buckets.into_values().collect()))
+}
+
+/// Ordered points with shared validation for the partitional searches.
+fn collect_points(
+    graph: &Graph,
+    positions: &Positions,
+    k: usize,
+    max_iterations: usize,
+) -> Result<Vec<(NodeIndex, f32, f32)>, NodeIndex> {
+    let mut order: Vec<NodeIndex> = graph.node_indices().collect();
+    order.sort_unstable_by_key(|node| node.index());
+    if order.is_empty() {
+        return Ok(Vec::new());
+    }
+    if k == 0 || k > order.len() || max_iterations == 0 {
+        let first = order.first().copied().unwrap_or(NodeIndex::new(0));
+        return Err(first);
+    }
+    let mut points: Vec<(NodeIndex, f32, f32)> = Vec::with_capacity(order.len());
+    for node in &order {
+        match positions.get(node) {
+            Some(point) if point.x.is_finite() && point.y.is_finite() => {
+                points.push((*node, point.x, point.y));
+            }
+            _ => return Err(*node),
+        }
+    }
+    Ok(points)
 }
 
 /// Squared Euclidean distance without a square root for comparisons.
@@ -221,5 +436,28 @@ mod tests {
         sparse.remove(&missing);
         let absent = kmeans_clusters(&graph, &sparse, 2, 10).expect_err("missing position");
         assert_eq!(absent, missing);
+    }
+
+    #[test]
+    fn medoids_split_two_clusters_deterministically() {
+        let (graph, positions) = two_clusters();
+        let groups = kmedoids_clusters(&graph, &positions, 2, 20).expect("valid input");
+        assert_eq!(groups.len(), 2);
+        covers_each_node_once(&graph, &groups);
+        let repeat = kmedoids_clusters(&graph, &positions, 2, 20).expect("valid input");
+        assert_eq!(groups, repeat);
+        assert!(kmedoids_clusters(&StableGraph::default(), &HashMap::new(), 2, 10).expect("empty").is_empty());
+    }
+
+    #[test]
+    fn fuzzy_cmeans_hardens_to_two_covering_groups() {
+        let (graph, positions) = two_clusters();
+        let groups = fuzzy_cmeans_groups(&graph, &positions, 2, 20, 2.0).expect("valid input");
+        assert_eq!(groups.len(), 2);
+        covers_each_node_once(&graph, &groups);
+        let repeat = fuzzy_cmeans_groups(&graph, &positions, 2, 20, 2.0).expect("valid input");
+        assert_eq!(groups, repeat);
+        let bad = fuzzy_cmeans_groups(&graph, &positions, 2, 10, 1.0).expect_err("unit fuzziness");
+        assert!(graph.node_weight(bad).is_some());
     }
 }

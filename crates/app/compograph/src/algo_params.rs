@@ -4,11 +4,11 @@
 //! Every adjustment clamps to its legal range and notifies, so the sidebar
 //! can never push the runs out of bounds.
 
-use cg_graph::ClusterMetric;
+use cg_graph::{ClusterMetric, Linkage};
 use gpui::Context;
 
 use crate::app_state::{
-    CLUSTER_K_MAX, CLUSTER_THRESHOLD_MAX, GraphWindow, endpoint_slot,
+    CLUSTER_K_MAX, CLUSTER_THRESHOLD_MAX, GraphWindow, PATH_K_MAX, SIMPLE_LIMIT_MAX, endpoint_slot,
 };
 
 impl GraphWindow {
@@ -75,6 +75,37 @@ impl GraphWindow {
             ClusterMetric::Manhattan => ClusterMetric::Chebyshev,
             ClusterMetric::Chebyshev => ClusterMetric::Euclidean,
         };
+        cx.notify();
+    }
+
+    pub(crate) fn cycle_linkage(&mut self, cx: &mut Context<Self>) {
+        self.linkage = match self.linkage {
+            Linkage::Min => Linkage::Max,
+            Linkage::Max => Linkage::Mean,
+            Linkage::Mean => Linkage::Min,
+        };
+        cx.notify();
+    }
+
+    pub(crate) fn shift_weighted_alpha(&mut self, delta: f32, cx: &mut Context<Self>) {
+        self.weighted_alpha = (self.weighted_alpha + delta).clamp(0.0, 1.0);
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_weighted_directed(&mut self, cx: &mut Context<Self>) {
+        self.weighted_directed = !self.weighted_directed;
+        cx.notify();
+    }
+
+    pub(crate) fn shift_path_k(&mut self, delta: i32, cx: &mut Context<Self>) {
+        let next = (self.path_k as i32 + delta).clamp(1, PATH_K_MAX as i32);
+        self.path_k = next as usize;
+        cx.notify();
+    }
+
+    pub(crate) fn shift_simple_limit(&mut self, delta: i32, cx: &mut Context<Self>) {
+        let next = (self.simple_limit as i32 + delta).clamp(1, SIMPLE_LIMIT_MAX as i32);
+        self.simple_limit = next as usize;
         cx.notify();
     }
 
