@@ -16,8 +16,8 @@ pub use combinatorial::{
     maximum_flow_value, maximum_matching_pairs, simple_paths_limited,
 };
 pub use connectivity::{
-    articulation_points, bridges, has_directed_path, is_bipartite_graph, is_cyclic_directed_graph,
-    is_cyclic_undirected_graph, undirected_connected_components,
+    articulation_points, biconnected_components, bridges, has_directed_path, is_bipartite_graph,
+    is_cyclic_directed_graph, is_cyclic_undirected_graph, undirected_connected_components,
 };
 pub use order::{
     condensation_groups, immediate_dominators, kosaraju_components,

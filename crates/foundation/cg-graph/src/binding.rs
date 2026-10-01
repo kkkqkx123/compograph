@@ -64,18 +64,26 @@ impl ChangeFilter {
     };
 
     /// Whether `event` should reach a consumer holding this filter.
+    ///
+    /// Batched work is accepted by every filter so coalescing never drops a
+    /// notification a subscriber would otherwise have received.
     pub fn accepts(&self, event: &GraphChangeEvent) -> bool {
         match event {
             GraphChangeEvent::NodeAdded(_) | GraphChangeEvent::NodeRemoved(_) => self.structure,
-            GraphChangeEvent::EdgeAdded(_) | GraphChangeEvent::EdgeRemoved(_) => self.topology,
+            GraphChangeEvent::EdgeAdded(_)
+            | GraphChangeEvent::EdgeRemoved(_)
+            | GraphChangeEvent::EdgeEndpointsChanged(_) => self.topology,
             GraphChangeEvent::NodeAttrChanged(_)
             | GraphChangeEvent::EdgeAttrChanged(_)
             | GraphChangeEvent::NodeClassChanged(_)
-            | GraphChangeEvent::EdgeClassChanged(_) => self.data,
+            | GraphChangeEvent::EdgeClassChanged(_)
+            | GraphChangeEvent::NodeDataChanged(_)
+            | GraphChangeEvent::EdgeDataChanged(_) => self.data,
             GraphChangeEvent::ParentChanged(_) | GraphChangeEvent::CollapsedChanged(_) => {
                 self.hierarchy
             }
             GraphChangeEvent::StructureReset => self.reset,
+            GraphChangeEvent::BatchCommitted => true,
         }
     }
 }
@@ -119,9 +127,13 @@ mod tests {
             GraphChangeEvent::EdgeAttrChanged(EdgeIndex::new(0)),
             GraphChangeEvent::NodeClassChanged(NodeIndex::new(0)),
             GraphChangeEvent::EdgeClassChanged(EdgeIndex::new(0)),
+            GraphChangeEvent::NodeDataChanged(NodeIndex::new(0)),
+            GraphChangeEvent::EdgeDataChanged(EdgeIndex::new(0)),
+            GraphChangeEvent::EdgeEndpointsChanged(EdgeIndex::new(0)),
             GraphChangeEvent::ParentChanged(NodeIndex::new(0)),
             GraphChangeEvent::CollapsedChanged(NodeIndex::new(0)),
             GraphChangeEvent::StructureReset,
+            GraphChangeEvent::BatchCommitted,
         ];
         for event in &events {
             assert!(ChangeFilter::ALL.accepts(event));
@@ -139,6 +151,35 @@ mod tests {
         assert!(!ChangeFilter::EDGES.accepts(&GraphChangeEvent::ParentChanged(NodeIndex::new(0))));
     }
 
+    #[test]
+    fn batch_commit_reaches_every_filter() {
+        let event = GraphChangeEvent::BatchCommitted;
+        assert!(ChangeFilter::ALL.accepts(&event));
+        assert!(ChangeFilter::NODES.accepts(&event));
+        assert!(ChangeFilter::EDGES.accepts(&event));
+        assert!(ChangeFilter::DATA.accepts(&event));
+    }
+
+    #[test]
+    fn payload_and_endpoint_events_follow_their_categories() {
+        assert!(
+            ChangeFilter::NODES.accepts(&GraphChangeEvent::NodeDataChanged(NodeIndex::new(0)))
+        );
+        assert!(
+            ChangeFilter::DATA.accepts(&GraphChangeEvent::NodeDataChanged(NodeIndex::new(0)))
+        );
+        assert!(
+            ChangeFilter::EDGES
+                .accepts(&GraphChangeEvent::EdgeEndpointsChanged(EdgeIndex::new(0)))
+        );
+        assert!(
+            !ChangeFilter::NODES
+                .accepts(&GraphChangeEvent::EdgeEndpointsChanged(EdgeIndex::new(0)))
+        );
+        assert!(
+            ChangeFilter::DATA.accepts(&GraphChangeEvent::EdgeDataChanged(EdgeIndex::new(0)))
+        );
+    }
     #[test]
     fn node_filter_rejects_edge_edits_but_keeps_resets() {
         let filter = ChangeFilter::NODES;

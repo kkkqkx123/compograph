@@ -119,9 +119,14 @@ pub fn centrality_outcome(
 }
 
 /// Highlights articulation points and bridges together.
+///
+/// Biconnected groups only join the summary count: cut vertices belong to
+/// every block they join, so highlighting whole blocks would repaint the
+/// point and bridge signal this outcome is built around.
 pub fn cut_outcome(
     points: &[NodeIndex],
     bridges: &[(NodeIndex, NodeIndex)],
+    groups: &[Vec<NodeIndex>],
     elapsed_ms: f64,
 ) -> AlgoOutcome {
     AlgoOutcome {
@@ -134,9 +139,10 @@ pub fn cut_outcome(
             .map(|(source, target)| ((*source, *target), EdgeStylePatch::highlighted()))
             .collect(),
         summary: format!(
-            "cuts: {} points, {} bridges ({elapsed_ms:.1}ms)",
+            "cuts: {} points, {} bridges, {} blocks ({elapsed_ms:.1}ms)",
             points.len(),
-            bridges.len()
+            bridges.len(),
+            groups.len()
         ),
     }
 }
@@ -518,10 +524,12 @@ mod tests {
     fn cut_outcome_highlights_points_and_bridges() {
         let points = vec![NodeIndex::new(1)];
         let bridges = vec![(NodeIndex::new(0), NodeIndex::new(1))];
-        let outcome = cut_outcome(&points, &bridges, 0.5);
+        let groups = vec![vec![NodeIndex::new(0), NodeIndex::new(1)]];
+        let outcome = cut_outcome(&points, &bridges, &groups, 0.5);
         assert_eq!(outcome.nodes.len(), 1);
         assert_eq!(outcome.edges.len(), 1);
         assert!(outcome.summary.contains("1 points"));
+        assert!(outcome.summary.contains("1 blocks"));
     }
 
     #[test]

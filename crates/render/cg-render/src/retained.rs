@@ -14,7 +14,7 @@ use cg_types::{Point2, Vec2};
 use crate::camera::Camera;
 use crate::style::{EdgeStyle, NodeStyle};
 use crate::view::{
-    EdgePaintOptions, PaintedArrow, PaintedEdge, PaintedNode, paint_single_arrow,
+    EdgeOrdinal, EdgePaintOptions, PaintedArrow, PaintedEdge, PaintedNode, paint_single_arrow,
     paint_single_edge_with_waypoints, paint_single_node,
 };
 use crate::waypoints::WaypointStore;
@@ -230,8 +230,10 @@ impl RetainedCache {
                 .iter()
                 .position(|member| *member == ordinal);
             match paint_single_edge_with_waypoints(
-                input.pairs,
-                ordinal,
+                EdgeOrdinal {
+                    pairs: input.pairs,
+                    ordinal,
+                },
                 input.positions,
                 input.camera,
                 input.viewport,

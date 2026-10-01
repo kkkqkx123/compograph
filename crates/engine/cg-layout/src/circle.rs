@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use cg_graph::{FixedNodes, GraphView, Positions};
 use cg_types::Point2;
 
-use crate::engine::LayoutEngine;
+use crate::engine::{CommonOptions, LayoutEngine};
 
 /// Spacing applied between neighbours when avoiding overlap.
 const OVERLAP_SPACING: f32 = 1.75;
@@ -57,6 +57,7 @@ impl Default for CircleOptions {
 /// Circle engine implementing the shared layout contract.
 pub struct CircleLayout {
     options: CircleOptions,
+    common: CommonOptions,
 }
 
 impl CircleLayout {
@@ -68,11 +69,21 @@ impl CircleLayout {
                 height,
                 ..CircleOptions::default()
             },
+            common: CommonOptions::default(),
         }
     }
 
     pub fn with_options(options: CircleOptions) -> Self {
-        Self { options }
+        Self {
+            options,
+            common: CommonOptions::default(),
+        }
+    }
+
+    /// Overrides the shared sort, fit and spacing inputs.
+    pub fn with_common(mut self, common: CommonOptions) -> Self {
+        self.common = common;
+        self
     }
 
     pub fn options(&self) -> &CircleOptions {
@@ -83,7 +94,7 @@ impl CircleLayout {
 impl LayoutEngine for CircleLayout {
     fn layout(&self, graph: &dyn GraphView, previous: &Positions, fixed: &FixedNodes) -> Positions {
         let mut ids = graph.node_ids();
-        ids.sort_unstable_by_key(|node| node.index());
+        self.common.sort_ids(&mut ids, graph);
         let mut result: Positions = HashMap::new();
         if ids.is_empty() {
             return result;
@@ -102,7 +113,7 @@ impl LayoutEngine for CircleLayout {
             step,
             self.options.avoid_overlap,
             self.options.node_size,
-        );
+        ) * self.common.spacing();
         let direction = if self.options.clockwise { 1.0 } else { -1.0 };
         for (ordinal, node) in ids.into_iter().enumerate() {
             if fixed.contains(&node)
@@ -125,6 +136,10 @@ impl LayoutEngine for CircleLayout {
 
     fn name(&self) -> &'static str {
         "circle"
+    }
+
+    fn set_common(&mut self, common: CommonOptions) {
+        self.common = common;
     }
 }
 

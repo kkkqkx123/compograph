@@ -1,6 +1,6 @@
 //! Owns layout state and keeps it current as the graph mutates.
 
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::time::Instant;
 
 use cg_graph::{
@@ -10,8 +10,9 @@ use gpui::{App, Context, Entity, Subscription, Task};
 
 use crate::anim::{Easing, PositionTransition};
 use crate::compound::{CompoundSnapshot, apply_compound_postprocess};
-use crate::engine::LayoutEngine;
+use crate::engine::{CommonOptions, LayoutEngine};
 use crate::force::{ForceSimulation, snapshot_of};
+use crate::lifecycle::LayoutEvent;
 use crate::reaction::{LAYOUT_FILTER, LayoutWork, work_for};
 use crate::static_view::StaticView;
 
@@ -34,6 +35,9 @@ const BACKGROUND_CHUNK_ITERATIONS: usize = 25;
 
 /// Node count below which non-force engines run synchronously.
 pub const SYNC_LAYOUT_NODE_LIMIT: usize = 2_000;
+
+/// Depth of the lifecycle record; older entries fall off the front.
+pub const MAX_LIFECYCLE_EVENTS: usize = 64;
 
 /// Progress of the active layout task for status display.
 #[derive(Clone, Copy, Debug, Default)]
@@ -65,6 +69,12 @@ pub struct LayoutDriver {
     chunks_written: u64,
     /// Pending position interpolation towards a fresh target, if any.
     transition: Option<PositionTransition>,
+    /// Shared sort, fit and spacing inputs forwarded to engines.
+    common: CommonOptions,
+    /// Ordered lifecycle record drained by callers.
+    events: VecDeque<LayoutEvent>,
+    /// Set when the latest settled run asked for a view fit.
+    fit_pending: bool,
     /// Held so an in-flight refinement is cancelled when replaced or dropped.
     _task: Option<Task<()>>,
     _subscription: Subscription,
@@ -90,7 +100,8 @@ impl LayoutDriver {
             let store = store.clone();
             move |this, event, cx| this.react(&store, event, cx)
         });
-        Self {
+        let name = engine.name();
+        let mut driver = Self {
             engine,
             positions,
             pinned: FixedNodes::default(),
@@ -100,9 +111,15 @@ impl LayoutDriver {
             last_refine_ms,
             chunks_written: 0,
             transition: None,
+            common: CommonOptions::default(),
+            events: VecDeque::new(),
+            fit_pending: false,
             _task: None,
             _subscription: subscription,
-        }
+        };
+        driver.record(LayoutEvent::Started { engine: name });
+        driver.record(LayoutEvent::Finished { chunks: 1 });
+        driver
     }
 
     /// Current model-space placement of every node.
@@ -148,6 +165,48 @@ impl LayoutDriver {
         self._task = None;
     }
 
+    /// Explicitly stops the run, cancelling background work and animation.
+    ///
+    /// The generation bump keeps expired frames from committing afterwards,
+    /// and a stop entry joins the lifecycle record for table-driven checks.
+    pub fn stop(&mut self) {
+        self.cancel();
+        self.record(LayoutEvent::Stopped);
+    }
+
+    /// Shared sort, fit and spacing inputs for the active engine.
+    ///
+    /// The inputs reach the engine on the next run; nothing recomputes here.
+    pub fn set_common_options(&mut self, common: CommonOptions) {
+        self.common = common;
+        self.engine.set_common(common);
+    }
+
+    /// Shared inputs currently held by the driver.
+    pub fn common_options(&self) -> CommonOptions {
+        self.common
+    }
+
+    /// Removes and returns the recorded lifecycle entries in order.
+    pub fn drain_events(&mut self) -> Vec<LayoutEvent> {
+        self.events.drain(..).collect()
+    }
+
+    fn record(&mut self, event: LayoutEvent) {
+        if self.events.len() >= MAX_LIFECYCLE_EVENTS {
+            self.events.pop_front();
+        }
+        self.events.push_back(event);
+    }
+
+    /// Takes the pending view-fit request left by the latest settled run.
+    ///
+    /// Fitting stays with the caller: the driver only records that a settled
+    /// run asked for it, so viewport assembly never crosses the layer line.
+    pub fn take_fit_request(&mut self) -> bool {
+        std::mem::replace(&mut self.fit_pending, false)
+    }
+
     /// True while a position transition still has frames to write.
     pub fn has_transition(&self) -> bool {
         self.transition
@@ -174,6 +233,8 @@ impl LayoutDriver {
         let from = self.positions.clone();
         let fixed = self.pinned.clone();
         self.transition = Some(PositionTransition::new(from, target, steps, easing, fixed));
+        let name = self.engine.name();
+        self.record(LayoutEvent::Started { engine: name });
     }
 
     /// Drops a pending transition without touching the current positions.
@@ -207,6 +268,12 @@ impl LayoutDriver {
         cx.notify();
         if run.is_done() {
             self.transition = None;
+            self.record(LayoutEvent::Finished {
+                chunks: self.chunks_written.max(1),
+            });
+            if self.common.fit_view {
+                self.fit_pending = true;
+            }
             false
         } else {
             self.transition = Some(run);
@@ -246,6 +313,10 @@ impl LayoutDriver {
         self._task = None;
         self.chunks_written = 0;
         self.positions_version += 1;
+        let mut engine = engine;
+        engine.set_common(self.common);
+        let name = engine.name();
+        self.record(LayoutEvent::Started { engine: name });
         let store_snapshot = store.read(cx);
         let view: &dyn GraphView = store_snapshot;
         let mut positions = engine.layout(view, &self.positions, &self.pinned);
@@ -253,6 +324,10 @@ impl LayoutDriver {
         self.positions = positions;
         self.engine = engine;
         self.placements_since_full_run = 0;
+        self.record(LayoutEvent::Finished { chunks: 1 });
+        if self.common.fit_view {
+            self.fit_pending = true;
+        }
     }
 
     /// Swaps the engine but reaches the fresh target through interpolation.
@@ -269,6 +344,9 @@ impl LayoutDriver {
         easing: Easing,
         cx: &mut App,
     ) {
+        let mut engine = engine;
+        engine.set_common(self.common);
+        let name = engine.name();
         let store_snapshot = store.read(cx);
         let view: &dyn GraphView = store_snapshot;
         let mut target = engine.layout(view, &self.positions, &self.pinned);
@@ -281,6 +359,7 @@ impl LayoutDriver {
         let from = self.positions.clone();
         let fixed = self.pinned.clone();
         self.transition = Some(PositionTransition::new(from, target, steps, easing, fixed));
+        self.record(LayoutEvent::Started { engine: name });
     }
 
     /// Replaces every position at once, for example after a file import.
@@ -343,6 +422,8 @@ impl LayoutDriver {
         let Some(options) = self.engine.force_options() else {
             let node_count = store.read(cx).node_count();
             if node_count < SYNC_LAYOUT_NODE_LIMIT {
+                let name = self.engine.name();
+                self.record(LayoutEvent::Started { engine: name });
                 let store_snapshot = store.read(cx);
                 let view: &dyn GraphView = store_snapshot;
                 let previous = std::mem::take(&mut self.positions);
@@ -354,6 +435,10 @@ impl LayoutDriver {
                 self.placements_since_full_run = 0;
                 self.chunks_written = 0;
                 self.positions_version += 1;
+                self.record(LayoutEvent::Finished { chunks: 1 });
+                if self.common.fit_view {
+                    self.fit_pending = true;
+                }
                 return;
             }
             self.run_static_in_background(store, cx);
@@ -362,6 +447,8 @@ impl LayoutDriver {
         self.generation += 1;
         self.chunks_written = 0;
         let generation = self.generation;
+        let engine_name = self.engine.name();
+        self.record(LayoutEvent::Started { engine: engine_name });
         let store_snapshot = store.read(cx);
         let compound = CompoundSnapshot::capture(store_snapshot);
         let snapshot = snapshot_of(store_snapshot as &dyn GraphView);
@@ -416,6 +503,16 @@ impl LayoutDriver {
                         })
                         .unwrap_or(true);
                     if stale || settled {
+                        if settled && !stale {
+                            weak.update(&mut *cx, |this: &mut Self, _cx| {
+                                let chunks = this.chunks_written;
+                                this.record(LayoutEvent::Finished { chunks });
+                                if this.common.fit_view {
+                                    this.fit_pending = true;
+                                }
+                            })
+                            .ok();
+                        }
                         break;
                     }
                 }
@@ -444,6 +541,8 @@ impl LayoutDriver {
                     self.transition = None;
                     self._task = None;
                     self.chunks_written = 0;
+                    let name = self.engine.name();
+                    self.record(LayoutEvent::Started { engine: name });
                     let previous = std::mem::take(&mut self.positions);
                     let store_snapshot = store.read(cx);
                     let view: &dyn GraphView = store_snapshot;
@@ -452,6 +551,10 @@ impl LayoutDriver {
                     self.positions = positions;
                     self.positions_version += 1;
                     self.placements_since_full_run += 1;
+                    self.record(LayoutEvent::Finished { chunks: 1 });
+                    if self.common.fit_view {
+                        self.fit_pending = true;
+                    }
                 }
             }
         }
@@ -462,6 +565,8 @@ impl LayoutDriver {
         self.transition = None;
         self._task = None;
         self.chunks_written = 0;
+        let name = self.engine.name();
+        self.record(LayoutEvent::Started { engine: name });
         let store_snapshot = store.read(cx);
         let view: &dyn GraphView = store_snapshot;
         let mut positions = self.engine.layout(view, &Positions::new(), &self.pinned);
@@ -469,6 +574,10 @@ impl LayoutDriver {
         self.positions = positions;
         self.positions_version += 1;
         self.placements_since_full_run = 0;
+        self.record(LayoutEvent::Finished { chunks: 1 });
+        if self.common.fit_view {
+            self.fit_pending = true;
+        }
     }
 
     /// Runs a static engine off the UI thread with a single write-back.
@@ -482,6 +591,8 @@ impl LayoutDriver {
         self.transition = None;
         self.chunks_written = 0;
         let generation = self.generation;
+        let engine_name = self.engine.name();
+        self.record(LayoutEvent::Started { engine: engine_name });
         let live = store.read(cx);
         let compound = CompoundSnapshot::capture(live);
         let snapshot = snapshot_of(live as &dyn GraphView);
@@ -513,6 +624,10 @@ impl LayoutDriver {
                         this.last_refine_ms = started.elapsed().as_secs_f64() * 1000.0;
                         this.chunks_written += 1;
                         this.placements_since_full_run = 0;
+                        this.record(LayoutEvent::Finished { chunks: 1 });
+                        if this.common.fit_view {
+                            this.fit_pending = true;
+                        }
                         cx.notify();
                     }
                     this._task = None;

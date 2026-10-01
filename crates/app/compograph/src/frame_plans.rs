@@ -10,10 +10,10 @@ use std::time::Instant;
 use cg_graph::{GraphView, NodeIndex, Positions};
 use cg_interact::NODE_HALF_EXTENT;
 use cg_render::{
-    CacheVersions, DetailLevel, EdgePaintOptions, FrameSample, NodeShape,
+    CacheVersions, DetailLevel, EdgePaintOptions, FrameSample, NodeDataTables, NodeShape,
     PaintedArrow, PaintedContainer, PaintedEdge, PaintedEdgeLabel, PaintedLabel, PaintedNode,
     PaintedRubberBand, PlanCounts, RefreshInput, StoredPlans, all_compound_bounds,
-    clip_painted_edge, edge_ordinals_for, paint_arrows_for_level, paint_edge_labels_for,
+    clip_painted_edge, edge_ordinals_for, graph_bounds, paint_arrows_for_level, paint_edge_labels_for,
     paint_edges_for_with_waypoints, paint_labels_for, paint_nodes_for_level, visible_node_ids,
     world_viewport_rect,
 };
@@ -33,6 +33,9 @@ pub(crate) struct FrameParts {
     pub(crate) rubber_band: Option<PaintedRubberBand>,
 }
 
+/// Margin kept clear around the fitted graph, in logical pixels.
+const FIT_VIEWPORT_PADDING: f32 = 32.0;
+
 impl GraphWindow {
     /// Plans currently held by the retained cache.
     pub(crate) fn cached_plans(&self) -> (Vec<PaintedNode>, Vec<PaintedEdge>, Vec<PaintedArrow>) {
@@ -41,6 +44,18 @@ impl GraphWindow {
             self.retained.edges().to_vec(),
             self.retained.arrows().to_vec(),
         )
+    }
+
+    /// Frames `positions` inside the viewport with a fixed margin.
+    ///
+    /// Empty position sets leave the camera untouched, so clearing the graph
+    /// never collapses the view.
+    pub(crate) fn fit_camera_to_positions(&mut self, positions: &Positions) {
+        let Some(bounds) = graph_bounds(positions, 0.0) else {
+            return;
+        };
+        self.camera
+            .fit_to_bounds(bounds, self.viewport, FIT_VIEWPORT_PADDING);
     }
 
     /// Steps the layout transition and plans the visible geometry.
@@ -66,6 +81,22 @@ impl GraphWindow {
         });
         if still_running {
             cx.notify();
+        }
+        // Consumes a one-shot fit armed by an explicit action such as a
+        // layout switch: only the transition edge fires, and an active drag
+        // or box select keeps the user's viewport. Routine refinements and
+        // background write-backs never reach the camera through this path.
+        let just_settled = self.was_settling && !still_running;
+        self.was_settling = still_running;
+        if self.fit_on_settle && just_settled {
+            self.fit_on_settle = false;
+            let fit = self
+                .layout
+                .update(cx, |driver, _cx| driver.take_fit_request());
+            if fit && self.drag.active_node().is_none() && !self.rubber.is_active() {
+                let current = self.layout.read(cx).positions().clone();
+                self.fit_camera_to_positions(&current);
+            }
         }
         let store = self.store.read(cx);
         let view: &dyn GraphView = store;
@@ -100,8 +131,10 @@ impl GraphWindow {
                 node,
                 Some(label),
                 degree,
-                &attrs,
-                &classes,
+                NodeDataTables {
+                    attrs: &attrs,
+                    classes: &classes,
+                },
             )
         };
         let edge_style_of = |source: NodeIndex, target: NodeIndex| {
@@ -139,8 +172,10 @@ impl GraphWindow {
                                 *node,
                                 Some(label.as_str()),
                                 *degree,
-                                &attrs,
-                                &classes,
+                                NodeDataTables {
+                                    attrs: &attrs,
+                                    classes: &classes,
+                                },
                             )
                             .shape,
                     )

@@ -75,12 +75,12 @@ impl GraphStore {
         if !valid_attr_key(&key) || self.graph.node_weight(node).is_none() {
             return false;
         }
+        self.before_mutation();
         self.node_attr_table
             .entry(node)
             .or_default()
             .insert(key, value);
-        cx.emit(GraphChangeEvent::NodeAttrChanged(node));
-        cx.notify();
+        self.announce(cx, GraphChangeEvent::NodeAttrChanged(node));
         true
     }
 
@@ -91,13 +91,20 @@ impl GraphStore {
         node: NodeIndex,
         key: &str,
     ) -> bool {
+        let present = self
+            .node_attr_table
+            .get(&node)
+            .is_some_and(|table| table.contains_key(key));
+        if !present {
+            return false;
+        }
+        self.before_mutation();
         let removed = self
             .node_attr_table
             .get_mut(&node)
             .is_some_and(|table| table.remove(key).is_some());
         if removed {
-            cx.emit(GraphChangeEvent::NodeAttrChanged(node));
-            cx.notify();
+            self.announce(cx, GraphChangeEvent::NodeAttrChanged(node));
         }
         removed
     }
@@ -126,12 +133,12 @@ impl GraphStore {
         if !valid_attr_key(&key) || self.graph.edge_weight(edge).is_none() {
             return false;
         }
+        self.before_mutation();
         self.edge_attr_table
             .entry(edge)
             .or_default()
             .insert(key, value);
-        cx.emit(GraphChangeEvent::EdgeAttrChanged(edge));
-        cx.notify();
+        self.announce(cx, GraphChangeEvent::EdgeAttrChanged(edge));
         true
     }
 
@@ -142,13 +149,20 @@ impl GraphStore {
         edge: EdgeIndex,
         key: &str,
     ) -> bool {
+        let present = self
+            .edge_attr_table
+            .get(&edge)
+            .is_some_and(|table| table.contains_key(key));
+        if !present {
+            return false;
+        }
+        self.before_mutation();
         let removed = self
             .edge_attr_table
             .get_mut(&edge)
             .is_some_and(|table| table.remove(key).is_some());
         if removed {
-            cx.emit(GraphChangeEvent::EdgeAttrChanged(edge));
-            cx.notify();
+            self.announce(cx, GraphChangeEvent::EdgeAttrChanged(edge));
         }
         removed
     }

@@ -14,6 +14,8 @@ use crate::arrows::ArrowKind;
 use crate::image::NodeImage;
 use crate::shapes::NodeShape;
 
+pub use crate::text::{LabelAlign, LabelStyle};
+
 /// Fill of nodes carrying no mapping or bypass.
 pub const DEFAULT_NODE_FILL: u32 = 0x4a9eff;
 
@@ -129,6 +131,7 @@ pub struct NodeStyle {
     pub scale: f32,
     pub shape: NodeShape,
     pub image: Option<NodeImage>,
+    pub label: LabelStyle,
 }
 
 impl Default for NodeStyle {
@@ -142,8 +145,25 @@ impl Default for NodeStyle {
             scale: 1.0,
             shape: NodeShape::Square,
             image: None,
+            label: LabelStyle::default(),
         }
     }
+}
+
+/// Routing of one edge, resolved per edge instead of per canvas.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum EdgeCurve {
+    /// Historical behavior: lone edges run straight, bundles curve.
+    #[default]
+    Auto,
+    /// Always a straight segment.
+    Straight,
+    /// Always a curved segment, even when unbundled.
+    Bezier,
+    /// Single-corner taxi route.
+    Taxi,
+    /// Orthogonal route with up to two bends.
+    Orthogonal,
 }
 
 /// Resolved appearance of one edge.
@@ -155,6 +175,8 @@ pub struct EdgeStyle {
     pub arrow_scale: f32,
     pub label_size: f32,
     pub arrow: ArrowKind,
+    pub curve: EdgeCurve,
+    pub label: LabelStyle,
 }
 
 impl Default for EdgeStyle {
@@ -166,6 +188,8 @@ impl Default for EdgeStyle {
             arrow_scale: 1.0,
             label_size: 11.0,
             arrow: ArrowKind::Triangle,
+            curve: EdgeCurve::Auto,
+            label: LabelStyle::default(),
         }
     }
 }
@@ -181,6 +205,7 @@ pub struct NodeStylePatch {
     pub scale: Option<f32>,
     pub shape: Option<NodeShape>,
     pub image: Option<Option<NodeImage>>,
+    pub label: Option<LabelStyle>,
 }
 
 impl NodeStylePatch {
@@ -194,6 +219,7 @@ impl NodeStylePatch {
             && self.scale.is_none()
             && self.shape.is_none()
             && self.image.is_none()
+            && self.label.is_none()
     }
 
     /// Patch selecting a node through the bypass channel.
@@ -260,6 +286,14 @@ impl NodeStylePatch {
         }
     }
 
+    /// Patch replacing the label appearance.
+    pub fn with_label(label: LabelStyle) -> Self {
+        Self {
+            label: Some(label),
+            ..Self::default()
+        }
+    }
+
     pub fn apply_to(&self, base: &NodeStyle) -> NodeStyle {
         NodeStyle {
             fill: self.fill.unwrap_or(base.fill),
@@ -270,6 +304,7 @@ impl NodeStylePatch {
             scale: self.scale.unwrap_or(base.scale),
             shape: self.shape.unwrap_or(base.shape),
             image: self.image.clone().unwrap_or_else(|| base.image.clone()),
+            label: self.label.unwrap_or(base.label),
         }
     }
 
@@ -288,6 +323,8 @@ pub struct EdgeStylePatch {
     pub arrow_scale: Option<f32>,
     pub label_size: Option<f32>,
     pub arrow: Option<ArrowKind>,
+    pub curve: Option<EdgeCurve>,
+    pub label: Option<LabelStyle>,
 }
 
 impl EdgeStylePatch {
@@ -299,6 +336,8 @@ impl EdgeStylePatch {
             && self.arrow_scale.is_none()
             && self.label_size.is_none()
             && self.arrow.is_none()
+            && self.curve.is_none()
+            && self.label.is_none()
     }
 
     /// Patch highlighting an edge through the bypass channel.
@@ -326,6 +365,22 @@ impl EdgeStylePatch {
         }
     }
 
+    /// Patch rerouting an edge.
+    pub fn recurved(curve: EdgeCurve) -> Self {
+        Self {
+            curve: Some(curve),
+            ..Self::default()
+        }
+    }
+
+    /// Patch replacing the label appearance.
+    pub fn with_label(label: LabelStyle) -> Self {
+        Self {
+            label: Some(label),
+            ..Self::default()
+        }
+    }
+
     pub fn apply_to(&self, base: &EdgeStyle) -> EdgeStyle {
         EdgeStyle {
             tint: self.tint.unwrap_or(base.tint),
@@ -334,6 +389,8 @@ impl EdgeStylePatch {
             arrow_scale: self.arrow_scale.unwrap_or(base.arrow_scale),
             label_size: self.label_size.unwrap_or(base.label_size),
             arrow: self.arrow.unwrap_or(base.arrow),
+            curve: self.curve.unwrap_or(base.curve),
+            label: self.label.unwrap_or(base.label),
         }
     }
 
@@ -451,9 +508,26 @@ impl NodeNumberMap {
 enum NodeStyleRule {
     Predicate(NodeRule),
     NumberMap(NodeNumberMap),
+    ColorMap(NodeColorMap),
+}
+
+/// Attribute and class tables feeding data-driven node resolution.
+///
+/// The two tables travel together because rule matching reads both for one
+/// node; grouping them keeps resolution signatures small as new selector
+/// dimensions arrive.
+#[derive(Clone, Copy, Debug)]
+pub struct NodeDataTables<'a> {
+    pub attrs: &'a HashMap<String, DataValue>,
+    pub classes: &'a BTreeSet<String>,
 }
 
 /// Ordered node rules evaluated against labels, degrees, and result sets.
+///
+/// This mapper is the production rule channel behind the bypass store; it
+/// covers degree, result-set and numeric-range predicates that the capped
+/// string selector subset cannot spell. String-query rules belong to the
+/// selector sheet channel instead of being folded in here.
 #[derive(Clone, Debug, Default)]
 pub struct StyleMapper {
     rules: Vec<NodeStyleRule>,
@@ -473,6 +547,11 @@ impl StyleMapper {
     /// Appends a numeric data mapping; later entries win over earlier ones.
     pub fn add_number_map(&mut self, map: NodeNumberMap) {
         self.rules.push(NodeStyleRule::NumberMap(map));
+    }
+
+    /// Appends a color data mapping; later entries win over earlier ones.
+    pub fn add_color_map(&mut self, map: NodeColorMap) {
+        self.rules.push(NodeStyleRule::ColorMap(map));
     }
 
     /// Base style with every matching rule applied in order.
@@ -505,6 +584,11 @@ impl StyleMapper {
                     }
                 }
                 NodeStyleRule::NumberMap(map) => {
+                    if let Some(patch) = map.patch_for(attrs) {
+                        resolved = patch.apply_to(&resolved);
+                    }
+                }
+                NodeStyleRule::ColorMap(map) => {
                     if let Some(patch) = map.patch_for(attrs) {
                         resolved = patch.apply_to(&resolved);
                     }
@@ -612,6 +696,7 @@ impl EdgeNumberMap {
 enum EdgeStyleRule {
     Predicate(EdgeRule),
     NumberMap(EdgeNumberMap),
+    ColorMap(EdgeColorMap),
 }
 
 /// Ordered edge rules evaluated against endpoints and result sets.
@@ -634,6 +719,11 @@ impl EdgeMapper {
     /// Appends a numeric data mapping; later entries win over earlier ones.
     pub fn add_number_map(&mut self, map: EdgeNumberMap) {
         self.rules.push(EdgeStyleRule::NumberMap(map));
+    }
+
+    /// Appends a color data mapping; later entries win over earlier ones.
+    pub fn add_color_map(&mut self, map: EdgeColorMap) {
+        self.rules.push(EdgeStyleRule::ColorMap(map));
     }
 
     /// Base style with every matching rule applied in order.
@@ -668,18 +758,102 @@ impl EdgeMapper {
                         resolved = patch.apply_to(&resolved);
                     }
                 }
+                EdgeStyleRule::ColorMap(map) => {
+                    if let Some(patch) = map.patch_for(attrs) {
+                        resolved = patch.apply_to(&resolved);
+                    }
+                }
             }
         }
         resolved
     }
 }
 
+/// Numeric attribute mapped linearly onto the node fill color.
+#[derive(Clone, Debug)]
+pub struct NodeColorMap {
+    /// Attribute key holding the numeric value.
+    pub key: String,
+    /// Source interval; out-of-range values clamp to the ends.
+    pub src_min: f64,
+    /// Source interval; out-of-range values clamp to the ends.
+    pub src_max: f64,
+    /// Fill at the lower source bound.
+    pub start: u32,
+    /// Fill at the upper source bound.
+    pub end: u32,
+}
+
+impl NodeColorMap {
+    fn patch_for(&self, attrs: &HashMap<String, DataValue>) -> Option<NodeStylePatch> {
+        let value = match attrs.get(&self.key) {
+            Some(DataValue::Number(number)) if number.is_finite() => *number,
+            _ => return None,
+        };
+        Some(NodeStylePatch {
+            fill: Some(NodeFill::solid(color_map(
+                value,
+                self.src_min,
+                self.src_max,
+                self.start,
+                self.end,
+            ))),
+            ..NodeStylePatch::default()
+        })
+    }
+}
+
+/// Numeric attribute mapped linearly onto the edge line color.
+#[derive(Clone, Debug)]
+pub struct EdgeColorMap {
+    /// Attribute key holding the numeric value.
+    pub key: String,
+    /// Source interval; out-of-range values clamp to the ends.
+    pub src_min: f64,
+    /// Source interval; out-of-range values clamp to the ends.
+    pub src_max: f64,
+    /// Tint at the lower source bound.
+    pub start: u32,
+    /// Tint at the upper source bound.
+    pub end: u32,
+}
+
+impl EdgeColorMap {
+    fn patch_for(&self, attrs: &HashMap<String, DataValue>) -> Option<EdgeStylePatch> {
+        let value = match attrs.get(&self.key) {
+            Some(DataValue::Number(number)) if number.is_finite() => *number,
+            _ => return None,
+        };
+        Some(EdgeStylePatch {
+            tint: Some(color_map(
+                value,
+                self.src_min,
+                self.src_max,
+                self.start,
+                self.end,
+            )),
+            ..EdgeStylePatch::default()
+        })
+    }
+}
+
+/// Linear mapping of `value` from the source interval onto a color gradient.
+///
+/// Out-of-range values clamp to the ends. Degenerate or non-finite inputs
+/// fall back to the start color.
+pub fn color_map(value: f64, src_min: f64, src_max: f64, start: u32, end: u32) -> u32 {
+    if !value.is_finite() || !src_min.is_finite() || !src_max.is_finite() || src_max <= src_min {
+        return start;
+    }
+    let ratio = ((value - src_min) / (src_max - src_min)).clamp(0.0, 1.0);
+    lerp_rgb(start, end, ratio as f32)
+}
+
 /// Linear mapping of `value` from the source interval onto the destination.
 ///
 /// Out-of-range values clamp to the ends. Degenerate or non-finite inputs
 /// fall back to the lower destination bound.
-pub fn linear_map(value: f64, src_min: f64, src_max: f64, dst_min: f32, dst_max: f32) -> f32 {
-    if !value.is_finite() || !src_min.is_finite() || !src_max.is_finite() || src_max <= src_min {
+pub fn linear_map(value: f64, src_min: f64, src_max: f64, dst_min: f32, dst_max: f32) -> f32 {    if !value.is_finite() || !src_min.is_finite() || !src_max.is_finite() || src_max <= src_min {
         return dst_min;
     }
     let ratio = ((value - src_min) / (src_max - src_min)).clamp(0.0, 1.0);
@@ -761,8 +935,10 @@ impl BypassStore {
             node,
             label,
             degree,
-            &HashMap::new(),
-            &BTreeSet::new(),
+            NodeDataTables {
+                attrs: &HashMap::new(),
+                classes: &BTreeSet::new(),
+            },
         )
     }
 
@@ -774,11 +950,16 @@ impl BypassStore {
         node: NodeIndex,
         label: Option<&str>,
         degree: usize,
-        attrs: &HashMap<String, DataValue>,
-        classes: &BTreeSet<String>,
+        tables: NodeDataTables<'_>,
     ) -> NodeStyle {
-        let mapped =
-            mapper.resolve_node_with_data(&sheet.node, node, label, degree, attrs, classes);
+        let mapped = mapper.resolve_node_with_data(
+            &sheet.node,
+            node,
+            label,
+            degree,
+            tables.attrs,
+            tables.classes,
+        );
         self.node_bypass(node)
             .map(|patch| patch.apply_to(&mapped))
             .unwrap_or(mapped)
@@ -1043,7 +1224,10 @@ mod tests {
         let mut hit = HashMap::new();
         hit.insert("kind".to_string(), DataValue::Text("hub".into()));
         let resolved =
-            bypass.resolve_node_with_data(&sheet, &mapper, node, None, 0, &hit, &BTreeSet::new());
+            bypass.resolve_node_with_data(&sheet, &mapper, node, None,
+                0,
+                NodeDataTables { attrs: &hit, classes: &BTreeSet::new() },
+            );
         assert_eq!(resolved.fill, NodeFill::solid(0x222222));
         let missing = bypass.resolve_node_with_data(
             &sheet,
@@ -1051,14 +1235,19 @@ mod tests {
             node,
             None,
             0,
-            &HashMap::new(),
-            &BTreeSet::new(),
+            NodeDataTables {
+                attrs: &HashMap::new(),
+                classes: &BTreeSet::new(),
+            },
         );
         assert_eq!(missing.fill, NodeFill::solid(DEFAULT_NODE_FILL));
         let mut wrong = HashMap::new();
         wrong.insert("kind".to_string(), DataValue::Number(1.0));
         let mismatched =
-            bypass.resolve_node_with_data(&sheet, &mapper, node, None, 0, &wrong, &BTreeSet::new());
+            bypass.resolve_node_with_data(&sheet, &mapper, node, None,
+                0,
+                NodeDataTables { attrs: &wrong, classes: &BTreeSet::new() },
+            );
         assert_eq!(mismatched.fill, NodeFill::solid(DEFAULT_NODE_FILL));
     }
 
@@ -1080,13 +1269,19 @@ mod tests {
         let mut low = HashMap::new();
         low.insert("score".to_string(), DataValue::Number(0.0));
         let bottom =
-            bypass.resolve_node_with_data(&sheet, &mapper, node, None, 0, &low, &BTreeSet::new());
+            bypass.resolve_node_with_data(&sheet, &mapper, node, None,
+                0,
+                NodeDataTables { attrs: &low, classes: &BTreeSet::new() },
+            );
         assert_eq!(bottom.scale, 0.5);
         assert_eq!(bottom.opacity, 0.2);
         let mut high = HashMap::new();
         high.insert("score".to_string(), DataValue::Number(200.0));
         let top =
-            bypass.resolve_node_with_data(&sheet, &mapper, node, None, 0, &high, &BTreeSet::new());
+            bypass.resolve_node_with_data(&sheet, &mapper, node, None,
+                0,
+                NodeDataTables { attrs: &high, classes: &BTreeSet::new() },
+            );
         assert_eq!(top.scale, 2.0);
         assert_eq!(top.opacity, 1.0);
         let absent = bypass.resolve_node_with_data(
@@ -1095,8 +1290,10 @@ mod tests {
             node,
             None,
             0,
-            &HashMap::new(),
-            &BTreeSet::new(),
+            NodeDataTables {
+                attrs: &HashMap::new(),
+                classes: &BTreeSet::new(),
+            },
         );
         assert_eq!(absent.scale, 1.0);
     }
@@ -1116,11 +1313,17 @@ mod tests {
         let node = NodeIndex::new(0);
         let both: BTreeSet<String> = ["a".into(), "b".into(), "c".into()].into_iter().collect();
         let hit =
-            bypass.resolve_node_with_data(&sheet, &mapper, node, None, 0, &HashMap::new(), &both);
+            bypass.resolve_node_with_data(&sheet, &mapper, node, None,
+                0,
+                NodeDataTables { attrs: &HashMap::new(), classes: &both },
+            );
         assert_eq!(hit.fill, NodeFill::solid(0x333333));
         let single: BTreeSet<String> = ["a".into()].into_iter().collect();
         let miss =
-            bypass.resolve_node_with_data(&sheet, &mapper, node, None, 0, &HashMap::new(), &single);
+            bypass.resolve_node_with_data(&sheet, &mapper, node, None,
+                0,
+                NodeDataTables { attrs: &HashMap::new(), classes: &single },
+            );
         assert_eq!(miss.fill, NodeFill::solid(DEFAULT_NODE_FILL));
     }
 
@@ -1214,5 +1417,107 @@ mod tests {
         assert!(cleared.image.is_none());
         let untouched = NodeStylePatch::default().apply_to(&base);
         assert!(untouched.image.is_none());
+    }
+
+    #[test]
+    fn color_maps_cover_empty_clamped_and_degenerate_inputs() {
+        use crate::text::{LabelAlign, LabelBackground};
+
+        let sheet = StyleSheet::default();
+        let mut mapper = StyleMapper::new();
+        mapper.add_color_map(NodeColorMap {
+            key: "score".into(),
+            src_min: 0.0,
+            src_max: 100.0,
+            start: 0x000000,
+            end: 0xFFFFFF,
+        });
+        let bypass = BypassStore::new();
+        let node = NodeIndex::new(0);
+        let absent = bypass.resolve_node_with_data(
+            &sheet,
+            &mapper,
+            node,
+            None,
+            0,
+            NodeDataTables {
+                attrs: &HashMap::new(),
+                classes: &BTreeSet::new(),
+            },
+        );
+        assert_eq!(absent.fill, NodeFill::solid(DEFAULT_NODE_FILL));
+        let mut low = HashMap::new();
+        low.insert("score".to_string(), DataValue::Number(0.0));
+        let bottom =
+            bypass.resolve_node_with_data(&sheet, &mapper, node, None,
+                0,
+                NodeDataTables { attrs: &low, classes: &BTreeSet::new() },
+            );
+        assert_eq!(bottom.fill, NodeFill::solid(0x000000));
+        let mut high = HashMap::new();
+        high.insert("score".to_string(), DataValue::Number(400.0));
+        let top =
+            bypass.resolve_node_with_data(&sheet, &mapper, node, None,
+                0,
+                NodeDataTables { attrs: &high, classes: &BTreeSet::new() },
+            );
+        assert_eq!(top.fill, NodeFill::solid(0xFFFFFF));
+        assert_eq!(color_map(f64::NAN, 0.0, 100.0, 0x000000, 0xFFFFFF), 0x000000);
+        assert_eq!(color_map(50.0, 1.0, 1.0, 0x112233, 0xFFFFFF), 0x112233);
+        let mut edge_mapper = EdgeMapper::new();
+        edge_mapper.add_color_map(EdgeColorMap {
+            key: "w".into(),
+            src_min: 0.0,
+            src_max: 1.0,
+            start: 0x000000,
+            end: 0xFFFFFF,
+        });
+        let mut half = HashMap::new();
+        half.insert("w".to_string(), DataValue::Number(0.5));
+        let mid = bypass.resolve_edge_with_data(
+            &sheet,
+            &edge_mapper,
+            node,
+            NodeIndex::new(1),
+            &half,
+            &BTreeSet::new(),
+        );
+        assert_eq!(mid.tint, 0x808080);
+        let plain = bypass.resolve_edge_with_data(
+            &sheet,
+            &edge_mapper,
+            node,
+            NodeIndex::new(1),
+            &HashMap::new(),
+            &BTreeSet::new(),
+        );
+        assert_eq!(plain.tint, DEFAULT_EDGE_TINT);
+        let _ = (LabelAlign::Center, LabelBackground::None);
+    }
+
+    #[test]
+    fn label_and_curve_patches_apply_and_clear() {
+        use crate::text::{LabelAlign, LabelBackground, LabelStyle};
+
+        let styled = LabelStyle {
+            align: LabelAlign::Right,
+            background: LabelBackground::RoundRect,
+            background_color: 0xABCDEF,
+            corner_radius: 6.0,
+            padding: 5.0,
+        };
+        let node_patch = NodeStylePatch::with_label(styled);
+        assert!(!node_patch.is_empty());
+        let applied = node_patch.apply_to(&NodeStyle::default());
+        assert_eq!(applied.label, styled);
+        let untouched = NodeStylePatch::default().apply_to(&NodeStyle::default());
+        assert_eq!(untouched.label, LabelStyle::default());
+        let edge_patch = EdgeStylePatch::recurved(EdgeCurve::Taxi);
+        assert!(!edge_patch.is_empty());
+        let rerouted = edge_patch.apply_to(&EdgeStyle::default());
+        assert_eq!(rerouted.curve, EdgeCurve::Taxi);
+        assert_eq!(EdgeStyle::default().curve, EdgeCurve::Auto);
+        let labeled = EdgeStylePatch::with_label(styled).apply_to(&EdgeStyle::default());
+        assert_eq!(labeled.label.background_color, 0xABCDEF);
     }
 }

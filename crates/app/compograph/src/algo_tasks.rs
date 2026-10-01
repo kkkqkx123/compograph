@@ -10,7 +10,7 @@ use std::time::Instant;
 use cg_graph::{
     GraphView, NodeIndex, Positions, affinity_clusters, all_pairs_shortest_paths,
     articulation_points, bellman_ford_paths, betweenness_centrality, bidirectional_path_cost,
-    breadth_first_order, bridges, closeness_centrality, condensation_groups, degree_centrality,
+    biconnected_components, breadth_first_order, bridges, closeness_centrality, condensation_groups, degree_centrality,
     depth_first_order, dsatur_groups, eulerian_path_directed, eulerian_path_undirected,
     feedback_arc_edges, fuzzy_cmeans_groups, global_min_cut, greedy_matching_pairs,
     has_directed_path, heuristic_shortest_path, hierarchical_clusters,
@@ -328,8 +328,9 @@ impl GraphWindow {
             let started = Instant::now();
             let points = articulation_points(&snapshot);
             let cuts = bridges(&snapshot);
+            let groups = biconnected_components(&snapshot);
             let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
-            algo_panel::cut_outcome(&points, &cuts, elapsed_ms)
+            algo_panel::cut_outcome(&points, &cuts, &groups, elapsed_ms)
         });
     }
 

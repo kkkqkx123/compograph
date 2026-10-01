@@ -96,6 +96,58 @@ pub fn undirected_connected_components(graph: &Graph) -> Vec<Vec<NodeIndex>> {
     groups
 }
 
+/// Biconnected components under undirected connectivity.
+///
+/// Reads the directed store as undirected with self loops ignored, sharing
+/// the adjacency of the cut searches above. Cut vertices appear in every
+/// block they join, isolated nodes form singleton groups, and parallel pairs
+/// stay inside one block. Each group arrives sorted and groups are ordered
+/// lexicographically, so repeated runs agree. An empty graph yields no groups.
+pub fn biconnected_components(graph: &Graph) -> Vec<Vec<NodeIndex>> {
+    let (order, adjacency) = undirected_adjacency(graph);
+    let mut search = BiconnectedSearch {
+        adjacency: &adjacency,
+        discovery: HashMap::new(),
+        low: HashMap::new(),
+        clock: 0,
+        stack: Vec::new(),
+        groups: Vec::new(),
+    };
+    for root in &order {
+        if search.discovery.contains_key(root) {
+            continue;
+        }
+        let depth = search.stack.len();
+        search.visit(*root, None);
+        if search.stack.len() > depth {
+            let mut group: Vec<NodeIndex> = search
+                .stack
+                .drain(depth..)
+                .flat_map(|(from, to)| [from, to])
+                .collect();
+            group.sort_unstable_by_key(|node| node.index());
+            group.dedup_by_key(|node| node.index());
+            search.groups.push(group);
+        } else if adjacency
+            .get(root)
+            .map(|neighbours| neighbours.is_empty())
+            .unwrap_or(true)
+        {
+            search.groups.push(vec![*root]);
+        }
+    }
+    for group in &mut search.groups {
+        group.sort_unstable_by_key(|node| node.index());
+        group.dedup_by_key(|node| node.index());
+    }
+    search.groups.sort_unstable_by_key(|group| {
+        group
+            .iter()
+            .map(|node| node.index())
+            .collect::<Vec<_>>()
+    });
+    search.groups
+}
 /// True when a directed path leads from `from` to `to`.
 ///
 /// Missing endpoints yield false rather than an error. A node always reaches
@@ -327,6 +379,69 @@ impl BridgeSearch<'_> {
     }
 }
 
+/// Tarjan edge-stack search collecting biconnected components.
+///
+/// Shares the adjacency-driven structure of the cut searches above: the store
+/// graph is consumed during adjacency construction, and the recursive visit
+/// carries only the node and its arrival edge. Traversed edges pile on the
+/// stack; when the lowlink test fires, the pile above the current edge pops
+/// as one block. Parallel edges keep distinct identities, so the second edge
+/// to the parent reads as a back edge and never splits a block.
+struct BiconnectedSearch<'a> {
+    adjacency: &'a HashMap<NodeIndex, Vec<(NodeIndex, usize)>>,
+    discovery: HashMap<NodeIndex, usize>,
+    low: HashMap<NodeIndex, usize>,
+    clock: usize,
+    stack: Vec<(NodeIndex, NodeIndex)>,
+    groups: Vec<Vec<NodeIndex>>,
+}
+
+impl BiconnectedSearch<'_> {
+    fn visit(&mut self, node: NodeIndex, parent_edge: Option<usize>) {
+        self.discovery.insert(node, self.clock);
+        self.low.insert(node, self.clock);
+        self.clock += 1;
+        for (next, ordinal) in incident_neighbors(self.adjacency, node, parent_edge) {
+            if Some(ordinal) == parent_edge {
+                continue;
+            }
+            if let Some(known) = self.discovery.get(&next).copied() {
+                let entered = self.discovery.get(&node).copied().unwrap_or(0);
+                if known < entered {
+                    self.stack.push((node, next));
+                    let current = self.low.get(&node).copied().unwrap_or(usize::MAX);
+                    self.low.insert(node, current.min(known));
+                }
+            } else {
+                self.stack.push((node, next));
+                self.visit(next, Some(ordinal));
+                let child_low = self.low.get(&next).copied().unwrap_or(usize::MAX);
+                let current = self.low.get(&node).copied().unwrap_or(usize::MAX);
+                self.low.insert(node, current.min(child_low));
+                let entered = self.discovery.get(&node).copied().unwrap_or(0);
+                if child_low >= entered {
+                    let mut group = Vec::new();
+                    while let Some((from, to)) = self.stack.pop() {
+                        group.push(from);
+                        group.push(to);
+                        // Tree edges are pushed parent-first, so only the
+                        // exact orientation ends the block. A reversed back
+                        // edge above it must not stop the drain, otherwise
+                        // the tree edge strands and resurfaces as a duplicate
+                        // group over parallel pairs.
+                        if from == node && to == next {
+                            break;
+                        }
+                    }
+                    group.sort_unstable_by_key(|member| member.index());
+                    group.dedup_by_key(|member| member.index());
+                    self.groups.push(group);
+                }
+            }
+        }
+    }
+}
+
 /// Incident undirected edges of `node`, excluding the arrival edge.
 ///
 /// Edge identities distinguish a parallel edge back to the parent from the
@@ -407,6 +522,50 @@ mod tests {
         assert!(bridges(&StableGraph::default()).is_empty());
     }
 
+    #[test]
+    fn biconnected_groups_split_at_cut_vertices() {
+        let (chain, a, b, c) = chain3();
+        assert_eq!(biconnected_components(&chain), vec![vec![a, b], vec![b, c]]);
+        let mut ring: Graph = StableGraph::default();
+        let nodes: Vec<NodeIndex> = (0..3)
+            .map(|ordinal| {
+                ring.add_node(NodeData {
+                    label: ordinal.to_string(),
+                })
+            })
+            .collect();
+        ring.add_edge(nodes[0], nodes[1], EdgeData { weight: 1.0 });
+        ring.add_edge(nodes[1], nodes[2], EdgeData { weight: 1.0 });
+        ring.add_edge(nodes[2], nodes[0], EdgeData { weight: 1.0 });
+        assert_eq!(biconnected_components(&ring), vec![nodes]);
+        assert!(biconnected_components(&StableGraph::default()).is_empty());
+        let mut lonely: Graph = StableGraph::default();
+        let solo = lonely.add_node(NodeData { label: "solo".into() });
+        assert_eq!(biconnected_components(&lonely), vec![vec![solo]]);
+        let mut parallel: Graph = StableGraph::default();
+        let x = parallel.add_node(NodeData { label: "x".into() });
+        let y = parallel.add_node(NodeData { label: "y".into() });
+        parallel.add_edge(x, y, EdgeData { weight: 1.0 });
+        parallel.add_edge(x, y, EdgeData { weight: 2.0 });
+        assert_eq!(biconnected_components(&parallel), vec![vec![x, y]]);
+    }
+
+    #[test]
+    fn biconnected_groups_agree_with_cut_points_and_bridges() {
+        let (chain, a, b, c) = chain3();
+        let points = articulation_points(&chain);
+        assert_eq!(points, vec![b]);
+        for point in points {
+            let blocks = biconnected_components(&chain)
+                .into_iter()
+                .filter(|group| group.contains(&point))
+                .count();
+            assert!(blocks > 1);
+        }
+        let spans = bridges(&chain);
+        assert_eq!(spans.len(), 2);
+        let _ = (a, c);
+    }
     #[test]
     fn components_paths_cycles_and_bipartite_cover_basics() {
         let (chain, a, _, c) = chain3();

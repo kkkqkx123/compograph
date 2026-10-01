@@ -2,8 +2,8 @@
 //!
 //! Two scopes are supported: the current viewport and the full graph bounds.
 //! Plans are scaled by the magnification factor without rerunning layout.
-//! Pixels encode as PNG so export needs no image dependency. Export covers
-//! node and edge geometry only; labels stay canvas-only.
+//! Pixels encode as PNG so export needs no image dependency. Labels replay
+//! at the full detail level through the software rasterizer.
 
 use std::collections::HashMap;
 
@@ -12,8 +12,9 @@ use cg_types::{Point2, Rect, Vec2};
 
 use crate::camera::Camera;
 use crate::lod::DetailLevel;
-use crate::raster::rasterize;
+use crate::raster::{LabelOverlays, rasterize_with_labels};
 use crate::style::{EdgeStyle, NodeStyle};
+use crate::text::{PaintedEdgeLabel, PaintedLabel};
 use crate::view::{
     EDGE_AGGREGATION_THRESHOLD, EdgePaintOptions, NODE_SIDE, PaintedArrow, PaintedEdge,
     PaintedNode, paint_arrows_for_level, paint_edges_for_with_waypoints, paint_nodes_for,
@@ -139,10 +140,53 @@ pub fn scale_arrows(arrows: &[PaintedArrow], scale: f32) -> Vec<PaintedArrow> {
         .collect()
 }
 
+/// Scales node label plans by the export magnification.
+pub fn scale_labels(labels: &[PaintedLabel], scale: f32) -> Vec<PaintedLabel> {
+    labels
+        .iter()
+        .map(|label| PaintedLabel {
+            id: label.id,
+            text: label.text.clone(),
+            origin: Point2::new(label.origin.x * scale, label.origin.y * scale),
+            size: label.size * scale,
+            color: label.color,
+            rotation: label.rotation,
+            background: label.background,
+            align: label.align,
+            background_color: label.background_color,
+            corner_radius: label.corner_radius * scale,
+            padding: label.padding * scale,
+        })
+        .collect()
+}
+
+/// Scales edge label plans by the export magnification.
+pub fn scale_edge_labels(labels: &[PaintedEdgeLabel], scale: f32) -> Vec<PaintedEdgeLabel> {
+    labels
+        .iter()
+        .map(|label| PaintedEdgeLabel {
+            source: label.source,
+            target: label.target,
+            text: label.text.clone(),
+            origin: Point2::new(label.origin.x * scale, label.origin.y * scale),
+            size: label.size * scale,
+            color: label.color,
+            rotation: label.rotation,
+            background: label.background,
+            align: label.align,
+            background_color: label.background_color,
+            corner_radius: label.corner_radius * scale,
+            padding: label.padding * scale,
+        })
+        .collect()
+}
+
 /// Owned inputs for one background image export.
 ///
 /// Styles arrive resolved on the interface thread, so the background task
 /// only runs plan math, rasterization and file writes with plain data.
+/// Label texts travel alongside because the background task cannot read the
+/// store; empty texts never produce labels.
 #[derive(Clone, Debug)]
 pub struct ExportSnapshot {
     pub node_ids: Vec<NodeIndex>,
@@ -150,6 +194,8 @@ pub struct ExportSnapshot {
     pub positions: Positions,
     pub node_styles: HashMap<NodeIndex, NodeStyle>,
     pub edge_styles: HashMap<(NodeIndex, NodeIndex), EdgeStyle>,
+    pub node_texts: HashMap<NodeIndex, String>,
+    pub edge_texts: HashMap<(NodeIndex, NodeIndex), String>,
     pub camera: Camera,
     pub viewport: Vec2,
     pub aggregate: bool,
@@ -210,14 +256,56 @@ pub fn export_pixels(
         },
     );
     let arrows = paint_arrows_for_level(&edges, DetailLevel::Full);
+    let node_labels = crate::text::paint_labels_for_with_style(
+        &nodes,
+        DetailLevel::Full,
+        |node| snapshot.node_texts.get(&node).cloned(),
+        |node| {
+            snapshot
+                .node_styles
+                .get(&node)
+                .map(|style| style.label_size)
+                .unwrap_or(crate::text::DEFAULT_LABEL_SIZE)
+        },
+        |node| {
+            snapshot
+                .node_styles
+                .get(&node)
+                .map(|style| style.label)
+                .unwrap_or_default()
+        },
+    );
+    let edge_labels = crate::text::paint_edge_labels_for_with_style(
+        &edges,
+        DetailLevel::Full,
+        |source, target| snapshot.edge_texts.get(&(source, target)).cloned(),
+        |source, target| {
+            snapshot
+                .edge_styles
+                .get(&(source, target))
+                .map(|style| style.label_size)
+                .unwrap_or(crate::text::DEFAULT_EDGE_LABEL_SIZE)
+        },
+        |source, target| {
+            snapshot
+                .edge_styles
+                .get(&(source, target))
+                .map(|style| style.label)
+                .unwrap_or_default()
+        },
+    );
     let (width, height) = request.pixel_size(bounds);
-    let pixels = rasterize(
+    let pixels = rasterize_with_labels(
         width,
         height,
         &scale_nodes(&nodes, request.scale),
         &scale_edges(&edges, request.scale),
         &scale_arrows(&arrows, request.scale),
         [24, 28, 36],
+        LabelOverlays {
+            nodes: &scale_labels(&node_labels, request.scale),
+            edges: &scale_edge_labels(&edge_labels, request.scale),
+        },
     );
     Some((pixels, width, height))
 }
@@ -249,8 +337,7 @@ mod tests {
     }
 
     #[test]
-    fn export_viewport_scales_with_the_request() {
-        use crate::style::{EdgeStyle, NodeStyle};
+    fn export_viewport_scales_with_the_request() {        use crate::style::{EdgeStyle, NodeStyle};
 
         let mut positions = Positions::new();
         positions.insert(NodeIndex::new(0), Point2::new(0.0, 0.0));
@@ -266,6 +353,8 @@ mod tests {
             positions,
             node_styles,
             edge_styles,
+            node_texts: HashMap::new(),
+            edge_texts: HashMap::new(),
             camera: Camera::new(Point2::ZERO, 1.0),
             viewport: Vec2::new(100.0, 50.0),
             aggregate: false,
@@ -294,6 +383,8 @@ mod tests {
                     positions: Positions::new(),
                     node_styles: HashMap::new(),
                     edge_styles: HashMap::new(),
+                    node_texts: HashMap::new(),
+                    edge_texts: HashMap::new(),
                     camera: Camera::new(Point2::ZERO, 1.0),
                     viewport: Vec2::new(100.0, 50.0),
                     aggregate: false,
@@ -302,5 +393,46 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn export_labels_change_pixels_without_breaking_geometry() {
+        use crate::style::NodeStyle;
+
+        let mut positions = Positions::new();
+        positions.insert(NodeIndex::new(0), Point2::new(0.0, 0.0));
+        let mut node_styles = HashMap::new();
+        node_styles.insert(NodeIndex::new(0), NodeStyle::default());
+        let plain = ExportSnapshot {
+            node_ids: vec![NodeIndex::new(0)],
+            pairs: Vec::new(),
+            positions: positions.clone(),
+            node_styles: node_styles.clone(),
+            edge_styles: HashMap::new(),
+            node_texts: HashMap::new(),
+            edge_texts: HashMap::new(),
+            camera: Camera::new(Point2::new(0.0, 0.0), 1.0),
+            viewport: Vec2::new(100.0, 100.0),
+            aggregate: false,
+            waypoints: WaypointStore::new(),
+        };
+        let request = ExportRequest {
+            scope: ExportScope::Viewport,
+            scale: 1.0,
+            viewport: Vec2::new(100.0, 100.0),
+        };
+        let (bare, _, _) =
+            export_pixels(ExportScope::Viewport, request, &plain).expect("exports");
+        let mut texts = HashMap::new();
+        texts.insert(NodeIndex::new(0), "hello".to_string());
+        let labeled = ExportSnapshot {
+            node_texts: texts,
+            ..plain
+        };
+        let (drawn, width, height) =
+            export_pixels(ExportScope::Viewport, request, &labeled).expect("exports");
+        assert_eq!((width, height), (100, 100));
+        assert_ne!(bare, drawn);
+        assert!(drawn.iter().any(|byte| *byte > 40));
     }
 }

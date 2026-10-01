@@ -18,7 +18,9 @@ use crate::engine::LayoutEngine;
 ///
 /// Defaults stay close to the reference implementation the model is ported
 /// from; adjust them when the feel of the layout needs to change rather than
-/// altering the simulation itself.
+/// altering the simulation itself. Spacing comes from these physical
+/// parameters; the shared spacing factor never applies to force-directed
+/// runs.
 #[derive(Clone, Debug)]
 pub struct ForceOptions {
     /// Repulsion strength between non-overlapping nodes.

@@ -17,3 +17,8 @@ serde_json = { workspace = true, optional = true }
 [features]
 default = ["json-io"]
 json-io = ["dep:serde", "dep:serde_json"]
+
+[dev-dependencies]
+# The test-support feature pulls in gpui's TestAppContext, which the
+# event sequence tests need to drive an application without a window.
+gpui = { workspace = true, features = ["test-support"] }

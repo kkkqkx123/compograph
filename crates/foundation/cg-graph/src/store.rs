@@ -11,6 +11,7 @@ use petgraph::{Directed, Direction};
 use gpui::Context;
 
 use crate::attrs::DataValue;
+use crate::batch::StoreSnapshot;
 use crate::events::GraphChangeEvent;
 use crate::view::GraphView;
 
@@ -61,6 +62,11 @@ pub struct GraphStore {
     pub(crate) parents: HashMap<NodeIndex, NodeIndex>,
     pub(crate) children: HashMap<NodeIndex, BTreeSet<NodeIndex>>,
     pub(crate) collapsed: HashSet<NodeIndex>,
+    pub(crate) batch_depth: u32,
+    pub(crate) batch_dirty: bool,
+    pub(crate) history: Vec<StoreSnapshot>,
+    pub(crate) future: Vec<StoreSnapshot>,
+    pub(crate) batch_snapshot: Option<StoreSnapshot>,
 }
 
 impl GraphStore {
@@ -74,6 +80,11 @@ impl GraphStore {
             parents: HashMap::new(),
             children: HashMap::new(),
             collapsed: HashSet::new(),
+            batch_depth: 0,
+            batch_dirty: false,
+            history: Vec::new(),
+            future: Vec::new(),
+            batch_snapshot: None,
         }
     }
 
@@ -107,6 +118,11 @@ impl GraphStore {
     /// Application payload of `node`, if it is still present.
     pub fn node_data(&self, node: NodeIndex) -> Option<&NodeData> {
         self.graph.node_weight(node)
+    }
+
+    /// Application payload of `edge`, if it is still present.
+    pub fn edge_data(&self, edge: EdgeIndex) -> Option<&EdgeData> {
+        self.graph.edge_weight(edge)
     }
 
     /// True when `node` is still present in the graph.
@@ -161,22 +177,48 @@ impl GraphStore {
     }
 
     pub fn add_node(&mut self, cx: &mut Context<Self>, label: impl Into<String>) -> NodeIndex {
+        self.before_mutation();
         let node = self.graph.add_node(NodeData {
             label: label.into(),
         });
-        cx.emit(GraphChangeEvent::NodeAdded(node));
-        cx.notify();
+        self.announce(cx, GraphChangeEvent::NodeAdded(node));
         node
     }
 
+    /// Removes `node` with its incident edges.
+    ///
+    /// Incident edges report removal before the node does, so subscribers
+    /// never observe an edge pointing at a missing endpoint and no attribute
+    /// or class table keeps a dangling entry.
     pub fn remove_node(&mut self, cx: &mut Context<Self>, node: NodeIndex) -> Option<NodeData> {
+        self.graph.node_weight(node)?;
+        let incident: Vec<EdgeIndex> = self
+            .graph
+            .edges(node)
+            .map(|edge| edge.id())
+            .chain(
+                self.graph
+                    .edges_directed(node, Direction::Incoming)
+                    .map(|edge| edge.id()),
+            )
+            .collect();
+        let mut incident = incident;
+        incident.sort_unstable_by_key(|edge| edge.index());
+        incident.dedup_by_key(|edge| edge.index());
+        self.before_mutation();
+        for edge in &incident {
+            self.drop_edge_attrs(*edge);
+            self.drop_edge_classes(*edge);
+        }
         let removed = self.graph.remove_node(node);
         if removed.is_some() {
             self.drop_node_attrs(node);
             self.drop_node_classes(node);
             self.detach_compound(node);
-            cx.emit(GraphChangeEvent::NodeRemoved(node));
-            cx.notify();
+            for edge in incident {
+                self.announce(cx, GraphChangeEvent::EdgeRemoved(edge));
+            }
+            self.announce(cx, GraphChangeEvent::NodeRemoved(node));
         }
         removed
     }
@@ -188,21 +230,105 @@ impl GraphStore {
         target: NodeIndex,
         weight: f32,
     ) -> EdgeIndex {
+        self.before_mutation();
         let edge = self.graph.add_edge(source, target, EdgeData { weight });
-        cx.emit(GraphChangeEvent::EdgeAdded(edge));
-        cx.notify();
+        self.announce(cx, GraphChangeEvent::EdgeAdded(edge));
         edge
     }
 
     pub fn remove_edge(&mut self, cx: &mut Context<Self>, edge: EdgeIndex) -> Option<EdgeData> {
+        self.graph.edge_weight(edge)?;
+        self.before_mutation();
         let removed = self.graph.remove_edge(edge);
         if removed.is_some() {
             self.drop_edge_attrs(edge);
             self.drop_edge_classes(edge);
-            cx.emit(GraphChangeEvent::EdgeRemoved(edge));
-            cx.notify();
+            self.announce(cx, GraphChangeEvent::EdgeRemoved(edge));
         }
         removed
+    }
+
+    /// Moves `edge` to new endpoints without add or remove notifications.
+    ///
+    /// Only one endpoint-change event is announced; the payload, attribute
+    /// table and class set travel with the edge. The returned index names the
+    /// reconnected edge for subscribers. No change, missing edges and missing
+    /// endpoints report no change.
+    pub fn reconnect_edge(
+        &mut self,
+        cx: &mut Context<Self>,
+        edge: EdgeIndex,
+        new_source: NodeIndex,
+        new_target: NodeIndex,
+    ) -> Option<EdgeIndex> {
+        let (old_source, old_target) = self.graph.edge_endpoints(edge)?;
+        if self.graph.node_weight(new_source).is_none()
+            || self.graph.node_weight(new_target).is_none()
+        {
+            return None;
+        }
+        if old_source == new_source && old_target == new_target {
+            return None;
+        }
+        self.before_mutation();
+        let weight = self
+            .graph
+            .remove_edge(edge)
+            .map(|data| data.weight)
+            .unwrap_or(1.0);
+        let attrs = self.edge_attr_table.remove(&edge).unwrap_or_default();
+        let classes = self.edge_class_table.remove(&edge).unwrap_or_default();
+        let fresh = self
+            .graph
+            .add_edge(new_source, new_target, EdgeData { weight });
+        if !attrs.is_empty() {
+            self.edge_attr_table.insert(fresh, attrs);
+        }
+        if !classes.is_empty() {
+            self.edge_class_table.insert(fresh, classes);
+        }
+        self.announce(cx, GraphChangeEvent::EdgeEndpointsChanged(fresh));
+        Some(fresh)
+    }
+
+    /// Renames `node`; false when the node is missing.
+    pub fn set_node_label(
+        &mut self,
+        cx: &mut Context<Self>,
+        node: NodeIndex,
+        label: impl Into<String>,
+    ) -> bool {
+        let label = label.into();
+        let Some(current) = self.graph.node_weight(node) else {
+            return false;
+        };
+        if current.label == label {
+            return false;
+        }
+        self.before_mutation();
+        if let Some(data) = self.graph.node_weight_mut(node) {
+            data.label = label;
+        }
+        self.announce(cx, GraphChangeEvent::NodeDataChanged(node));
+        true
+    }
+
+    /// Reweights `edge`; rejects missing edges and non-finite weights.
+    pub fn set_edge_weight(
+        &mut self,
+        cx: &mut Context<Self>,
+        edge: EdgeIndex,
+        weight: f32,
+    ) -> bool {
+        if !weight.is_finite() || self.graph.edge_weight(edge).is_none() {
+            return false;
+        }
+        self.before_mutation();
+        if let Some(data) = self.graph.edge_weight_mut(edge) {
+            data.weight = weight;
+        }
+        self.announce(cx, GraphChangeEvent::EdgeDataChanged(edge));
+        true
     }
 
     /// Drops every node and edge in one step.
@@ -210,12 +336,12 @@ impl GraphStore {
     /// A single event is emitted instead of one per removed element, which
     /// keeps bulk reloads from flooding subscribers.
     pub fn clear(&mut self, cx: &mut Context<Self>) {
+        self.before_mutation();
         self.graph.clear();
         self.clear_attr_tables();
         self.clear_class_tables();
         self.clear_compound();
-        cx.emit(GraphChangeEvent::StructureReset);
-        cx.notify();
+        self.announce(cx, GraphChangeEvent::StructureReset);
     }
 }
 
@@ -391,13 +517,7 @@ mod tests {
     fn store_of(graph: StableGraph<NodeData, EdgeData, Directed>) -> GraphStore {
         GraphStore {
             graph,
-            node_attr_table: HashMap::new(),
-            edge_attr_table: HashMap::new(),
-            node_class_table: HashMap::new(),
-            edge_class_table: HashMap::new(),
-            parents: HashMap::new(),
-            children: HashMap::new(),
-            collapsed: HashSet::new(),
+            ..GraphStore::new()
         }
     }
 

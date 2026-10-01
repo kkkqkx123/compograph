@@ -40,6 +40,61 @@ pub const LABEL_BACKGROUND_FILL: u32 = 0xf1f5f9;
 /// Padding around label text when a background is drawn, in pixels.
 pub const LABEL_BACKGROUND_PAD: f32 = 3.0;
 
+/// Corner radius of a rounded label background, in pixels.
+pub const LABEL_CORNER_RADIUS: f32 = 4.0;
+
+/// Horizontal alignment of a label relative to its anchor.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LabelAlign {
+    Left,
+    /// Historical behavior: text centers on the anchor.
+    #[default]
+    Center,
+    Right,
+}
+
+/// Resolved label appearance shared by node and edge labels.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LabelStyle {
+    pub align: LabelAlign,
+    pub background: LabelBackground,
+    pub background_color: u32,
+    pub corner_radius: f32,
+    pub padding: f32,
+}
+
+impl Default for LabelStyle {
+    fn default() -> Self {
+        Self {
+            align: LabelAlign::Center,
+            background: LabelBackground::None,
+            background_color: LABEL_BACKGROUND_FILL,
+            corner_radius: LABEL_CORNER_RADIUS,
+            padding: LABEL_BACKGROUND_PAD,
+        }
+    }
+}
+
+impl LabelStyle {
+    /// Padding guarded to non-negative finite values.
+    pub fn padding(&self) -> f32 {
+        if self.padding.is_finite() && self.padding > 0.0 {
+            self.padding
+        } else {
+            0.0
+        }
+    }
+
+    /// Corner radius guarded to non-negative finite values.
+    pub fn radius(&self) -> f32 {
+        if self.corner_radius.is_finite() && self.corner_radius > 0.0 {
+            self.corner_radius
+        } else {
+            0.0
+        }
+    }
+}
+
 /// Background shape drawn behind a label.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum LabelBackground {
@@ -106,12 +161,14 @@ fn wrap_label_line(line: &str, out: &mut Vec<String>) {
 
 /// One label scheduled for painting, in screen pixels.
 ///
-/// `origin` is the label's horizontal center and its top edge; the renderer
-/// resolves the baseline from the line height. `rotation` stays zero because
-/// the canvas paints horizontally; selection and bounds use the same
-/// horizontal envelope so hits match the visible text.
-/// `background` draws a light plate behind the text; the default keeps the
-/// historical bare text look.
+/// `origin` is the label's horizontal anchor and its top edge; center aligned
+/// text centers on the anchor while left and right aligned text start or end
+/// there. The renderer resolves the baseline from the line height. `rotation`
+/// stays zero because the canvas paints horizontally; selection and bounds
+/// use the same horizontal envelope so hits match the visible text.
+/// `background` draws a plate behind the text in `background_color` with
+/// `corner_radius` and `padding`; the default keeps the historical bare text
+/// look.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PaintedLabel {
     pub id: NodeIndex,
@@ -121,6 +178,10 @@ pub struct PaintedLabel {
     pub color: u32,
     pub rotation: f32,
     pub background: LabelBackground,
+    pub align: LabelAlign,
+    pub background_color: u32,
+    pub corner_radius: f32,
+    pub padding: f32,
 }
 
 /// Whether `level` still draws labels.
@@ -133,7 +194,7 @@ pub fn draws_labels(level: DetailLevel) -> bool {
 
 /// One edge label scheduled for painting, in screen pixels.
 ///
-/// `origin` follows the node label convention: the label's horizontal center
+/// `origin` follows the node label convention: the label's horizontal anchor
 /// and its top edge. The text shows the edge weight, the only edge payload
 /// the store carries, so labels never need a schema change. `rotation` stays
 /// zero to match the horizontal canvas paint; [`edge_label_angle`] remains as
@@ -148,6 +209,10 @@ pub struct PaintedEdgeLabel {
     pub color: u32,
     pub rotation: f32,
     pub background: LabelBackground,
+    pub align: LabelAlign,
+    pub background_color: u32,
+    pub corner_radius: f32,
+    pub padding: f32,
 }
 
 /// Anchor of an edge label along the painted path.
@@ -244,13 +309,41 @@ pub fn label_envelope(
     rotation: f32,
     background: LabelBackground,
 ) -> Rect {
+    label_envelope_styled(
+        origin,
+        text,
+        size,
+        rotation,
+        &LabelStyle {
+            background,
+            ..LabelStyle::default()
+        },
+    )
+}
+
+/// Outer envelope of a label honoring alignment, padding and background.
+///
+/// Alignment moves the horizontal anchor: center keeps the historical
+/// centered block, left starts the block at the anchor, right ends it there.
+/// Padding expands the box only when a background is drawn.
+pub fn label_envelope_styled(
+    origin: Point2,
+    text: &str,
+    size: f32,
+    rotation: f32,
+    style: &LabelStyle,
+) -> Rect {
     let block = estimate_label_block(text, size);
-    let half_width = block.x / 2.0;
+    let left = match style.align {
+        LabelAlign::Center => origin.x - block.x / 2.0,
+        LabelAlign::Left => origin.x,
+        LabelAlign::Right => origin.x - block.x,
+    };
     let corners = [
-        Point2::new(origin.x - half_width, origin.y),
-        Point2::new(origin.x + half_width, origin.y),
-        Point2::new(origin.x + half_width, origin.y + block.y),
-        Point2::new(origin.x - half_width, origin.y + block.y),
+        Point2::new(left, origin.y),
+        Point2::new(left + block.x, origin.y),
+        Point2::new(left + block.x, origin.y + block.y),
+        Point2::new(left, origin.y + block.y),
     ];
     let (sin, cos) = rotation.sin_cos();
     let mut min_x = f32::INFINITY;
@@ -267,9 +360,9 @@ pub fn label_envelope(
         max_x = max_x.max(rotated_x);
         max_y = max_y.max(rotated_y);
     }
-    let pad = match background {
+    let pad = match style.background {
         LabelBackground::None => 0.0,
-        LabelBackground::Rect | LabelBackground::RoundRect => LABEL_BACKGROUND_PAD,
+        LabelBackground::Rect | LabelBackground::RoundRect => style.padding(),
     };
     Rect::new(
         Point2::new(min_x - pad, min_y - pad),
@@ -278,6 +371,16 @@ pub fn label_envelope(
             (max_y - min_y + pad * 2.0).max(1.0),
         ),
     )
+}
+
+/// Anchor of a node label below its body honoring the label alignment.
+pub fn node_label_origin(center: Point2, side: f32, style: &LabelStyle) -> Point2 {
+    let x = match style.align {
+        LabelAlign::Center => center.x,
+        LabelAlign::Left => center.x - side / 2.0,
+        LabelAlign::Right => center.x + side / 2.0,
+    };
+    Point2::new(x, center.y + side / 2.0 + LABEL_GAP)
 }
 
 /// Builds the edge label plan for the edges that survived culling.
@@ -290,6 +393,19 @@ pub fn paint_edge_labels_for(
     level: DetailLevel,
     label_of: impl Fn(NodeIndex, NodeIndex) -> Option<String>,
     size_of: impl Fn(NodeIndex, NodeIndex) -> f32,
+) -> Vec<PaintedEdgeLabel> {
+    paint_edge_labels_for_with_style(edges, level, label_of, size_of, |_, _| {
+        LabelStyle::default()
+    })
+}
+
+/// Builds the edge label plan carrying per-edge label styles.
+pub fn paint_edge_labels_for_with_style(
+    edges: &[PaintedEdge],
+    level: DetailLevel,
+    label_of: impl Fn(NodeIndex, NodeIndex) -> Option<String>,
+    size_of: impl Fn(NodeIndex, NodeIndex) -> f32,
+    style_of: impl Fn(NodeIndex, NodeIndex) -> LabelStyle,
 ) -> Vec<PaintedEdgeLabel> {
     if !draws_labels(level) {
         return Vec::new();
@@ -310,6 +426,7 @@ pub fn paint_edge_labels_for(
         };
         let anchor = edge_label_anchor(edge);
         let origin = anchor + Vec2::new(0.0, EDGE_LABEL_GAP);
+        let style = style_of(edge.source, edge.target);
         labels.push(PaintedEdgeLabel {
             source: edge.source,
             target: edge.target,
@@ -318,7 +435,11 @@ pub fn paint_edge_labels_for(
             size,
             color: DEFAULT_EDGE_LABEL_COLOR,
             rotation: 0.0,
-            background: LabelBackground::None,
+            background: style.background,
+            align: style.align,
+            background_color: style.background_color,
+            corner_radius: style.radius(),
+            padding: style.padding(),
         });
     }
     labels
@@ -335,6 +456,19 @@ pub fn paint_labels_for(
     level: DetailLevel,
     label_of: impl Fn(NodeIndex) -> Option<String>,
     size_of: impl Fn(NodeIndex) -> f32,
+) -> Vec<PaintedLabel> {
+    paint_labels_for_with_style(nodes, level, label_of, size_of, |_| {
+        LabelStyle::default()
+    })
+}
+
+/// Builds the label plan carrying per-node label styles.
+pub fn paint_labels_for_with_style(
+    nodes: &[PaintedNode],
+    level: DetailLevel,
+    label_of: impl Fn(NodeIndex) -> Option<String>,
+    size_of: impl Fn(NodeIndex) -> f32,
+    style_of: impl Fn(NodeIndex) -> LabelStyle,
 ) -> Vec<PaintedLabel> {
     if !draws_labels(level) {
         return Vec::new();
@@ -353,16 +487,21 @@ pub fn paint_labels_for(
         } else {
             DEFAULT_LABEL_SIZE
         };
-        let center_x = node.origin.x + node.side / 2.0;
-        let top = node.origin.y + node.side + LABEL_GAP;
+        let center = Point2::new(node.origin.x + node.side / 2.0, node.origin.y + node.side / 2.0);
+        let style = style_of(node.id);
+        let origin = node_label_origin(center, node.side, &style);
         labels.push(PaintedLabel {
             id: node.id,
             text,
-            origin: Point2::new(center_x, top),
+            origin,
             size,
             color: DEFAULT_LABEL_COLOR,
             rotation: 0.0,
-            background: LabelBackground::None,
+            background: style.background,
+            align: style.align,
+            background_color: style.background_color,
+            corner_radius: style.radius(),
+            padding: style.padding(),
         });
     }
     labels
@@ -622,5 +761,89 @@ mod tests {
         assert!((plain.size.y - block.y).abs() < 1e-3);
         assert!((plain.origin.x - (origin.x - block.x / 2.0)).abs() < 1e-3);
         assert!((plain.origin.y - origin.y).abs() < 1e-3);
+    }
+
+    #[test]
+    fn label_alignment_moves_the_anchor_and_the_envelope() {
+        let center = Point2::new(100.0, 100.0);
+        let middle = node_label_origin(
+            center,
+            24.0,
+            &LabelStyle {
+                align: LabelAlign::Center,
+                ..LabelStyle::default()
+            },
+        );
+        assert_eq!(middle, Point2::new(100.0, 116.0));
+        let left = node_label_origin(
+            center,
+            24.0,
+            &LabelStyle {
+                align: LabelAlign::Left,
+                ..LabelStyle::default()
+            },
+        );
+        assert_eq!(left, Point2::new(88.0, 116.0));
+        let right = node_label_origin(
+            center,
+            24.0,
+            &LabelStyle {
+                align: LabelAlign::Right,
+                ..LabelStyle::default()
+            },
+        );
+        assert_eq!(right, Point2::new(112.0, 116.0));
+        let block = estimate_label_block("hello", 12.0);
+        for (align, origin_x) in [
+            (LabelAlign::Center, 50.0),
+            (LabelAlign::Left, 50.0),
+            (LabelAlign::Right, 50.0),
+        ] {
+            let style = LabelStyle {
+                align,
+                ..LabelStyle::default()
+            };
+            let envelope =
+                label_envelope_styled(Point2::new(origin_x, 10.0), "hello", 12.0, 0.0, &style);
+            assert!((envelope.size.x - block.x).abs() < 1e-3);
+            match align {
+                LabelAlign::Center => {
+                    assert!((envelope.origin.x - (origin_x - block.x / 2.0)).abs() < 1e-3);
+                }
+                LabelAlign::Left => {
+                    assert!((envelope.origin.x - origin_x).abs() < 1e-3);
+                }
+                LabelAlign::Right => {
+                    assert!((envelope.origin.x - (origin_x - block.x)).abs() < 1e-3);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn styled_labels_carry_background_and_padding() {
+        let nodes = vec![node(0, 0.0, 0.0, 24.0)];
+        let style = LabelStyle {
+            background: LabelBackground::RoundRect,
+            background_color: 0xABCDEF,
+            corner_radius: 6.0,
+            padding: 5.0,
+            ..LabelStyle::default()
+        };
+        let labels = paint_labels_for_with_style(
+            &nodes,
+            DetailLevel::Full,
+            |_| Some("a".to_string()),
+            |_| 12.0,
+            |_| style,
+        );
+        assert_eq!(labels.len(), 1);
+        assert_eq!(labels[0].background, LabelBackground::RoundRect);
+        assert_eq!(labels[0].background_color, 0xABCDEF);
+        assert_eq!(labels[0].corner_radius, 6.0);
+        assert_eq!(labels[0].padding, 5.0);
+        let envelope = label_envelope_styled(labels[0].origin, "a", 12.0, 0.0, &style);
+        let bare = label_envelope(labels[0].origin, "a", 12.0, 0.0, LabelBackground::None);
+        assert!((envelope.size.x - bare.size.x - 10.0).abs() < 1e-3);
     }
 }

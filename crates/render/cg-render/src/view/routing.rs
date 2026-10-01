@@ -4,11 +4,13 @@
 //! and parallel Bezier curves through these helpers, so visual decisions stay
 //! in one place while culling and traversal remain with the callers.
 
-use cg_geometry::{bezier_control_for_edge, haystack_endpoints, manhattan_route, parallel_offsets};
+use cg_geometry::{
+    OrthoDirection, bezier_control_for_edge, haystack_endpoints, manhattan_route, parallel_offsets,
+};
 use cg_graph::NodeIndex;
 use cg_types::Point2;
 
-use crate::style::EdgeStyle;
+use crate::style::{EdgeCurve, EdgeStyle};
 
 use super::plans::{EdgePaintOptions, NODE_SIDE, PARALLEL_STEP, PaintedEdge};
 
@@ -44,6 +46,76 @@ pub(crate) fn manhattan_bends(
         [_, mid_a, mid_b, _] => (Some(*mid_a), Some(*mid_b)),
         [_, mid, _] => (Some(*mid), None),
         _ => (None, None),
+    }
+}
+
+/// Paint options with the edge curve folded over the global derivation.
+///
+/// Per-edge taxi and orthogonal routes override the canvas-wide derivation;
+/// every other curve keeps it. Haystack and Manhattan checks run against the
+/// folded options so paint and box selection share one decision.
+pub fn routed_options(style: EdgeStyle, options: EdgePaintOptions) -> EdgePaintOptions {
+    match style.curve {
+        EdgeCurve::Taxi => EdgePaintOptions {
+            ortho: None,
+            taxi: Some(OrthoDirection::Auto),
+            ..options
+        },
+        EdgeCurve::Orthogonal => EdgePaintOptions {
+            ortho: Some(OrthoDirection::Auto),
+            taxi: None,
+            ..options
+        },
+        EdgeCurve::Auto | EdgeCurve::Straight | EdgeCurve::Bezier => options,
+    }
+}
+
+/// Parallel-bundle membership of one directed edge endpoint pair.
+///
+/// `slot` counts earlier same-direction pairs and `len` is the bundle size;
+/// both come from [`bundle_slot`](super::bundles::bundle_slot). Offsets
+/// mirror by direction so opposite pairs fan apart instead of overlapping.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BundleSlot {
+    pub source: NodeIndex,
+    pub target: NodeIndex,
+    pub slot: usize,
+    pub len: usize,
+}
+
+/// Bezier control honoring the edge curve, or nothing when straight.
+///
+/// Straight edges never curve. Forced Bezier curves fall back to a default
+/// spread when the bundle slot carries none, still yielding to the detail
+/// level downgrade. Every other curve follows the shared bundle derivation.
+pub fn curve_control(
+    style: EdgeStyle,
+    start: Point2,
+    end: Point2,
+    bundle: BundleSlot,
+    options: EdgePaintOptions,
+) -> Option<Point2> {
+    let BundleSlot {
+        source,
+        target,
+        slot,
+        len: bundle_len,
+    } = bundle;
+    match style.curve {
+        EdgeCurve::Straight => None,
+        EdgeCurve::Bezier => {
+            let derived = bezier_control(start, end, source, target, slot, bundle_len, options);
+            if derived.is_some() {
+                derived
+            } else if options.level.draws_curves() {
+                Some(bezier_control_for_edge(start, end, PARALLEL_STEP))
+            } else {
+                None
+            }
+        }
+        EdgeCurve::Auto | EdgeCurve::Taxi | EdgeCurve::Orthogonal => {
+            bezier_control(start, end, source, target, slot, bundle_len, options)
+        }
     }
 }
 

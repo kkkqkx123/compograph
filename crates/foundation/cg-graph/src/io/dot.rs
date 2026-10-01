@@ -7,6 +7,7 @@ use petgraph::dot::Dot;
 use petgraph::stable_graph::StableGraph;
 
 use super::document::{EdgeEntry, GraphDocument, IoError, NodeEntry};
+use crate::attrs::DataValue;
 use crate::store::{EdgeData, NodeData};
 
 type Graph = StableGraph<NodeData, EdgeData, Directed>;
@@ -14,6 +15,91 @@ type Graph = StableGraph<NodeData, EdgeData, Directed>;
 /// Renders the graph in DOT language using petgraph's own formatter.
 pub fn export_dot(graph: &Graph) -> String {
     format!("{}", Dot::new(graph))
+}
+
+/// Renders a transfer document in DOT language, covering the attribute subset.
+///
+/// Labels, weights, positions, attributes and class lists round-trip through
+/// [`import_dot`]; hierarchy beyond flat membership is out of scope for the
+/// lightweight exchange and stays in the JSON schema.
+pub fn export_dot_document(document: &GraphDocument) -> String {
+    let mut encoded = String::from("digraph {");
+    for entry in &document.nodes {
+        encoded.push_str(&format!(" {} [label={}", entry.id, quote_dot(&entry.label)));
+        if let Some(position) = entry.position {
+            encoded.push_str(&format!(", pos=\"{},{}!\"", position[0], position[1]));
+        }
+        if !entry.classes.is_empty() {
+            encoded.push_str(&format!(", class={}", quote_dot(&entry.classes.join(" "))));
+        }
+        for (key, value) in dot_attr_list(&entry.attrs) {
+            encoded.push_str(&format!(", {key}={value}"));
+        }
+        encoded.push_str("];");
+    }
+    for entry in &document.edges {
+        encoded.push_str(&format!(" {} -> {} [weight={}", entry.source, entry.target, entry.weight));
+        if !entry.classes.is_empty() {
+            encoded.push_str(&format!(", class={}", quote_dot(&entry.classes.join(" "))));
+        }
+        for (key, value) in dot_attr_list(&entry.attrs) {
+            encoded.push_str(&format!(", {key}={value}"));
+        }
+        encoded.push_str("];");
+    }
+    encoded.push_str(" }");
+    encoded
+}
+
+fn dot_attr_list(attrs: &HashMap<String, DataValue>) -> Vec<(String, String)> {
+    let mut items: Vec<(String, String)> = attrs
+        .iter()
+        .map(|(key, value)| {
+            let rendered = match value {
+                DataValue::Text(text) => quote_dot(text),
+                DataValue::Number(number) => format!("{number}"),
+                DataValue::Flag(flag) => flag.to_string(),
+            };
+            (key.clone(), rendered)
+        })
+        .collect();
+    items.sort_by(|left, right| left.0.cmp(&right.0));
+    items
+}
+
+fn quote_dot(text: &str) -> String {
+    let mut quoted = String::from("\"");
+    for point in text.chars() {
+        match point {
+            '"' => quoted.push_str("\\\""),
+            '\\' => quoted.push_str("\\\\"),
+            '\n' => quoted.push_str("\\n"),
+            '\r' => quoted.push_str("\\r"),
+            '\t' => quoted.push_str("\\t"),
+            _ => quoted.push(point),
+        }
+    }
+    quoted.push('"');
+    quoted
+}
+
+/// Infers a typed attribute value from its DOT text form.
+fn infer_dot_value(raw: &str) -> DataValue {
+    match raw {
+        "true" => DataValue::Flag(true),
+        "false" => DataValue::Flag(false),
+        _ => raw
+            .parse::<f64>()
+            .ok()
+            .filter(|number| number.is_finite())
+            .map(DataValue::Number)
+            .unwrap_or_else(|| DataValue::Text(raw.to_string())),
+    }
+}
+
+/// Splits a whitespace-separated class list into names.
+fn split_dot_classes(raw: &str) -> Vec<String> {
+    raw.split_whitespace().map(str::to_string).collect()
 }
 
 /// Parses a DOT document into a transferable graph document.
@@ -96,6 +182,15 @@ impl DotDocument {
         if let Some(position) = attrs.get("pos").and_then(|raw| parse_position(raw)) {
             entry.position = Some(position);
         }
+        if let Some(classes) = attrs.get("class") {
+            entry.classes = split_dot_classes(classes);
+        }
+        for (key, raw) in &attrs {
+            if key == "label" || key == "pos" || key == "class" {
+                continue;
+            }
+            entry.attrs.insert(key.clone(), infer_dot_value(raw));
+        }
     }
 
     /// Applies an edge statement, interning both endpoints.
@@ -118,12 +213,25 @@ impl DotDocument {
             .or_else(|| attrs.get("label").and_then(|raw| raw.parse::<f32>().ok()))
             .filter(|value| value.is_finite())
             .unwrap_or(1.0);
-        self.edges.push(EdgeEntry {
+        let mut edge = EdgeEntry {
             source: source_id,
             target: target_id,
             weight,
             ..EdgeEntry::default()
-        });
+        };
+        if let Some(classes) = attrs.get("class") {
+            edge.classes = split_dot_classes(classes);
+        }
+        for (key, raw) in &attrs {
+            if key == "weight" || key == "class" {
+                continue;
+            }
+            if key == "label" && raw.parse::<f32>().ok().is_some_and(f32::is_finite) {
+                continue;
+            }
+            edge.attrs.insert(key.clone(), infer_dot_value(raw));
+        }
+        self.edges.push(edge);
     }
 
     fn finish(self) -> GraphDocument {
@@ -591,5 +699,96 @@ mod tests {
         assert!(import_dot("digraph { a -> b ").is_err());
         let failure = import_dot("digraph { \"unterminated }").expect_err("bad string");
         assert!(failure.message().contains("line"));
+    }
+
+    #[test]
+    fn dot_import_captures_typed_attributes_and_classes() {
+        let encoded = r#"
+            digraph {
+                a [label="Alpha", score=9.5, active=true, note="hub node", class="big hub"];
+                b;
+                a -> b [weight=2, kind="fast", tries=3, ok=false, class="backbone"];
+            }
+        "#;
+        let document = import_dot(encoded).expect("attributes parse");
+        let alpha = document
+            .nodes
+            .iter()
+            .find(|entry| entry.label == "Alpha")
+            .expect("labeled node survives");
+        assert_eq!(alpha.attrs.get("score"), Some(&DataValue::Number(9.5)));
+        assert_eq!(alpha.attrs.get("active"), Some(&DataValue::Flag(true)));
+        assert_eq!(
+            alpha.attrs.get("note"),
+            Some(&DataValue::Text("hub node".into()))
+        );
+        assert_eq!(alpha.classes, vec!["big".to_string(), "hub".to_string()]);
+        assert_eq!(
+            document.edges[0].attrs.get("kind"),
+            Some(&DataValue::Text("fast".into()))
+        );
+        assert_eq!(
+            document.edges[0].attrs.get("tries"),
+            Some(&DataValue::Number(3.0))
+        );
+        assert_eq!(
+            document.edges[0].attrs.get("ok"),
+            Some(&DataValue::Flag(false))
+        );
+        assert_eq!(document.edges[0].classes, vec!["backbone".to_string()]);
+        assert!(document.validate().is_ok());
+    }
+
+    #[test]
+    fn dot_document_subset_round_trips() {
+        let mut attrs = HashMap::new();
+        attrs.insert("score".to_string(), DataValue::Number(9.5));
+        attrs.insert("active".to_string(), DataValue::Flag(true));
+        let document = GraphDocument {
+            nodes: vec![
+                NodeEntry {
+                    id: 0,
+                    label: "Alpha".to_string(),
+                    position: Some([1.0, 2.0]),
+                    attrs,
+                    classes: vec!["hub".to_string()],
+                    ..NodeEntry::default()
+                },
+                NodeEntry {
+                    id: 1,
+                    label: "b".to_string(),
+                    ..NodeEntry::default()
+                },
+            ],
+            edges: vec![EdgeEntry {
+                source: 0,
+                target: 1,
+                weight: 2.0,
+                ..EdgeEntry::default()
+            }],
+        };
+        let encoded = export_dot_document(&document);
+        let back = import_dot(&encoded).expect("subset writer output parses");
+        assert_eq!(back.nodes.len(), 2);
+        let alpha = back
+            .nodes
+            .iter()
+            .find(|entry| entry.label == "Alpha")
+            .expect("label survives the round trip");
+        assert_eq!(alpha.position, Some([1.0, 2.0]));
+        assert_eq!(alpha.attrs.get("score"), Some(&DataValue::Number(9.5)));
+        assert_eq!(alpha.classes, vec!["hub".to_string()]);
+        assert!((back.edges[0].weight - 2.0).abs() < 1e-5);
+        assert!(back.validate().is_ok());
+    }
+
+    #[test]
+    fn dot_import_reads_external_tool_shapes() {
+        let encoded = "strict graph \"extern\" {\n\t\"a 1\" -- \"b 2\" [label=\"3\"];\n\tnode [shape=box];\n\tlayout=neato;\n}\n";
+        let document = import_dot(encoded).expect("external shapes parse");
+        assert_eq!(document.nodes.len(), 2);
+        assert_eq!(document.edges.len(), 1);
+        assert!((document.edges[0].weight - 3.0).abs() < 1e-5);
+        assert!(document.validate().is_ok());
     }
 }

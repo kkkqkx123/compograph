@@ -42,12 +42,17 @@ impl GraphStore {
         if !valid_class_name(&class) || self.graph.node_weight(node).is_none() {
             return false;
         }
-        let inserted = self.node_class_table.entry(node).or_default().insert(class);
-        if inserted {
-            cx.emit(GraphChangeEvent::NodeClassChanged(node));
-            cx.notify();
+        if self
+            .node_class_table
+            .get(&node)
+            .is_some_and(|set| set.contains(&class))
+        {
+            return false;
         }
-        inserted
+        self.before_mutation();
+        self.node_class_table.entry(node).or_default().insert(class);
+        self.announce(cx, GraphChangeEvent::NodeClassChanged(node));
+        true
     }
 
     /// Removes one class from `node`; false when absent.
@@ -57,13 +62,20 @@ impl GraphStore {
         node: NodeIndex,
         class: &str,
     ) -> bool {
+        let present = self
+            .node_class_table
+            .get(&node)
+            .is_some_and(|set| set.contains(class));
+        if !present {
+            return false;
+        }
+        self.before_mutation();
         let removed = self
             .node_class_table
             .get_mut(&node)
             .is_some_and(|set| set.remove(class));
         if removed {
-            cx.emit(GraphChangeEvent::NodeClassChanged(node));
-            cx.notify();
+            self.announce(cx, GraphChangeEvent::NodeClassChanged(node));
         }
         removed
     }
@@ -125,12 +137,17 @@ impl GraphStore {
         if !valid_class_name(&class) || self.graph.edge_weight(edge).is_none() {
             return false;
         }
-        let inserted = self.edge_class_table.entry(edge).or_default().insert(class);
-        if inserted {
-            cx.emit(GraphChangeEvent::EdgeClassChanged(edge));
-            cx.notify();
+        if self
+            .edge_class_table
+            .get(&edge)
+            .is_some_and(|set| set.contains(&class))
+        {
+            return false;
         }
-        inserted
+        self.before_mutation();
+        self.edge_class_table.entry(edge).or_default().insert(class);
+        self.announce(cx, GraphChangeEvent::EdgeClassChanged(edge));
+        true
     }
 
     /// Removes one class from `edge`; false when absent.
@@ -140,13 +157,20 @@ impl GraphStore {
         edge: EdgeIndex,
         class: &str,
     ) -> bool {
+        let present = self
+            .edge_class_table
+            .get(&edge)
+            .is_some_and(|set| set.contains(class));
+        if !present {
+            return false;
+        }
+        self.before_mutation();
         let removed = self
             .edge_class_table
             .get_mut(&edge)
             .is_some_and(|set| set.remove(class));
         if removed {
-            cx.emit(GraphChangeEvent::EdgeClassChanged(edge));
-            cx.notify();
+            self.announce(cx, GraphChangeEvent::EdgeClassChanged(edge));
         }
         removed
     }

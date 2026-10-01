@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use cg_graph::{FixedNodes, GraphView, NodeIndex, Positions};
 use cg_types::Point2;
 
-use crate::engine::LayoutEngine;
+use crate::engine::{CommonOptions, LayoutEngine};
 use crate::ring::{level_width, ring_radii, ring_step, scores_with_table, to_levels};
 
 /// Tuning parameters of the concentric arrangement.
@@ -76,6 +76,7 @@ pub enum ConcentricScoring {
 /// Concentric engine implementing the shared layout contract.
 pub struct ConcentricLayout {
     options: ConcentricOptions,
+    common: CommonOptions,
 }
 
 impl ConcentricLayout {
@@ -85,11 +86,21 @@ impl ConcentricLayout {
                 center,
                 ..ConcentricOptions::default()
             },
+            common: CommonOptions::default(),
         }
     }
 
     pub fn with_options(options: ConcentricOptions) -> Self {
-        Self { options }
+        Self {
+            options,
+            common: CommonOptions::default(),
+        }
+    }
+
+    /// Overrides the shared sort, fit and spacing inputs.
+    pub fn with_common(mut self, common: CommonOptions) -> Self {
+        self.common = common;
+        self
     }
 
     pub fn options(&self) -> &ConcentricOptions {
@@ -100,7 +111,7 @@ impl ConcentricLayout {
 impl LayoutEngine for ConcentricLayout {
     fn layout(&self, graph: &dyn GraphView, previous: &Positions, fixed: &FixedNodes) -> Positions {
         let mut ids = graph.node_ids();
-        ids.sort_unstable_by_key(|node| node.index());
+        self.common.sort_ids(&mut ids, graph);
         let mut result: Positions = HashMap::new();
         if ids.is_empty() {
             return result;
@@ -114,7 +125,7 @@ impl LayoutEngine for ConcentricLayout {
         let radii = ring_radii(
             &levels,
             self.options.sweep,
-            self.options.node_size + self.options.min_node_spacing,
+            self.options.node_size + self.common.scaled(self.options.min_node_spacing),
             self.options.avoid_overlap,
             self.options.equidistant,
         );
@@ -143,6 +154,10 @@ impl LayoutEngine for ConcentricLayout {
 
     fn name(&self) -> &'static str {
         "concentric"
+    }
+
+    fn set_common(&mut self, common: CommonOptions) {
+        self.common = common;
     }
 }
 

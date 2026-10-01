@@ -7,7 +7,9 @@
 
 use std::collections::HashMap;
 
-use cg_graph::{GraphDocument, GraphView, NodeEntry, NodeIndex, export_dot, remap_positions};
+use cg_graph::{
+    GraphDocument, GraphView, NodeIndex, export_dot_document, sync_document,
+};
 use cg_render::{ExportRequest, ExportScope, ExportSnapshot, encode_png, export_pixels};
 use gpui::{App, Context, PathPromptOptions};
 
@@ -69,12 +71,12 @@ impl GraphWindow {
                         match file_io::import_json_file(file_io::JSON_PATH) {
                             Ok(document) => {
                                 let count = document.nodes.len();
-                                this.apply_document(&document, cx);
-                                let skipped = this.skipped_relations_note();
-                                this.io_message = format!(
-                                    "imported {count} nodes from {}{skipped} (picker unavailable)",
-                                    file_io::JSON_PATH
-                                );
+                                if this.apply_document(&document, cx) {
+                                    this.io_message = format!(
+                                        "imported {count} nodes from {} (picker unavailable)",
+                                        file_io::JSON_PATH
+                                    );
+                                }
                             }
                             Err(note) => this.io_message = note,
                         }
@@ -104,10 +106,10 @@ impl GraphWindow {
                 match loaded {
                     Ok((document, path)) => {
                         let count = document.nodes.len();
-                        this.apply_document(&document, cx);
-                        let skipped = this.skipped_relations_note();
-                        this.io_message =
-                            format!("imported {count} nodes from {}{skipped}", path.display());
+                        if this.apply_document(&document, cx) {
+                            this.io_message =
+                                format!("imported {count} nodes from {}", path.display());
+                        }
                     }
                     Err(note) => this.io_message = note,
                 }
@@ -134,12 +136,12 @@ impl GraphWindow {
                         match file_io::import_dot_file(file_io::DOT_PATH) {
                             Ok(document) => {
                                 let count = document.nodes.len();
-                                this.apply_document(&document, cx);
-                                let skipped = this.skipped_relations_note();
-                                this.io_message = format!(
-                                    "imported {count} nodes from {}{skipped} (picker unavailable)",
-                                    file_io::DOT_PATH
-                                );
+                                if this.apply_document(&document, cx) {
+                                    this.io_message = format!(
+                                        "imported {count} nodes from {} (picker unavailable)",
+                                        file_io::DOT_PATH
+                                    );
+                                }
                             }
                             Err(note) => this.io_message = note,
                         }
@@ -169,10 +171,10 @@ impl GraphWindow {
                 match loaded {
                     Ok((document, path)) => {
                         let count = document.nodes.len();
-                        this.apply_document(&document, cx);
-                        let skipped = this.skipped_relations_note();
-                        this.io_message =
-                            format!("imported {count} nodes from {}{skipped}", path.display());
+                        if this.apply_document(&document, cx) {
+                            this.io_message =
+                                format!("imported {count} nodes from {}", path.display());
+                        }
                     }
                     Err(note) => this.io_message = note,
                 }
@@ -186,8 +188,10 @@ impl GraphWindow {
 
     pub(crate) fn export_dot(&mut self, cx: &mut Context<Self>) {
         let store = self.store.read(cx);
-        let encoded = export_dot(store.graph());
-        let count = store.node_count();
+        let positions = self.layout.read(cx).positions().clone();
+        let document = GraphDocument::collect_from_store(store, &positions);
+        let encoded = export_dot_document(&document);
+        let count = document.nodes.len();
         let directory = working_directory();
         let receiver = cx.prompt_for_new_path(&directory, Some("compograph-graph.dot"));
         let task = cx.spawn(async move |weak, async_cx| match receiver.await {
@@ -229,85 +233,40 @@ impl GraphWindow {
         cx.notify();
     }
 
-    /// Rebuilds the store from a document and restores its positions.
+    /// Merges a document into the store through the shared sync path.
     ///
-    /// Position restore is deferred past the effect flush, so the layout
-    /// reactions queued by the structural edits run first and cannot
-    /// overwrite the imported coordinates.
-    pub(crate) fn apply_document(&mut self, document: &GraphDocument, cx: &mut Context<Self>) {
-        let mut sorted: Vec<&NodeEntry> = document.nodes.iter().collect();
-        sorted.sort_by_key(|entry| entry.id);
-        let mut order: Vec<NodeIndex> = Vec::new();
-        let mut skipped_relations = 0usize;
-        self.store.update(cx, |graph, cx| {
-            graph.clear(cx);
-            for entry in &sorted {
-                order.push(graph.add_node(cx, entry.label.clone()));
+    /// Validation runs before anything mutates, so illegal input leaves the
+    /// graph untouched and reports the failure. Matching identifiers update in
+    /// place, anything else falls back to a full replace, and every path
+    /// broadcasts once. Position restore is deferred past the effect flush, so
+    /// the layout reactions queued by the structural edits run first and
+    /// cannot overwrite the imported coordinates. The camera frames the
+    /// restored positions at once, since imported coordinates are arbitrary.
+    pub(crate) fn apply_document(&mut self, document: &GraphDocument, cx: &mut Context<Self>) -> bool {
+        let mut positions = self.layout.read(cx).positions().clone();
+        let merged = self
+            .store
+            .update(cx, |graph, cx| sync_document(graph, cx, document, &mut positions));
+        match merged {
+            Ok(_) => {
+                // Frame the restored coordinates now: imported positions are
+                // arbitrary model values, and the fixed initial camera may
+                // otherwise leave the graph outside the viewport.
+                self.fit_camera_to_positions(&positions);
+                let layout = self.layout.clone();
+                cx.defer(move |cx: &mut App| {
+                    layout.update(cx, |driver, cx| {
+                        driver.replace_positions(positions, cx);
+                    });
+                });
+                self.clear_selection();
+                self.clear_algo_highlights();
+                true
             }
-            let mut by_id: HashMap<usize, NodeIndex> = HashMap::new();
-            for (entry, node) in sorted.iter().zip(order.iter().copied()) {
-                by_id.insert(entry.id, node);
+            Err(error) => {
+                self.io_message = format!("import failed: {error}");
+                false
             }
-            for (entry, node) in sorted.iter().zip(order.iter().copied()) {
-                for (key, value) in &entry.attrs {
-                    graph.set_node_attr(cx, node, key.clone(), value.clone());
-                }
-                for class in &entry.classes {
-                    graph.add_node_class(cx, node, class.clone());
-                }
-            }
-            for edge in &document.edges {
-                if let (Some(source), Some(target)) =
-                    (by_id.get(&edge.source), by_id.get(&edge.target))
-                {
-                    let id = graph.add_edge(cx, *source, *target, edge.weight);
-                    for (key, value) in &edge.attrs {
-                        graph.set_edge_attr(cx, id, key.clone(), value.clone());
-                    }
-                    for class in &edge.classes {
-                        graph.add_edge_class(cx, id, class.clone());
-                    }
-                }
-            }
-            for (entry, node) in sorted.iter().zip(order.iter().copied()) {
-                if let Some(parent_id) = entry.parent {
-                    match by_id.get(&parent_id).copied() {
-                        Some(parent) => {
-                            if graph.set_parent(cx, node, Some(parent)).is_err() {
-                                skipped_relations += 1;
-                            }
-                        }
-                        None => skipped_relations += 1,
-                    }
-                }
-            }
-            for (entry, node) in sorted.iter().zip(order.iter().copied()) {
-                if entry.collapsed && !graph.set_collapsed(cx, node, true) {
-                    skipped_relations += 1;
-                }
-            }
-        });
-        let positions = remap_positions(document, &order);
-        let layout = self.layout.clone();
-        cx.defer(move |cx: &mut App| {
-            layout.update(cx, |driver, cx| {
-                driver.replace_positions(positions, cx);
-            });
-        });
-        self.clear_selection();
-        self.clear_algo_highlights();
-        if skipped_relations > 0 {
-            self.io_message = format!("import skipped {skipped_relations} invalid relations");
-        }
-    }
-
-    pub(crate) fn skipped_relations_note(&mut self) -> String {
-        if self.io_message.starts_with("import skipped") {
-            let note = format!("; {}", self.io_message);
-            self.io_message.clear();
-            note
-        } else {
-            String::new()
         }
     }
 
@@ -335,8 +294,10 @@ impl GraphWindow {
                     *node,
                     Some(label.as_str()),
                     view.degree(*node),
-                    &attrs,
-                    &classes,
+                    cg_render::NodeDataTables {
+                        attrs: &attrs,
+                        classes: &classes,
+                    },
                 ),
             );
         }
@@ -356,12 +317,28 @@ impl GraphWindow {
         }
         let positions = self.layout.read(cx).positions().clone();
         let waypoints = self.waypoints.clone();
+        let mut node_texts = HashMap::new();
+        for node in &node_ids {
+            if let Some(label) = store.node_data(*node).map(|data| data.label.clone())
+                && !label.trim().is_empty()
+            {
+                node_texts.insert(*node, label);
+            }
+        }
+        let mut edge_texts = HashMap::new();
+        for (source, target) in &pairs {
+            if let Some(weight) = store.edge_weight(*source, *target) {
+                edge_texts.insert((*source, *target), weight.to_string());
+            }
+        }
         let snapshot = ExportSnapshot {
             node_ids,
             pairs,
             positions,
             node_styles,
             edge_styles,
+            node_texts,
+            edge_texts,
             camera: self.camera,
             viewport: self.viewport,
             aggregate: self.aggregate,

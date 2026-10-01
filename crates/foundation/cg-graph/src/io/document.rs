@@ -269,20 +269,6 @@ impl GraphDocument {
     }
 }
 
-/// Maps document identifiers to live indices in identifier order.
-///
-/// Import rebuilds nodes in sorted order, so this helper mirrors the mapping
-/// the application builds while inserting them.
-pub fn remap_positions(document: &GraphDocument, order: &[NodeIndex]) -> Positions {
-    let mut by_id: HashMap<usize, NodeIndex> = HashMap::new();
-    let mut sorted: Vec<usize> = document.nodes.iter().map(|entry| entry.id).collect();
-    sorted.sort_unstable();
-    for (entry_id, node) in sorted.into_iter().zip(order.iter().copied()) {
-        by_id.insert(entry_id, node);
-    }
-    document.positions_for(|id| by_id.get(&id).copied())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -339,22 +325,6 @@ mod tests {
         let mut bad_weight = GraphDocument::collect_from(&graph, &positions);
         bad_weight.edges[0].weight = f32::NAN;
         assert!(bad_weight.validate().is_err());
-    }
-
-    #[test]
-    fn remap_positions_follows_insertion_order() {
-        let (graph, positions) = sample();
-        let document = GraphDocument::collect_from(&graph, &positions);
-        let order: Vec<NodeIndex> = document
-            .nodes
-            .iter()
-            .map(|entry| NodeIndex::new(entry.id))
-            .collect();
-        let mapped = remap_positions(&document, &order);
-        assert_eq!(mapped.len(), positions.len());
-        for (node, point) in &positions {
-            assert_eq!(mapped.get(node), Some(point));
-        }
     }
 
     #[test]

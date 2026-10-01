@@ -176,8 +176,10 @@ impl GraphWindow {
                     node,
                     Some(label.as_str()),
                     view.degree(node),
-                    &attrs,
-                    &classes,
+                    cg_render::NodeDataTables {
+                        attrs: &attrs,
+                        classes: &classes,
+                    },
                 );
                 let screen = camera.world_to_viewport(viewport, *center);
                 let side = (cg_render::NODE_SIDE * style.scale).max(4.0);
@@ -277,8 +279,10 @@ impl GraphWindow {
                 node,
                 Some(label.as_str()),
                 view.degree(node),
-                &attrs,
-                &classes,
+                cg_render::NodeDataTables {
+                    attrs: &attrs,
+                    classes: &classes,
+                },
             )
             .shape
     }

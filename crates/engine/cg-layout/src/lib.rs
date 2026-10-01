@@ -10,6 +10,7 @@ pub mod engine;
 pub mod force;
 pub mod grid;
 pub mod hierarchical;
+pub mod lifecycle;
 pub mod preset;
 pub mod radial;
 pub mod random;
@@ -29,7 +30,8 @@ pub use compound::{
 };
 pub use concentric::{ConcentricLayout, ConcentricOptions, ConcentricScoring};
 pub use driver::{LayoutDriver, LayoutProgress, SYNC_LAYOUT_NODE_LIMIT};
-pub use engine::LayoutEngine;
+pub use engine::{CommonOptions, LayoutEngine, SortKey};
+pub use lifecycle::LayoutEvent;
 pub use force::{
     ForceLayout, ForceOptions, ForceSimulation, ForceSnapshot, boxes_overlap, has_overlaps,
     snapshot_of,

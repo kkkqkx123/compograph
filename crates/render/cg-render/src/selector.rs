@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use cg_graph::{DataValue, GraphStore, NodeIndex};
+use cg_graph::{DataValue, GraphStore, NodeIndex, ParseError, SelectorQuery, parse_selector};
 
 /// Which element kinds a selector may match.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -113,10 +113,10 @@ impl ElementSelector {
         if self.edge_endpoints.is_some() {
             return false;
         }
-        if let Some(wanted) = self.node_id {
-            if wanted != node {
-                return false;
-            }
+        if let Some(wanted) = self.node_id
+            && wanted != node
+        {
+            return false;
         }
         if !store.contains_node(node) {
             return false;
@@ -130,10 +130,10 @@ impl ElementSelector {
                 return false;
             }
         }
-        if let Some(ancestor) = self.ancestor {
-            if !store.ancestors_of(node).contains(&ancestor) {
-                return false;
-            }
+        if let Some(ancestor) = self.ancestor
+            && !store.ancestors_of(node).contains(&ancestor)
+        {
+            return false;
         }
         true
     }
@@ -150,10 +150,10 @@ impl ElementSelector {
         if self.node_id.is_some() || self.ancestor.is_some() {
             return false;
         }
-        if let Some((wanted_source, wanted_target)) = self.edge_endpoints {
-            if wanted_source != source || wanted_target != target {
-                return false;
-            }
+        if let Some((wanted_source, wanted_target)) = self.edge_endpoints
+            && (wanted_source != source || wanted_target != target)
+        {
+            return false;
         }
         let Some(found) = store.find_edge(source, target) else {
             return false;
@@ -163,7 +163,17 @@ impl ElementSelector {
             return false;
         }
         for (key, wanted) in &self.attrs {
-            if store.edge_attr(found, key) != Some(wanted.clone()) {
+            // Weight lives in the typed edge payload, mirroring the parsed
+            // query bridge, so typed selectors match what the same key
+            // selects through the string path.
+            let held = if key == "weight" {
+                store
+                    .edge_data(found)
+                    .map(|data| DataValue::Number(data.weight as f64))
+            } else {
+                store.edge_attr(found, key)
+            };
+            if held != Some(wanted.clone()) {
                 return false;
             }
         }
@@ -195,10 +205,18 @@ impl ElementSelector {
 }
 
 /// Ordered selector stylesheet with node and edge patch lists.
+///
+/// Typed rules evaluate first and parsed-query rules after them; later rules
+/// win within each channel. This sheet is the string-query styling channel:
+/// production rendering resolves through the style mapper and bypass store,
+/// which additionally cover degree, result-set and numeric-range predicates
+/// outside the capped selector subset.
 #[derive(Clone, Debug, Default)]
 pub struct SelectorSheet {
     nodes: Vec<(ElementSelector, crate::style::NodeStylePatch)>,
     edges: Vec<(ElementSelector, crate::style::EdgeStylePatch)>,
+    query_nodes: Vec<(SelectorQuery, crate::style::NodeStylePatch)>,
+    query_edges: Vec<(SelectorQuery, crate::style::EdgeStylePatch)>,
 }
 
 impl SelectorSheet {
@@ -224,6 +242,44 @@ impl SelectorSheet {
         self.edges.push((selector, patch));
     }
 
+    /// Appends a parsed-query node rule after the typed rules.
+    pub fn add_query_node_rule(
+        &mut self,
+        query: SelectorQuery,
+        patch: crate::style::NodeStylePatch,
+    ) {
+        self.query_nodes.push((query, patch));
+    }
+
+    /// Appends a parsed-query edge rule after the typed rules.
+    pub fn add_query_edge_rule(
+        &mut self,
+        query: SelectorQuery,
+        patch: crate::style::EdgeStylePatch,
+    ) {
+        self.query_edges.push((query, patch));
+    }
+
+    /// Parses `text` and appends it as a node rule.
+    pub fn parse_node_rule(
+        &mut self,
+        text: &str,
+        patch: crate::style::NodeStylePatch,
+    ) -> Result<(), ParseError> {
+        self.add_query_node_rule(parse_selector(text)?, patch);
+        Ok(())
+    }
+
+    /// Parses `text` and appends it as an edge rule.
+    pub fn parse_edge_rule(
+        &mut self,
+        text: &str,
+        patch: crate::style::EdgeStylePatch,
+    ) -> Result<(), ParseError> {
+        self.add_query_edge_rule(parse_selector(text)?, patch);
+        Ok(())
+    }
+
     /// Node style with every matching selector applied in order.
     pub fn resolve_node(
         &self,
@@ -234,6 +290,11 @@ impl SelectorSheet {
         let mut resolved = base.clone();
         for (selector, patch) in &self.nodes {
             if selector.matches_node(store, node) {
+                resolved = patch.apply_to_style(&resolved);
+            }
+        }
+        for (query, patch) in &self.query_nodes {
+            if query.matches_node(store, node) {
                 resolved = patch.apply_to_style(&resolved);
             }
         }
@@ -251,6 +312,11 @@ impl SelectorSheet {
         let mut resolved = *base;
         for (selector, patch) in &self.edges {
             if selector.matches_edge(store, source, target) {
+                resolved = patch.apply_to_edge(&resolved);
+            }
+        }
+        for (query, patch) in &self.query_edges {
+            if query.matches_edge(store, source, target) {
                 resolved = patch.apply_to_edge(&resolved);
             }
         }
@@ -286,5 +352,26 @@ mod tests {
         let store = GraphStore::new();
         assert!(!node_only.matches_edge(&store, NodeIndex::new(0), NodeIndex::new(1)));
         assert!(!edge_only.matches_node(&store, NodeIndex::new(0)));
+    }
+
+    #[test]
+    fn query_rules_parse_and_leave_unmatched_styles_alone() {
+        use crate::style::{NodeStyle, NodeStylePatch};
+
+        let mut sheet = SelectorSheet::new();
+        sheet
+            .parse_node_rule("node.hub", NodeStylePatch::selected())
+            .expect("capped subset parses");
+        assert!(
+            sheet
+                .parse_node_rule("node > edge", NodeStylePatch::selected())
+                .is_err()
+        );
+        let store = GraphStore::new();
+        let base = NodeStyle::default();
+        assert_eq!(
+            sheet.resolve_node(&store, &base, NodeIndex::new(0)),
+            base
+        );
     }
 }

@@ -28,17 +28,19 @@ pub fn work_for(event: &GraphChangeEvent) -> LayoutWork {
     match event {
         GraphChangeEvent::NodeAdded(_) => LayoutWork::PlaceNew,
         GraphChangeEvent::NodeRemoved(_) => LayoutWork::RefreshEdgeGeometry,
-        GraphChangeEvent::EdgeAdded(_) | GraphChangeEvent::EdgeRemoved(_) => {
-            LayoutWork::RefreshEdgeGeometry
-        }
+        GraphChangeEvent::EdgeAdded(_)
+        | GraphChangeEvent::EdgeRemoved(_)
+        | GraphChangeEvent::EdgeEndpointsChanged(_) => LayoutWork::RefreshEdgeGeometry,
         GraphChangeEvent::NodeAttrChanged(_)
         | GraphChangeEvent::EdgeAttrChanged(_)
         | GraphChangeEvent::NodeClassChanged(_)
-        | GraphChangeEvent::EdgeClassChanged(_) => LayoutWork::None,
+        | GraphChangeEvent::EdgeClassChanged(_)
+        | GraphChangeEvent::NodeDataChanged(_)
+        | GraphChangeEvent::EdgeDataChanged(_) => LayoutWork::None,
         GraphChangeEvent::ParentChanged(_) | GraphChangeEvent::CollapsedChanged(_) => {
             LayoutWork::Full
         }
-        GraphChangeEvent::StructureReset => LayoutWork::Full,
+        GraphChangeEvent::StructureReset | GraphChangeEvent::BatchCommitted => LayoutWork::Full,
     }
 }
 
@@ -76,6 +78,27 @@ mod tests {
             work_for(&GraphChangeEvent::EdgeRemoved(EdgeIndex::new(0))),
             LayoutWork::RefreshEdgeGeometry
         );
+    }
+
+    #[test]
+    fn endpoint_moves_refresh_geometry_while_payload_edits_rest() {
+        assert_eq!(
+            work_for(&GraphChangeEvent::EdgeEndpointsChanged(EdgeIndex::new(0))),
+            LayoutWork::RefreshEdgeGeometry
+        );
+        assert_eq!(
+            work_for(&GraphChangeEvent::NodeDataChanged(NodeIndex::new(0))),
+            LayoutWork::None
+        );
+        assert_eq!(
+            work_for(&GraphChangeEvent::EdgeDataChanged(EdgeIndex::new(0))),
+            LayoutWork::None
+        );
+        assert_eq!(
+            work_for(&GraphChangeEvent::BatchCommitted),
+            LayoutWork::Full
+        );
+        assert!(LAYOUT_FILTER.accepts(&GraphChangeEvent::BatchCommitted));
     }
 
     #[test]

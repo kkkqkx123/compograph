@@ -273,6 +273,7 @@ impl GraphStore {
         if self.parents.get(&child).copied() == parent {
             return Ok(());
         }
+        self.before_mutation();
         if let Some(previous) = self.parents.remove(&child) {
             if let Some(siblings) = self.children.get_mut(&previous) {
                 siblings.remove(&child);
@@ -285,8 +286,7 @@ impl GraphStore {
             self.parents.insert(child, next);
             self.children.entry(next).or_default().insert(child);
         }
-        cx.emit(GraphChangeEvent::ParentChanged(child));
-        cx.notify();
+        self.announce(cx, GraphChangeEvent::ParentChanged(child));
         Ok(())
     }
 
@@ -300,16 +300,18 @@ impl GraphStore {
         if self.graph.node_weight(node).is_none() || !self.is_container(node) {
             return false;
         }
-        let changed = if collapsed {
-            self.collapsed.insert(node)
-        } else {
-            self.collapsed.remove(&node)
-        };
-        if changed {
-            cx.emit(GraphChangeEvent::CollapsedChanged(node));
-            cx.notify();
+        let already = self.collapsed.contains(&node);
+        if already == collapsed {
+            return false;
         }
-        changed
+        self.before_mutation();
+        if collapsed {
+            self.collapsed.insert(node);
+        } else {
+            self.collapsed.remove(&node);
+        }
+        self.announce(cx, GraphChangeEvent::CollapsedChanged(node));
+        true
     }
 
     fn relative_height(&self, root: NodeIndex, member: NodeIndex) -> usize {
@@ -358,21 +360,10 @@ impl GraphStore {
     }
 }
 
-/// Visible members of `members` under `store`, in index order.
-pub fn visible_members(store: &GraphStore, members: &[NodeIndex]) -> Vec<NodeIndex> {
-    let mut visible: Vec<NodeIndex> = members
-        .iter()
-        .copied()
-        .filter(|node| store.is_visible(*node))
-        .collect();
-    visible.sort_unstable_by_key(|node| node.index());
-    visible
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::{BTreeSet, HashSet};
+    use std::collections::BTreeSet;
 
     use petgraph::Directed;
     use petgraph::stable_graph::StableGraph;
@@ -384,19 +375,15 @@ mod tests {
         let root = graph.add_node(NodeData { label: "a".into() });
         let middle = graph.add_node(NodeData { label: "b".into() });
         let leaf = graph.add_node(NodeData { label: "c".into() });
-        let store = GraphStore {
+        let mut store = GraphStore {
             graph,
-            node_attr_table: HashMap::new(),
-            edge_attr_table: HashMap::new(),
-            node_class_table: HashMap::new(),
-            edge_class_table: HashMap::new(),
-            parents: HashMap::from([(middle, root), (leaf, middle)]),
-            children: HashMap::from([
-                (root, BTreeSet::from([middle])),
-                (middle, BTreeSet::from([leaf])),
-            ]),
-            collapsed: HashSet::new(),
+            ..GraphStore::new()
         };
+        store.parents = HashMap::from([(middle, root), (leaf, middle)]);
+        store.children = HashMap::from([
+            (root, BTreeSet::from([middle])),
+            (middle, BTreeSet::from([leaf])),
+        ]);
         (store, [root, middle, leaf])
     }
 

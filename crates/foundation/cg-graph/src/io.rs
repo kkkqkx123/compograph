@@ -15,7 +15,7 @@ pub mod document;
 pub mod dot;
 pub mod json;
 
-pub use document::{EdgeEntry, GraphDocument, IoError, NodeEntry, remap_positions};
-pub use dot::{export_dot, import_dot};
+pub use document::{EdgeEntry, GraphDocument, IoError, NodeEntry};
+pub use dot::{export_dot, export_dot_document, import_dot};
 #[cfg(feature = "json-io")]
 pub use json::{export_json, import_json};

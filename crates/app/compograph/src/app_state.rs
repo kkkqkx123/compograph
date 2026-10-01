@@ -118,6 +118,10 @@ pub(crate) struct GraphWindow {
     pub(crate) _structure_mark: Subscription,
     pub(crate) camera: Camera,
     pub(crate) viewport: Vec2,
+    /// Arms a one-shot view fit for the next animated layout completion.
+    pub(crate) fit_on_settle: bool,
+    /// Whether the previous frame still stepped a layout transition.
+    pub(crate) was_settling: bool,
     pub(crate) drag: DragState,
     pub(crate) rubber: BoxSelectState,
     pub(crate) selection: SelectionState,
@@ -224,6 +228,8 @@ impl GraphWindow {
             _layout_observer: layout_observer,
             camera: Camera::new(Point2::ZERO, 1.0),
             viewport: Vec2::new(1024.0, 768.0),
+            fit_on_settle: false,
+            was_settling: false,
             drag: DragState::default(),
             rubber: BoxSelectState::default(),
             selection: SelectionState::default(),
@@ -296,6 +302,7 @@ impl GraphWindow {
         self.layout.update(cx, |driver, cx| {
             driver.set_engine_animated(&store, engine, 24, cg_layout::Easing::CubicInOut, cx);
         });
+        self.fit_on_settle = true;
         self.menu_open = false;
         cx.notify();
     }

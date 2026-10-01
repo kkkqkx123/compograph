@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use cg_graph::{FixedNodes, GraphView, Positions};
 use cg_types::Point2;
 
-use crate::engine::LayoutEngine;
+use crate::engine::{CommonOptions, LayoutEngine};
 
 /// Tuning parameters of the grid arrangement.
 #[derive(Clone, Debug)]
@@ -55,6 +55,7 @@ impl Default for GridOptions {
 /// Grid engine implementing the shared layout contract.
 pub struct GridLayout {
     options: GridOptions,
+    common: CommonOptions,
 }
 
 impl GridLayout {
@@ -66,11 +67,21 @@ impl GridLayout {
                 height,
                 ..GridOptions::default()
             },
+            common: CommonOptions::default(),
         }
     }
 
     pub fn with_options(options: GridOptions) -> Self {
-        Self { options }
+        Self {
+            options,
+            common: CommonOptions::default(),
+        }
+    }
+
+    /// Overrides the shared sort, fit and spacing inputs.
+    pub fn with_common(mut self, common: CommonOptions) -> Self {
+        self.common = common;
+        self
     }
 
     pub fn options(&self) -> &GridOptions {
@@ -81,7 +92,7 @@ impl GridLayout {
 impl LayoutEngine for GridLayout {
     fn layout(&self, graph: &dyn GraphView, previous: &Positions, fixed: &FixedNodes) -> Positions {
         let mut ids = graph.node_ids();
-        ids.sort_unstable_by_key(|node| node.index());
+        self.common.sort_ids(&mut ids, graph);
         let mut result: Positions = HashMap::new();
         if ids.is_empty() {
             return result;
@@ -115,7 +126,7 @@ impl LayoutEngine for GridLayout {
             pitch_w = pitch_w.max(self.options.node_size);
             pitch_h = pitch_h.max(self.options.node_size);
         }
-        let spacing = self.options.spacing.max(f32::EPSILON);
+        let spacing = (self.options.spacing * self.common.spacing()).max(f32::EPSILON);
         pitch_w *= spacing;
         pitch_h *= spacing;
         let corner = Point2::new(
@@ -146,6 +157,10 @@ impl LayoutEngine for GridLayout {
 
     fn name(&self) -> &'static str {
         "grid"
+    }
+
+    fn set_common(&mut self, common: CommonOptions) {
+        self.common = common;
     }
 }
 
@@ -284,6 +299,72 @@ mod tests {
                 .values()
                 .all(|point| *point == Point2::new(7.0, 9.0))
         );
+    }
+
+    #[test]
+    fn common_sort_reorders_slots_by_degree() {
+        use crate::engine::{CommonOptions, SortKey};
+
+        let graph = MockGraph::chain(3);
+        let plain = GridLayout::with_options(GridOptions {
+            center: Point2::ZERO,
+            width: 300.0,
+            height: 100.0,
+            avoid_overlap: false,
+            ..GridOptions::default()
+        });
+        let base = plain.layout(&graph, &Positions::new(), &FixedNodes::default());
+        let sorted = GridLayout::with_options(GridOptions {
+            center: Point2::ZERO,
+            width: 300.0,
+            height: 100.0,
+            avoid_overlap: false,
+            ..GridOptions::default()
+        })
+        .with_common(CommonOptions {
+            sort: SortKey::DegreeDesc,
+            ..CommonOptions::default()
+        })
+        .layout(&graph, &Positions::new(), &FixedNodes::default());
+        assert_ne!(
+            base.get(&NodeIndex::new(1)),
+            sorted.get(&NodeIndex::new(1))
+        );
+        assert_eq!(sorted.get(&NodeIndex::new(1)), base.get(&NodeIndex::new(0)));
+    }
+
+    #[test]
+    fn common_spacing_scales_the_pitch() {
+        use crate::engine::CommonOptions;
+
+        let graph = MockGraph::isolated(2);
+        let plain = GridLayout::with_options(GridOptions {
+            center: Point2::ZERO,
+            width: 200.0,
+            height: 100.0,
+            avoid_overlap: false,
+            ..GridOptions::default()
+        })
+        .layout(&graph, &Positions::new(), &FixedNodes::default());
+        let wide = GridLayout::with_options(GridOptions {
+            center: Point2::ZERO,
+            width: 200.0,
+            height: 100.0,
+            avoid_overlap: false,
+            ..GridOptions::default()
+        })
+        .with_common(CommonOptions {
+            spacing_factor: 2.0,
+            ..CommonOptions::default()
+        })
+        .layout(&graph, &Positions::new(), &FixedNodes::default());
+        let plain_gap =
+            (plain.get(&NodeIndex::new(1)).unwrap().x - plain.get(&NodeIndex::new(0)).unwrap().x)
+                .abs();
+        let wide_gap =
+            (wide.get(&NodeIndex::new(1)).unwrap().x - wide.get(&NodeIndex::new(0)).unwrap().x)
+                .abs();
+        assert!((wide_gap - plain_gap * 2.0).abs() < 1e-3);
     }
 
     #[test]

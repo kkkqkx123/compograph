@@ -11,6 +11,7 @@
 > 阶段：P0 骨架闭环 → P1 可交互 → P2 接近 cytoscape 可用度 → P3 大规模。
 > **进度口径（2026-10-01 代码核查）**：P0/P1/P2 项已全部落地，P3 按决策口径落地（欧拉路/最小割 + 层次/马尔可夫/k 均值/亲和传播/距离度量已落地，复合节点渲染交互已接通、布局引擎内约束仍为后处理表达，布局切换动画已接通，拐点主链与数据映射链已接通，背景图为登记加回退最小闭环），表格"阶段"列保留原计划口径，已落地项在"状态"列标注。实测见 [功能实测分析报告](../plan/feature-analysis-report.md)。
 > 事实基线：petgraph（版本以 `Cargo.lock` 为准）、zed-gpui（submodule `lean` 分支，指针为准）、cytoscape.js（`ref/cytoscape-js`，版本见其 `package.json`），文档不维持提交号。
+> 跟进（2026-10-04 代码核查）：差距后续方案项已全部落地，见 §8；通用选项默认保持既有行为。
 
 ---
 
@@ -24,7 +25,7 @@
 | 1.4 | 坐标外挂 `PositionStore` | `[自研]` | P0 | petgraph 不存坐标；`Positions = HashMap<NodeIndex,(f32,f32)>` + `fixed` 集 |
 | 1.5 | 只读图视图 trait（解耦 L2/L3） | `[petgraph]` | P1 | 基于 `visit` trait 簇（`IntoNeighbors:107`、`IntoNodeIdentifiers:183`、`IntoEdges:147`） |
 | 1.6 | 图 I/O（JSON/GraphML 导入导出） | `[自研]` | P2 | ✅ 已落地：JSON 导入导出 + 校验（`io.rs`）；GraphML 未做 |
-| 1.7 | DOT 导出/导入 | `[自研]` | P2 | ✅ 已落地：`export_dot`（petgraph `Dot`）+ 自写轻量 `import_dot`（`io.rs`） |
+| 1.7 | DOT 导出/导入 | `[自研]` | P2 | ✅ 已落地：`export_dot`（petgraph `Dot`）+ 自写轻量 `import_dot`（`io.rs`）；后续补齐属性子集推断（数值/布尔/文本）、分类键切分、按文档子集写出器与导入往返一致，外部风格文件（strict 头、注释、无向边、链式边、默认属性块）为回归用例（`io/dot.rs`） |
 
 ### 1A. 算法库复用清单（petgraph 版本以 `Cargo.lock` 为准）
 
@@ -46,7 +47,7 @@
 
 > petgraph 缺失、cytoscape 独有的部分“网络科学”算法中，层次聚类、马尔可夫聚类、k 均值、亲和传播、距离度量、Euler 路径、确定性全局最小割已单点落地（见 §6）。度/接近/介数中心性已按 P1 方案自研落地，不在远期表。
 >
-> **已桥接算法（`cg-graph/src/algo.rs`）**：`shortest_paths`/`shortest_path_cost`（Dijkstra）、`bidirectional_path_cost`（双向 Dijkstra）、`shortest_path`（A*）、`heuristic_shortest_path`（带位置启发式 A*）、`spfa_paths`、`johnson_paths`、`kth_shortest_costs`、`strongly_connected_components`（Tarjan）、`kosaraju_components` + `condensation_groups`、`undirected_connected_components` + `has_directed_path` + `is_cyclic_*` + `is_bipartite_graph`、`minimum_spanning_forest`（Kruskal）、`minimum_spanning_tree_single`（Prim）、`topological_order` + `topo_order`、`post_order`、`immediate_dominators`、`rank_nodes`（PageRank）、`weighted_degree_centrality`（加权度中心性）、`transitive_reduction`，另有 `all_pairs_shortest_paths`（自研 Floyd-Warshall）、`bellman_ford_paths` + `negative_cycle_path`、`articulation_points` + `bridges`（自研无向语义）、`breadth_first_order` + `depth_first_order`、组合优化 `maximum_flow_value` + `greedy/maximum_matching_pairs` + `dsatur_groups` + `maximal_clique_groups` + `feedback_arc_edges` + `simple_paths_limited`（`algo/combinatorial.rs`）。中心性三件套在 `centrality.rs`（度/接近/介数，无权版本）。聚类在 `hierarchical.rs`（最小/最大/均值连接） + `markov.rs` + `kmeans.rs`（k 均值/k-medoids/模糊 C 均值） + `affinity.rs` + `distances.rs`。
+> **已桥接算法（`cg-graph/src/algo.rs`）**：`shortest_paths`/`shortest_path_cost`（Dijkstra）、`bidirectional_path_cost`（双向 Dijkstra）、`shortest_path`（A*）、`heuristic_shortest_path`（带位置启发式 A*）、`spfa_paths`、`johnson_paths`、`kth_shortest_costs`、`strongly_connected_components`（Tarjan）、`kosaraju_components` + `condensation_groups`、`undirected_connected_components` + `has_directed_path` + `is_cyclic_*` + `is_bipartite_graph`、`minimum_spanning_forest`（Kruskal）、`minimum_spanning_tree_single`（Prim）、`topological_order` + `topo_order`、`post_order`、`immediate_dominators`、`rank_nodes`（PageRank）、`weighted_degree_centrality`（加权度中心性）、`transitive_reduction`，另有 `all_pairs_shortest_paths`（自研 Floyd-Warshall）、`bellman_ford_paths` + `negative_cycle_path`、`articulation_points` + `bridges` + `biconnected_components`（自研无向语义，双连通分组与割点桥互相印证）、`breadth_first_order` + `depth_first_order`、组合优化 `maximum_flow_value` + `greedy/maximum_matching_pairs` + `dsatur_groups` + `maximal_clique_groups` + `feedback_arc_edges` + `simple_paths_limited`（`algo/combinatorial.rs`）。中心性三件套在 `centrality.rs`（度/接近/介数，无权版本）。聚类在 `hierarchical.rs`（最小/最大/均值连接） + `markov.rs` + `kmeans.rs`（k 均值/k-medoids/模糊 C 均值） + `affinity.rs` + `distances.rs`。
 
 ---
 
@@ -83,13 +84,13 @@
 | 3.7 | 相机 `Camera{offset,zoom}`（平移/缩放） | `[cy→模式]+[gpui]` | P1 | ✅ 已落地（`camera.rs`，含光标锚点缩放） |
 | 3.8 | 空间索引（四叉树/均匀网格）+ 点选命中 | `[cy→移植]` | P1 | ✅ 已落地（`spatial.rs` 均匀网格 + `picking.rs`） |
 | 3.9 | 框选命中 | `[cy→移植]` | P2 | ✅ 已落地（`picking.rs` 的 `polygon_intersects_rect`/`polyline_intersects_rect` + `shapes.rs` 的 `shape_hits_rect`，与点选同口径） |
-| 3.10 | 节点/边标签 | `[自研]`（gpui 文本系统） | P1/P2 | ✅ 已落地：节点标签（`text.rs` + `graph_view` 内文本整形）与边标签（沿边中点锚定，文本取边权重，`Minimal` 隐藏）；多行换行与中文硬换行已落地；边标签带端切向旋转角（可读性折返，画布暂水平绘制，包围盒与框选已生效），标签背景（矩形/圆角矩形浅色板，画布已绘制） |
-| 3.11 | 样式属性层（颜色/描边/宽度/透明度/渐变…） | `[cy→模式]` | P2 | ✅ 已落地（`style.rs`，常用子集 + mapper/谓词；描边与透明度已接入绘制与软件光栅化；节点线性渐变已落地：起点色终点色角度三要素，纯色为退化形态，最简档回退起点色，画布映射线性渐变原语，光栅同口径插值） |
+| 3.10 | 节点/边标签 | `[自研]`（gpui 文本系统） | P1/P2 | ✅ 已落地：节点标签（`text.rs` + `graph_view` 内文本整形）与边标签（沿边中点锚定，文本取边权重，`Minimal` 隐藏）；多行换行与中文硬换行已落地；边标签带端切向旋转角（可读性折返，画布暂水平绘制，包围盒与框选已生效）；标签样式收为对齐/背景形状/背景色/圆角/边距五要素（`LabelStyle`，随样式解析与旁路覆盖），包围盒口径与绘制共用 envelope，框选取标签与图形并集 |
+| 3.11 | 样式属性层（颜色/描边/宽度/透明度/渐变…） | `[cy→模式]` | P2 | ✅ 已落地（`style.rs`，常用子集 + mapper/谓词；描边与透明度已接入绘制与软件光栅化；节点线性渐变已落地：起点色终点色角度三要素，纯色为退化形态，最简档回退起点色，画布映射线性渐变原语，光栅同口径插值；数据映射补颜色族：节点属性到填充、边属性到线色，线性插值、空数据跳过、越界钳制、退化区间取起点；边曲线收归边样式属性：默认自动档保留既有行为，另有直行/贝塞尔/出租车/正交强制档，自环忽略；查询规则通道：`SelectorSheet` 类型化规则在前、解析查询规则在后同序求值，后赢，可与过滤串复用同一查询） |
 | 3.12 | 选中/高亮覆盖（bypass 式 override） | `[cy→模式]` | P2 | ✅ 已落地（`style.rs` 的 `BypassStore`） |
 | 3.13 | 绘制顺序编排（先边后节点、标签最上、z-order） | `[cy→模式]` | P1 | ✅ 已落地（`graph_view`：边→箭头→节点→标签→框选） |
 | 3.14 | 路线 B：自定义 `Element` + 保留场景（增量 flush） | `[gpui]` | P3 | ✅ 已落地（`retained.rs` 的 `RetainedCache`，三维版本 + 选项与相机快照组成完整复用键） |
 | 3.15 | LOD（缩放阈值后降级为点/线） | `[自研]` | P3 | ✅ 已落地（`lod.rs` 三级 + 滞回） |
-| 3.16 | 图片导出（PNG） | `[自研]`（思路参考 cytoscape `export-image.mjs`） | P3 | ✅ 已落地：软件光栅化 + 自研 PNG 编码（`export.rs` 的 `encode_png`，无图片依赖）；视口/全图两档，节点渐变随计划缩放携带，标签仅画布绘制 |
+| 3.16 | 图片导出（PNG） | `[自研]`（思路参考 cytoscape `export-image.mjs`） | P3 | ✅ 已落地：软件光栅化 + 自研 PNG 编码（`export.rs` 的 `encode_png`，无图片依赖）；视口/全图两档，节点渐变随计划缩放携带；标签按完整档同 pass 重放进光栅（含背景板，ASCII 点阵字形按字号缩放，非覆盖字符以后备块占位），有无标签像素可区分 |
 | 3.17 | 路线 C：wgpu 实例化（十万级） | `[gpui_wgpu]` | 按需 | ❌ 未实现（评估项） |
 
 ---
@@ -154,3 +155,18 @@
 - **P2 六项**：边标签（P2-1，权重文本沿边中点）、多行标签与中文换行（P2-3）、出租车与分段曲线（P2-4，`taxi_polyline`/`segmented_polyline`/`manhattan_route`，绘制与框选共用采样；版本一为几何能力，产品默认直边、不暴露开关）、样式描边与透明度接线（P2-5，取描边与透明度子集、不新增字段）、PNG 导出（P2-6，自研编码、无图片依赖，仅覆盖节点与边几何）均已落地。
 - **3.17 路线 C**：未实现（P3-6，需先拍板规模）。
 - **§6 远期算法与机制**：Euler 与最小割已落地（P3-2）；聚类套件中层次/马尔可夫/k 均值/亲和传播/距离度量已落地（P3-1）；复合节点存储渲染交互与布局切换动画已接通，布局引擎内力约束以后处理表达；扩展机制未做（P3-4，聚类分析见 `docs/analysis/clustering-analysis.md`）。
+
+---
+
+## 8. 差距后续（cytoscape-gap-followup，2026-10-04 落地）
+
+> 方案见 [差距分析本体后续方案](../plan/cytoscape-gap-followup.md) 与[细化设计](../plan/cytoscape-gap-followup-detail.md)。只收本体统一口径语义，调用方接线不在此列；通用选项默认保持既有行为。
+
+| 方案节 | 内容 | 状态 |
+|---|---|---|
+| §1 存储与事件 | 批量合并通知（嵌套计数、一次广播、全过滤器接受）、边重连（端点变更事件、不发增删）、标签/权重修改接口与数据事件、级联删除边优先（清属性分类残留）、批量粒度快照撤销栈（容量封顶，坐标不进栈） | ✅ 已落地（`cg-graph` 的 `batch.rs`/`store.rs`/`events.rs`/`binding.rs`，表驱动见 `tests/event_sequences.rs`） |
+| §1 双连通 | 无向双连通分量分组（边栈 Tarjan，自环忽略、平行边互保，割点跨组、孤立单点，排序确定） | ✅ 已落地（`algo/connectivity.rs`，与割点桥互相印证） |
+| §2 查询 | 类型化选择器封顶子集（类型/标识/类/属性比较六算子/状态伪类/逗号并集，`ParseError` 带偏移，`SelectorCache` 复用；边 `weight` 桥接类型化载荷，缺失永不匹配）、节点集边集运算与闭包（并交差补、邻域/后继/前驱闭包、无向分支）、样式表查询通道（`SelectorSheet`，同一查询串过滤与匹配一致，见 `cg-render/tests/selector_sheet.rs`） | ✅ 已落地（`cg-graph` 的 `selector.rs`/`collection.rs`，`cg-render` 的 `selector.rs`） |
+| §3 样式 | 见 3.10/3.11（标签五要素、颜色映射族、边曲线属性、查询通道）；规则后赢、旁路最高语义不变 | ✅ 已落地 |
+| §4 布局 | 通用选项（排序四档、适应视图标志、间距系数；力导向间距走物理参数，不消费间距系数）、生命周期三段事件（开始/停止/完成）加显式停止（取消后台与动画、过期帧不提交） | ✅ 已落地（`engine.rs` 的 `CommonOptions`/`SortKey`、`lifecycle.rs`、`driver.rs`，见 `tests/lifecycle.rs`） |
+| §5 导入导出 | 合成导入（先校验、标识归并原地更新或整体替换、全程批量一次广播）、DOT 子集见 1.7、标签进导出图见 3.16 | ✅ 已落地（`cg-graph` 的 `sync.rs`/`io/dot.rs`，`cg-render` 的 `glyph.rs`/`raster.rs`/`export.rs`） |

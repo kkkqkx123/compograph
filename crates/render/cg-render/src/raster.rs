@@ -10,7 +10,11 @@ use cg_geometry::{
 use cg_types::Point2;
 
 use super::view::{PaintedArrow, PaintedEdge, PaintedNode};
+use crate::glyph::{
+    GLYPH_ADVANCE, GLYPH_HEIGHT, GLYPH_LINE_ADVANCE, GLYPH_WIDTH, glyph_rows, is_printable_ascii,
+};
 use crate::style::NodeFill;
+use crate::text::{LabelAlign, LabelBackground, PaintedEdgeLabel, PaintedLabel, split_label_lines};
 
 /// Fills a solid background RGB buffer.
 pub fn solid_background(width: u32, height: u32, rgb: [u8; 3]) -> Vec<u8> {
@@ -44,6 +48,45 @@ pub fn rasterize(
     edges: &[PaintedEdge],
     arrows: &[PaintedArrow],
     background: [u8; 3],
+) -> Vec<u8> {
+    rasterize_with_labels(
+        width,
+        height,
+        nodes,
+        edges,
+        arrows,
+        background,
+        LabelOverlays {
+            nodes: &[],
+            edges: &[],
+        },
+    )
+}
+
+/// Label plates composited above the geometry in one export pass.
+///
+/// Node and edge labels travel together because both paint after the
+/// geometry through the same glyph pass; the plain [`rasterize`] entry
+/// passes empty slices.
+pub struct LabelOverlays<'a> {
+    pub nodes: &'a [PaintedLabel],
+    pub edges: &'a [PaintedEdgeLabel],
+}
+
+/// Renders plans with label plates composited above the geometry.
+///
+/// Labels reuse the planned origins and wrap with the same line splitter as
+/// the canvas, so export text lands where the canvas draws it. Glyphs come
+/// from the built-in bitmap font; characters outside printable ASCII render
+/// as solid fallback blocks.
+pub fn rasterize_with_labels(
+    width: u32,
+    height: u32,
+    nodes: &[PaintedNode],
+    edges: &[PaintedEdge],
+    arrows: &[PaintedArrow],
+    background: [u8; 3],
+    labels: LabelOverlays<'_>,
 ) -> Vec<u8> {
     let mut canvas = Image::new(width, height, background);
     for edge in edges {
@@ -112,6 +155,30 @@ pub fn rasterize(
             }
         }
     }
+    for label in labels.nodes {
+        canvas.fill_label(LabelFace {
+            origin: label.origin,
+            text: &label.text,
+            size: label.size,
+            rgb: tint_to_rgb(label.color),
+            align: label.align,
+            background: label.background,
+            background_rgb: tint_to_rgb(label.background_color),
+            padding: label.padding,
+        });
+    }
+    for label in labels.edges {
+        canvas.fill_label(LabelFace {
+            origin: label.origin,
+            text: &label.text,
+            size: label.size,
+            rgb: tint_to_rgb(label.color),
+            align: label.align,
+            background: label.background,
+            background_rgb: tint_to_rgb(label.background_color),
+            padding: label.padding,
+        });
+    }
     canvas.pixels
 }
 
@@ -158,7 +225,7 @@ fn gradient_ratio(x: f32, y: f32, origin: Point2, side: f32, angle_deg: f32) -> 
         min = min.min(projection);
         max = max.max(projection);
     }
-    if !(max > min) {
+    if max <= min {
         return 0.0;
     }
     ((x * dx + y * dy - min) / (max - min)).clamp(0.0, 1.0)
@@ -168,6 +235,23 @@ struct Image {
     width: i32,
     height: i32,
     pixels: Vec<u8>,
+}
+
+/// One label plate with resolved colors, ready for the glyph pass.
+///
+/// Node and edge labels carry the same visual fields under different id
+/// types, so both convert into this face and share one paint path.
+/// Opacity stays fully opaque: export plates never fade, matching the
+/// canvas label paint the plans were built from.
+struct LabelFace<'a> {
+    origin: Point2,
+    text: &'a str,
+    size: f32,
+    rgb: [u8; 3],
+    align: LabelAlign,
+    background: LabelBackground,
+    background_rgb: [u8; 3],
+    padding: f32,
 }
 
 impl Image {
@@ -201,6 +285,10 @@ impl Image {
         let y0 = origin.y.floor() as i32;
         let x1 = (origin.x + side).ceil() as i32;
         let y1 = (origin.y + side).ceil() as i32;
+        self.fill_block(x0, y0, x1, y1, rgb, alpha);
+    }
+
+    fn fill_block(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, rgb: [u8; 3], alpha: f32) {
         for y in y0..y1 {
             for x in x0..x1 {
                 if alpha >= 1.0 {
@@ -208,6 +296,102 @@ impl Image {
                 } else if alpha > 0.0 {
                     self.blend(x, y, rgb, alpha);
                 }
+            }
+        }
+    }
+
+    /// Composites one label plate with bitmap text above the geometry.
+    ///
+    /// Lines wrap with the same splitter the canvas plans with, so export
+    /// text lands where the canvas draws it. Characters outside printable
+    /// ASCII render as solid fallback blocks. Rounded backgrounds paint
+    /// square; corner carving stays a future refinement.
+    fn fill_label(&mut self, face: LabelFace<'_>) {
+        const ALPHA: f32 = 1.0;
+
+        let LabelFace {
+            origin,
+            text,
+            size,
+            rgb,
+            align,
+            background,
+            background_rgb,
+            padding,
+        } = face;
+        if text.trim().is_empty() {
+            return;
+        }
+        let pixel = if size.is_finite() && size > 0.0 {
+            (size / 12.0).round().clamp(1.0, 8.0) as i32
+        } else {
+            1
+        };
+        let lines = split_label_lines(text);
+        let max_chars = lines
+            .iter()
+            .map(|line| line.chars().count())
+            .max()
+            .unwrap_or(0) as i32;
+        if max_chars == 0 {
+            return;
+        }
+        let width = max_chars * GLYPH_ADVANCE as i32 * pixel;
+        let height = lines.len() as i32 * GLYPH_LINE_ADVANCE as i32 * pixel;
+        let left = match align {
+            LabelAlign::Center => (origin.x - width as f32 / 2.0).round() as i32,
+            LabelAlign::Left => origin.x.round() as i32,
+            LabelAlign::Right => (origin.x - width as f32).round() as i32,
+        };
+        let top = origin.y.round() as i32;
+        if !matches!(background, LabelBackground::None) {
+            let pad = if padding.is_finite() && padding > 0.0 {
+                padding.round() as i32
+            } else {
+                0
+            };
+            self.fill_block(
+                left - pad,
+                top - pad,
+                left + width + pad,
+                top + height + pad,
+                background_rgb,
+                ALPHA,
+            );
+        }
+        for (row, line) in lines.iter().enumerate() {
+            let baseline = top + row as i32 * GLYPH_LINE_ADVANCE as i32 * pixel;
+            let mut cursor = left;
+            for point in line.chars() {
+                let mut bytes = [0u8; 4];
+                let encoded = point.encode_utf8(&mut bytes);
+                if encoded.len() == 1 && is_printable_ascii(encoded.as_bytes()[0]) {
+                    let rows = glyph_rows(encoded.as_bytes()[0]);
+                    for (glyph_row, bits) in rows.iter().enumerate() {
+                        for column in 0..GLYPH_WIDTH {
+                            if bits & (1 << (GLYPH_WIDTH - 1 - column)) != 0 {
+                                self.fill_block(
+                                    cursor + column as i32 * pixel,
+                                    baseline + glyph_row as i32 * pixel,
+                                    cursor + (column as i32 + 1) * pixel,
+                                    baseline + (glyph_row as i32 + 1) * pixel,
+                                    rgb,
+                                    ALPHA,
+                                );
+                            }
+                        }
+                    }
+                } else if !point.is_whitespace() {
+                    self.fill_block(
+                        cursor,
+                        baseline,
+                        cursor + GLYPH_WIDTH as i32 * pixel,
+                        baseline + GLYPH_HEIGHT as i32 * pixel,
+                        rgb,
+                        ALPHA,
+                    );
+                }
+                cursor += GLYPH_ADVANCE as i32 * pixel;
             }
         }
     }

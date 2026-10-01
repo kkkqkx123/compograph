@@ -22,8 +22,9 @@ use super::culling::{
 pub use super::hits::painted_edge_hits;
 use super::plans::{EdgePaintOptions, NODE_SIDE, PaintedEdge};
 use super::routing::{
-    bezier_control, clean_waypoints, curved_edge, haystack_edge, haystack_span, loop_edge,
-    manhattan_bends, manhattan_edge, should_use_haystack, should_use_manhattan, waypoint_edge,
+    BundleSlot, clean_waypoints, curved_edge, curve_control, haystack_edge, haystack_span,
+    loop_edge, manhattan_bends, manhattan_edge, routed_options, should_use_haystack,
+    should_use_manhattan, waypoint_edge,
 };
 use crate::waypoints::WaypointStore;
 
@@ -173,15 +174,16 @@ pub fn paint_edges_for_with_waypoints(
         let start = camera.world_to_viewport(viewport, *a);
         let end = camera.world_to_viewport(viewport, *b);
         let slot = context.slot(key, ordinal);
-        if should_use_haystack(options, bundle_len) {
+        let routed = routed_options(style, options);
+        if should_use_haystack(routed, bundle_len) {
             let (fanned_a, fanned_b) = haystack_span(start, end, *source, *target, slot);
             if edge_visible(fanned_a, fanned_b, None, viewport) {
                 painted.push(haystack_edge(*source, *target, fanned_a, fanned_b, style));
             }
             continue;
         }
-        if should_use_manhattan(options) {
-            let (bend_a, bend_b) = manhattan_bends(start, end, options);
+        if should_use_manhattan(routed) {
+            let (bend_a, bend_b) = manhattan_bends(start, end, routed);
             let mut via = Vec::new();
             if let Some(bend) = bend_a {
                 via.push(bend);
@@ -195,7 +197,18 @@ pub fn paint_edges_for_with_waypoints(
             }
             continue;
         }
-        let ctrl = bezier_control(start, end, *source, *target, slot, bundle_len, options);
+        let ctrl = curve_control(
+            style,
+            start,
+            end,
+            BundleSlot {
+                source: *source,
+                target: *target,
+                slot,
+                len: bundle_len,
+            },
+            options,
+        );
         if edge_visible(start, end, ctrl, viewport) {
             painted.push(curved_edge(*source, *target, start, end, ctrl, style));
         }
@@ -203,13 +216,54 @@ pub fn paint_edges_for_with_waypoints(
     painted
 }
 
+/// One entry of a pair list with its bundling context attached.
+///
+/// The ordinal is meaningless without the list: loop stacking, parallel
+/// slots and waypoint occurrences all count earlier entries. Grouping both
+/// keeps single-edge rebuilds agreeing with the bulk plan for the same
+/// ordinal.
+#[derive(Clone, Copy, Debug)]
+pub struct EdgeOrdinal<'a> {
+    pub pairs: &'a [(NodeIndex, NodeIndex)],
+    pub ordinal: usize,
+}
+
+impl EdgeOrdinal<'_> {
+    /// Endpoints of the entry, or nothing when the ordinal is out of range.
+    pub fn endpoints(self) -> Option<(NodeIndex, NodeIndex)> {
+        self.pairs.get(self.ordinal).copied()
+    }
+
+    /// Occurrence of these endpoints before the entry, for waypoint lookup.
+    pub fn occurrence(self) -> usize {
+        let (source, target) = match self.endpoints() {
+            Some(pair) => pair,
+            None => return 0,
+        };
+        self.pairs
+            .iter()
+            .take(self.ordinal)
+            .filter(|(a, b)| *a == source && *b == target)
+            .count()
+    }
+
+    /// Stacking ordinal among earlier self loops on the same node.
+    pub fn loop_ordinal(self) -> usize {
+        loop_ordinal(self.pairs, self.ordinal)
+    }
+
+    /// Parallel slot and bundle size of the entry.
+    pub fn bundle(self) -> (usize, usize) {
+        bundle_slot(self.pairs, self.ordinal)
+    }
+}
+
 /// Edge plan for one pair-list entry, or nothing when it is missing or culled.
 ///
 /// The result agrees with [`paint_edges_for`] for the same ordinal, so the
 /// retained cache can refresh moved nodes without rebuilding every edge.
 pub fn paint_single_edge(
-    pairs: &[(NodeIndex, NodeIndex)],
-    ordinal: usize,
+    edge: EdgeOrdinal<'_>,
     positions: &Positions,
     camera: &Camera,
     viewport: Vec2,
@@ -217,8 +271,7 @@ pub fn paint_single_edge(
     edge_style: impl Fn(NodeIndex, NodeIndex) -> EdgeStyle,
 ) -> Option<PaintedEdge> {
     paint_single_edge_with_waypoints(
-        pairs,
-        ordinal,
+        edge,
         positions,
         camera,
         viewport,
@@ -234,8 +287,7 @@ pub fn paint_single_edge(
 /// ordinal, so the retained cache can refresh moved nodes without rebuilding
 /// every edge.
 pub fn paint_single_edge_with_waypoints(
-    pairs: &[(NodeIndex, NodeIndex)],
-    ordinal: usize,
+    edge: EdgeOrdinal<'_>,
     positions: &Positions,
     camera: &Camera,
     viewport: Vec2,
@@ -243,7 +295,7 @@ pub fn paint_single_edge_with_waypoints(
     waypoints: &WaypointStore,
     edge_style: impl Fn(NodeIndex, NodeIndex) -> EdgeStyle,
 ) -> Option<PaintedEdge> {
-    let (source, target) = *pairs.get(ordinal)?;
+    let (source, target) = edge.endpoints()?;
     let style = edge_style(source, target);
     let world_rect = world_viewport_rect(camera, viewport);
     let margin = world_margin_for(camera);
@@ -253,7 +305,7 @@ pub fn paint_single_edge_with_waypoints(
             return None;
         }
         let screen = camera.world_to_viewport(viewport, *anchor);
-        let entry = loop_edge(source, target, screen, loop_ordinal(pairs, ordinal), style);
+        let entry = loop_edge(source, target, screen, edge.loop_ordinal(), style);
         if !loop_visible(screen, entry.loop_ctrls.unwrap_or([screen; 2]), viewport) {
             return None;
         }
@@ -263,11 +315,7 @@ pub fn paint_single_edge_with_waypoints(
         (Some(a), Some(b)) => (*a, *b),
         _ => return None,
     };
-    let occurrence = pairs
-        .iter()
-        .take(ordinal)
-        .filter(|(a, b)| *a == source && *b == target)
-        .count();
+    let occurrence = edge.occurrence();
     let raw = waypoints.get(source, target, occurrence);
     if !raw.is_empty() {
         let start = camera.world_to_viewport(viewport, a);
@@ -286,21 +334,22 @@ pub fn paint_single_edge_with_waypoints(
         }
         return Some(waypoint_edge(source, target, start, end, bends, style));
     }
-    let (slot, bundle_len) = bundle_slot(pairs, ordinal);
+    let (slot, bundle_len) = edge.bundle();
     if !segment_in_grown_rect(a, b, world_rect, margin + spread_for(bundle_len)) {
         return None;
     }
     let start = camera.world_to_viewport(viewport, a);
     let end = camera.world_to_viewport(viewport, b);
-    if should_use_haystack(options, bundle_len) {
+    let routed = routed_options(style, options);
+    if should_use_haystack(routed, bundle_len) {
         let (fanned_a, fanned_b) = haystack_span(start, end, source, target, slot);
         if !edge_visible(fanned_a, fanned_b, None, viewport) {
             return None;
         }
         return Some(haystack_edge(source, target, fanned_a, fanned_b, style));
     }
-    if should_use_manhattan(options) {
-        let (bend_a, bend_b) = manhattan_bends(start, end, options);
+    if should_use_manhattan(routed) {
+        let (bend_a, bend_b) = manhattan_bends(start, end, routed);
         let mut via = Vec::new();
         if let Some(bend) = bend_a {
             via.push(bend);
@@ -314,7 +363,18 @@ pub fn paint_single_edge_with_waypoints(
         }
         return Some(manhattan_edge(source, target, start, end, via, style));
     }
-    let ctrl = bezier_control(start, end, source, target, slot, bundle_len, options);
+    let ctrl = curve_control(
+        style,
+        start,
+        end,
+        BundleSlot {
+            source,
+            target,
+            slot,
+            len: bundle_len,
+        },
+        options,
+    );
     if !edge_visible(start, end, ctrl, viewport) {
         return None;
     }
@@ -362,6 +422,56 @@ mod tests {
         assert_eq!(edges.len(), 1);
         assert!(edges[0].ctrl.is_none());
         assert!(edges[0].loop_ctrls.is_none());
+    }
+
+    #[test]
+    fn per_edge_curve_overrides_the_bundle_default() {
+        use crate::style::EdgeCurve;
+
+        let graph = MockGraph::chain(2);
+        let mut positions = Positions::new();
+        positions.insert(NodeIndex::new(0), Point2::new(-400.0, 0.0));
+        // Diagonal endpoints: taxi on an axis-aligned edge needs no corner,
+        // so the bend assertion below requires a genuine turn.
+        positions.insert(NodeIndex::new(1), Point2::new(-300.0, 40.0));
+        let forced = paint_edges(&graph, &positions, &camera(), viewport(), |_, _| {
+            EdgeStyle {
+                curve: EdgeCurve::Bezier,
+                ..EdgeStyle::default()
+            }
+        });
+        assert_eq!(forced.len(), 1);
+        assert!(forced[0].ctrl.is_some());
+        let straight = paint_edges(&graph, &positions, &camera(), viewport(), |_, _| {
+            EdgeStyle {
+                curve: EdgeCurve::Straight,
+                ..EdgeStyle::default()
+            }
+        });
+        assert!(straight[0].ctrl.is_none());
+        let taxi = paint_edges(&graph, &positions, &camera(), viewport(), |_, _| {
+            EdgeStyle {
+                curve: EdgeCurve::Taxi,
+                ..EdgeStyle::default()
+            }
+        });
+        assert!(!taxi[0].bends.is_empty());
+        let single = paint_single_edge(
+            EdgeOrdinal {
+                pairs: &[(NodeIndex::new(0), NodeIndex::new(1))],
+                ordinal: 0,
+            },
+            &positions,
+            &camera(),
+            viewport(),
+            EdgePaintOptions::default(),
+            |_, _| EdgeStyle {
+                curve: EdgeCurve::Bezier,
+                ..EdgeStyle::default()
+            },
+        )
+        .expect("single edge plans the forced curve");
+        assert!(single.ctrl.is_some());
     }
 
     #[test]
@@ -583,8 +693,10 @@ mod tests {
         assert_eq!(bulk.len(), pairs.len());
         for (ordinal, pair) in pairs.iter().enumerate() {
             let single = paint_single_edge(
-                &pairs,
-                ordinal,
+                EdgeOrdinal {
+                    pairs: &pairs,
+                    ordinal,
+                },
                 &positions,
                 &camera(),
                 viewport(),
@@ -604,8 +716,10 @@ mod tests {
         }
         assert!(
             paint_single_edge(
-                &pairs,
-                99,
+                EdgeOrdinal {
+                    pairs: &pairs,
+                    ordinal: 99,
+                },
                 &positions,
                 &camera(),
                 viewport(),
@@ -706,8 +820,10 @@ mod tests {
             Rect::from_corners(routed[0].start, routed[0].bends()[0])
         ));
         let single = paint_single_edge_with_waypoints(
-            &pairs,
-            0,
+            EdgeOrdinal {
+                pairs: &pairs,
+                ordinal: 0,
+            },
             &positions,
             &camera(),
             viewport(),

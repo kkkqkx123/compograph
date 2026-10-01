@@ -12,7 +12,9 @@ use cg_geometry::{
 };
 use cg_graph::{GraphStore, GraphView, NodeIndex, Positions};
 use cg_render::{
-    NODE_SIDE, NodeShape, PARALLEL_STEP, SpatialIndex, point_hits_shape, shape_hits_rect,
+    BundleSlot, DetailLevel, EdgeCurve, EdgePaintOptions, EdgeStyle, LabelStyle, NODE_SIDE,
+    NodeShape, PARALLEL_STEP, SpatialIndex, curve_control, label_envelope_styled,
+    node_label_origin, point_hits_shape, routed_options, shape_hits_rect,
 };
 use cg_types::{Point2, Rect, Vec2};
 
@@ -120,6 +122,42 @@ pub fn nodes_in_rect(
     found
 }
 
+/// Nodes whose bodies or label envelopes touch `rect`, in index order.
+///
+/// The body pass reuses [`nodes_in_rect`] so taps and box selects keep
+/// agreeing; the label pass unions each label envelope computed with the same
+/// origin and envelope helpers the canvas plans with.
+pub fn nodes_in_rect_with_labels(
+    positions: &Positions,
+    index: &SpatialIndex,
+    rect: Rect,
+    half_extent: f32,
+    shape_of: impl Fn(NodeIndex) -> NodeShape,
+    label_of: impl Fn(NodeIndex) -> Option<(String, f32, LabelStyle)>,
+) -> Vec<NodeIndex> {
+    let mut found: BTreeSet<usize> = nodes_in_rect(positions, index, rect, half_extent, &shape_of)
+        .into_iter()
+        .map(|node| node.index())
+        .collect();
+    for (node, center) in positions {
+        if found.contains(&node.index()) {
+            continue;
+        }
+        let Some((text, size, style)) = label_of(*node) else {
+            continue;
+        };
+        if text.trim().is_empty() {
+            continue;
+        }
+        let origin = node_label_origin(*center, half_extent * 2.0, &style);
+        let envelope = label_envelope_styled(origin, &text, size, 0.0, &style);
+        if rect.intersects(envelope) {
+            found.insert(node.index());
+        }
+    }
+    found.into_iter().map(NodeIndex::new).collect()
+}
+
 /// True when the edge between `start` and `end` touches `rect`.
 ///
 /// Curved edges are flattened with the same sampling as hit testing, so box
@@ -154,6 +192,93 @@ pub fn edges_in_rect(
     node_side: f32,
 ) -> Vec<(NodeIndex, NodeIndex)> {
     edges_in_rect_with_options(graph, positions, rect, node_side, None, None)
+}
+
+/// Directed edges touching `rect` honoring per-edge curve styles.
+///
+/// The routing folds each edge curve over the global derivation exactly like
+/// the paint plan, so box selection and the canvas agree on straight, curved
+/// and Manhattan edges. Box selection always tests full-precision curves.
+pub fn edges_in_rect_for_styles(
+    graph: &dyn GraphView,
+    positions: &Positions,
+    rect: Rect,
+    node_side: f32,
+    ortho: Option<OrthoDirection>,
+    taxi: Option<OrthoDirection>,
+    style_of: impl Fn(NodeIndex, NodeIndex) -> EdgeCurve,
+) -> Vec<(NodeIndex, NodeIndex)> {
+    let options = EdgePaintOptions {
+        level: DetailLevel::Full,
+        ortho,
+        taxi,
+        ..EdgePaintOptions::default()
+    };
+    let mut edges = graph.edges();
+    edges.sort_unstable_by_key(|(source, target)| (source.index(), target.index()));
+    let mut bundle_of: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
+    for (ordinal, (source, target)) in edges.iter().enumerate() {
+        bundle_of
+            .entry(bundle_key(*source, *target))
+            .or_default()
+            .push(ordinal);
+    }
+    let mut loops_seen: HashMap<usize, usize> = HashMap::new();
+    let mut found = Vec::new();
+    for (ordinal, (source, target)) in edges.iter().enumerate() {
+        if source == target {
+            let Some(center) = positions.get(source) else {
+                continue;
+            };
+            let seen = loops_seen.get(&source.index()).copied().unwrap_or(0);
+            loops_seen.insert(source.index(), seen + 1);
+            if loop_hits_rect(*center, node_side, seen, rect) {
+                found.push((*source, *target));
+            }
+            continue;
+        }
+        let (Some(start), Some(end)) = (positions.get(source), positions.get(target)) else {
+            continue;
+        };
+        let style = EdgeStyle {
+            curve: style_of(*source, *target),
+            ..EdgeStyle::default()
+        };
+        let routed = routed_options(style, options);
+        let line = manhattan_route(*start, *end, routed.ortho, routed.taxi);
+        if !line.is_empty() {
+            if polyline_intersects_rect(&line, rect) {
+                found.push((*source, *target));
+            }
+            continue;
+        }
+        let bundle = bundle_of
+            .get(&bundle_key(*source, *target))
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        let slot = bundle
+            .iter()
+            .position(|member| *member == ordinal)
+            .unwrap_or(0);
+        let ctrl = curve_control(
+            style,
+            *start,
+            *end,
+            BundleSlot {
+                source: *source,
+                target: *target,
+                slot,
+                len: bundle.len(),
+            },
+            routed,
+        );
+        if edge_hits_rect(*start, ctrl, *end, rect) {
+            found.push((*source, *target));
+        }
+    }
+    found.sort_unstable_by_key(|(source, target)| (source.index(), target.index()));
+    found.dedup();
+    found
 }
 
 /// Directed edges touching `rect` under explicit Manhattan routing.
@@ -272,7 +397,9 @@ pub fn wheel_zoom_factor(line_delta: f32) -> f32 {
 ///
 /// The expansion reads only the neighbor queries, so folded or hidden nodes
 /// are filtered by the caller. Zero hops return the seeds alone, and an empty
-/// seed set stays empty.
+/// seed set stays empty. This is the interactive fringe primitive with hop
+/// semantics; the closed one-hop and transitive closures used by algorithms
+/// live in `cg-graph` collection queries.
 pub fn expand_neighborhood(
     graph: &dyn GraphView,
     seeds: impl IntoIterator<Item = NodeIndex>,
@@ -664,5 +791,104 @@ mod tests {
         assert!(!can_begin_drag(&locked));
         assert!(!can_grab_node(&locked));
         assert!(!should_clear_on_blank(&locked, false));
+    }
+
+    #[test]
+    fn label_box_select_unions_the_text_envelope() {
+        use cg_graph::MockGraph;
+        use cg_render::{LabelStyle, NodeShape};
+
+        let graph = MockGraph::isolated(1);
+        let mut positions = Positions::new();
+        positions.insert(NodeIndex::new(0), Point2::new(0.0, 0.0));
+        let index = indexed(&positions);
+        let body_only = Rect::from_corners(Point2::new(-20.0, -20.0), Point2::new(-15.0, -15.0));
+        assert!(
+            nodes_in_rect(&positions, &index, body_only, NODE_HALF_EXTENT, |_| {
+                NodeShape::Square
+            })
+            .is_empty()
+        );
+        let label_band = Rect::from_corners(Point2::new(-40.0, 14.0), Point2::new(40.0, 40.0));
+        assert!(
+            nodes_in_rect(&positions, &index, label_band, NODE_HALF_EXTENT, |_| {
+                NodeShape::Square
+            })
+            .is_empty()
+        );
+        let with_labels = nodes_in_rect_with_labels(
+            &positions,
+            &index,
+            label_band,
+            NODE_HALF_EXTENT,
+            |_| NodeShape::Square,
+            |_| Some(("hello".to_string(), 12.0, LabelStyle::default())),
+        );
+        assert_eq!(with_labels, vec![NodeIndex::new(0)]);
+        let without_labels = nodes_in_rect_with_labels(
+            &positions,
+            &index,
+            label_band,
+            NODE_HALF_EXTENT,
+            |_| NodeShape::Square,
+            |_| None,
+        );
+        assert!(without_labels.is_empty());
+        let _ = graph;
+    }
+
+    #[test]
+    fn styled_box_select_follows_the_forced_curve() {
+        use cg_graph::MockGraph;
+        use cg_render::EdgeCurve;
+
+        let graph = MockGraph::chain(2);
+        let mut positions = Positions::new();
+        positions.insert(NodeIndex::new(0), Point2::new(0.0, 0.0));
+        positions.insert(NodeIndex::new(1), Point2::new(100.0, 0.0));
+        let chord = Rect::from_corners(Point2::new(40.0, -2.0), Point2::new(60.0, 2.0));
+        let straight = edges_in_rect_for_styles(
+            &graph,
+            &positions,
+            chord,
+            NODE_SIDE,
+            None,
+            None,
+            |_, _| EdgeCurve::Straight,
+        );
+        assert_eq!(straight, vec![(NodeIndex::new(0), NodeIndex::new(1))]);
+        let curved = edges_in_rect_for_styles(
+            &graph,
+            &positions,
+            chord,
+            NODE_SIDE,
+            None,
+            None,
+            |_, _| EdgeCurve::Bezier,
+        );
+        assert!(curved.is_empty() || curved == straight);
+        let off_chord = Rect::from_corners(Point2::new(40.0, 4.0), Point2::new(60.0, 20.0));
+        let bent = edges_in_rect_for_styles(
+            &graph,
+            &positions,
+            off_chord,
+            NODE_SIDE,
+            None,
+            None,
+            |_, _| EdgeCurve::Bezier,
+        );
+        assert_eq!(bent, vec![(NodeIndex::new(0), NodeIndex::new(1))]);
+        assert!(
+            edges_in_rect_for_styles(
+                &graph,
+                &positions,
+                off_chord,
+                NODE_SIDE,
+                None,
+                None,
+                |_, _| EdgeCurve::Straight,
+            )
+            .is_empty()
+        );
     }
 }

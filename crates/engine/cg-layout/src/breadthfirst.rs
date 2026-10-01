@@ -13,7 +13,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use cg_graph::{FixedNodes, GraphView, NodeIndex, Positions};
 use cg_types::Point2;
 
-use crate::engine::LayoutEngine;
+use crate::engine::{CommonOptions, LayoutEngine};
 
 /// Growth direction of the layer stack.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -82,6 +82,7 @@ impl Default for BreadthFirstOptions {
 /// Breadth-first engine implementing the shared layout contract.
 pub struct BreadthFirstLayout {
     options: BreadthFirstOptions,
+    common: CommonOptions,
 }
 
 impl BreadthFirstLayout {
@@ -93,11 +94,21 @@ impl BreadthFirstLayout {
                 height,
                 ..BreadthFirstOptions::default()
             },
+            common: CommonOptions::default(),
         }
     }
 
     pub fn with_options(options: BreadthFirstOptions) -> Self {
-        Self { options }
+        Self {
+            options,
+            common: CommonOptions::default(),
+        }
+    }
+
+    /// Overrides the shared sort, fit and spacing inputs.
+    pub fn with_common(mut self, common: CommonOptions) -> Self {
+        self.common = common;
+        self
     }
 
     pub fn options(&self) -> &BreadthFirstOptions {
@@ -107,11 +118,16 @@ impl BreadthFirstLayout {
 
 impl LayoutEngine for BreadthFirstLayout {
     fn layout(&self, graph: &dyn GraphView, previous: &Positions, fixed: &FixedNodes) -> Positions {
-        let layers = compute_layers(graph, &self.options);
+        let layers = compute_layers(graph, &self.options, &self.common);
         let mut result: Positions = HashMap::new();
         if layers.is_empty() {
             return result;
         }
+        let mut spaced = self.options.clone();
+        spaced.width = self.common.scaled(self.options.width);
+        spaced.height = self.common.scaled(self.options.height);
+        spaced.padding = self.common.scaled(self.options.padding);
+        spaced.node_size = self.common.scaled(self.options.node_size);
         for (depth, layer) in layers.iter().enumerate() {
             for (index, node) in layer.iter().enumerate() {
                 if fixed.contains(node)
@@ -120,7 +136,7 @@ impl LayoutEngine for BreadthFirstLayout {
                     result.insert(*node, *held);
                     continue;
                 }
-                result.insert(*node, layer_position(&self.options, &layers, depth, index));
+                result.insert(*node, layer_position(&spaced, &layers, depth, index));
             }
         }
         result
@@ -129,12 +145,20 @@ impl LayoutEngine for BreadthFirstLayout {
     fn name(&self) -> &'static str {
         "breadthfirst"
     }
+
+    fn set_common(&mut self, common: CommonOptions) {
+        self.common = common;
+    }
 }
 
 /// Layers of node identifiers from the outermost (roots) inward.
-fn compute_layers(graph: &dyn GraphView, options: &BreadthFirstOptions) -> Vec<Vec<NodeIndex>> {
+fn compute_layers(
+    graph: &dyn GraphView,
+    options: &BreadthFirstOptions,
+    common: &CommonOptions,
+) -> Vec<Vec<NodeIndex>> {
     let mut ids = graph.node_ids();
-    ids.sort_unstable_by_key(|node| node.index());
+    common.sort_ids(&mut ids, graph);
     if ids.is_empty() {
         return Vec::new();
     }
@@ -445,7 +469,7 @@ mod tests {
             directed: true,
             ..chain_options()
         };
-        let layers = compute_layers(&graph, &options);
+        let layers = compute_layers(&graph, &options, &CommonOptions::default());
         assert_eq!(layers.len(), 2);
         assert_eq!(layers[0], vec![NodeIndex::new(0)]);
         assert_eq!(layers[1].len(), 2);
@@ -459,7 +483,7 @@ mod tests {
             directed: true,
             ..chain_options()
         };
-        let layers = compute_layers(&graph, &options);
+        let layers = compute_layers(&graph, &options, &CommonOptions::default());
         assert_eq!(layers[0], vec![NodeIndex::new(2)]);
         assert!(layers.iter().flatten().count() == 3);
     }
@@ -473,7 +497,7 @@ mod tests {
             maximal: true,
             ..chain_options()
         };
-        let layers = compute_layers(&graph, &options);
+        let layers = compute_layers(&graph, &options, &CommonOptions::default());
         assert!(!layers.is_empty());
         assert!(layers.iter().flatten().count() == 2);
     }
