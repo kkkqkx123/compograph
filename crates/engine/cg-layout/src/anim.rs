@@ -286,7 +286,7 @@ mod tests {
         let mut ordinal = 0;
         while ordinal <= 20 {
             let value = apply_easing(Easing::CubicInOut, ordinal as f32 / 20.0);
-            assert!(value >= 0.0 && value <= 1.0);
+            assert!((0.0..=1.0).contains(&value));
             assert!(value >= previous);
             previous = value;
             ordinal += 1;

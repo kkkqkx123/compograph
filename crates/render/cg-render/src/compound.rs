@@ -164,7 +164,7 @@ fn ray_hits_segment(origin: Point2, delta: Vec2, a: Point2, b: Point2) -> Option
     let dy = a.y - origin.y;
     let ray_t = (dx * edge.y - dy * edge.x) / denom;
     let edge_t = (dx * delta.y - dy * delta.x) / denom;
-    if ray_t >= 0.0 && edge_t >= 0.0 && edge_t <= 1.0 {
+    if ray_t >= 0.0 && (0.0..=1.0).contains(&edge_t) {
         Some((
             ray_t,
             Point2::new(origin.x + delta.x * ray_t, origin.y + delta.y * ray_t),

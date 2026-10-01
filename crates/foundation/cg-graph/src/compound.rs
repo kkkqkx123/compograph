@@ -105,9 +105,7 @@ impl GraphStore {
 
     /// Depth of `node`: roots sit at zero.
     pub fn depth_of(&self, node: NodeIndex) -> Option<usize> {
-        if self.graph.node_weight(node).is_none() {
-            return None;
-        }
+        self.graph.node_weight(node)?;
         Some(self.ancestors_of(node).len())
     }
 
@@ -156,9 +154,7 @@ impl GraphStore {
     pub fn visible_ancestor(&self, node: NodeIndex) -> Option<NodeIndex> {
         let mut cursor = Some(node);
         while let Some(current) = cursor {
-            if self.graph.node_weight(current).is_none() {
-                return None;
-            }
+            self.graph.node_weight(current)?;
             if self.is_visible(current) {
                 return Some(current);
             }
@@ -274,12 +270,12 @@ impl GraphStore {
             return Ok(());
         }
         self.before_mutation();
-        if let Some(previous) = self.parents.remove(&child) {
-            if let Some(siblings) = self.children.get_mut(&previous) {
-                siblings.remove(&child);
-                if siblings.is_empty() {
-                    self.children.remove(&previous);
-                }
+        if let Some(previous) = self.parents.remove(&child)
+            && let Some(siblings) = self.children.get_mut(&previous)
+        {
+            siblings.remove(&child);
+            if siblings.is_empty() {
+                self.children.remove(&previous);
             }
         }
         if let Some(next) = parent {
@@ -328,12 +324,12 @@ impl GraphStore {
     }
 
     pub(crate) fn detach_compound(&mut self, node: NodeIndex) {
-        if let Some(parent) = self.parents.remove(&node) {
-            if let Some(siblings) = self.children.get_mut(&parent) {
-                siblings.remove(&node);
-                if siblings.is_empty() {
-                    self.children.remove(&parent);
-                }
+        if let Some(parent) = self.parents.remove(&node)
+            && let Some(siblings) = self.children.get_mut(&parent)
+        {
+            siblings.remove(&node);
+            if siblings.is_empty() {
+                self.children.remove(&parent);
             }
         }
         if let Some(children) = self.children.remove(&node) {

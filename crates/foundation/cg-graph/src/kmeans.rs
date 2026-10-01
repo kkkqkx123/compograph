@@ -135,7 +135,7 @@ pub fn kmedoids_clusters(
                 changed = true;
             }
         }
-        for slot in 0..k {
+        for (slot, medoid) in medoids.iter_mut().enumerate() {
             let members: Vec<usize> = assignment
                 .iter()
                 .enumerate()
@@ -162,7 +162,7 @@ pub fn kmedoids_clusters(
                     best_member = *candidate;
                 }
             }
-            medoids[slot] = best_member;
+            *medoid = best_member;
         }
         if !changed {
             break;
@@ -202,13 +202,13 @@ pub fn fuzzy_cmeans_groups(
     let mut membership = vec![vec![0.0f32; k]; count];
     for (ordinal, _) in points.iter().enumerate() {
         let mut row_sum = 0.0f32;
-        for slot in 0..k {
+        for (slot, cell) in membership[ordinal].iter_mut().enumerate() {
             let skew = (((ordinal + slot) % k) + 1) as f32;
-            membership[ordinal][slot] = skew;
+            *cell = skew;
             row_sum += skew;
         }
-        for slot in 0..k {
-            membership[ordinal][slot] /= row_sum;
+        for cell in membership[ordinal].iter_mut() {
+            *cell /= row_sum;
         }
     }
     let mut centers = vec![(0.0f32, 0.0f32); k];
@@ -239,8 +239,8 @@ pub fn fuzzy_cmeans_groups(
                 }
             }
             if !coincident.is_empty() {
-                for slot in 0..k {
-                    membership[ordinal][slot] = if coincident.contains(&slot) {
+                for (slot, cell) in membership[ordinal].iter_mut().enumerate() {
+                    *cell = if coincident.contains(&slot) {
                         1.0 / coincident.len() as f32
                     } else {
                         0.0
@@ -262,8 +262,8 @@ pub fn fuzzy_cmeans_groups(
                 membership[ordinal][slot] = 1.0 / denom;
                 row_sum += membership[ordinal][slot];
             }
-            for slot in 0..k {
-                membership[ordinal][slot] /= row_sum;
+            for cell in membership[ordinal].iter_mut() {
+                *cell /= row_sum;
             }
         }
     }

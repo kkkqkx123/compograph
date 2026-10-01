@@ -156,11 +156,11 @@ pub fn feedback_arc_edges(graph: &GraphStore) -> Vec<(NodeIndex, NodeIndex)> {
     let mut kept = Vec::new();
     for reference in graph.edge_references() {
         let pair = (reference.source(), reference.target());
-        if let Some(budget) = remaining.get_mut(&pair) {
-            if *budget > 0 {
-                *budget -= 1;
-                kept.push(pair);
-            }
+        if let Some(budget) = remaining.get_mut(&pair)
+            && *budget > 0
+        {
+            *budget -= 1;
+            kept.push(pair);
         }
     }
     kept
