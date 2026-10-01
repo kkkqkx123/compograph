@@ -2,7 +2,7 @@
 
 > 版本：v1.0 · 日期：2026-09-30
 > 关联文档：[聚类套件分析](./clustering-analysis.md) · [P3 设计决策](../plan/compograph-p3-plan.md) · [功能清单](../architecture/feature-list.md) · [算法差异分析](../ref/graph-algorithms-diff.md) · [AGENTS.md](../../AGENTS.md)
-> 事实基线：compograph 本次克隆 `cfd1182`；cytoscape.js 克隆 `7ba6340`，`package.json` 中 `version = 3.35.0-unstable`（`cytoscape.js/package.json:3`）。
+> 事实基线：compograph 当前 HEAD；cytoscape.js 随仓库 vendored 于 `ref/cytoscape-js`（版本见其 `package.json`，当前 3.34.3）。文档不维持提交号。
 > 定位：分析文档，不含实现。本文补齐 `clustering-analysis.md` 第 6 节挂起的 cytoscape.js 逐行核验，并据此给出四类聚类的确定决策；P3 其余六项以速览形式对照。
 
 ---

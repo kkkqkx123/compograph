@@ -1,6 +1,6 @@
 # zed-gpui submodule 拉取指南
 
-上游 gpui 源码以 git submodule 挂载在 `crates/vendor/zed-gpui`，指向 [kkkqkx123/zed-gpui](https://github.com/kkkqkx123/zed-gpui) 的 `lean` 分支。`lean` 分支是精简历史快照（仅 4 个提交，无完整 zed 历史），因此**可以全量拉取，无需浅克隆**。
+上游 gpui 源码以 git submodule 挂载在 `crates/vendor/zed-gpui`，指向 [kkkqkx123/zed-gpui](https://github.com/kkkqkx123/zed-gpui) 的 `lean` 分支。`lean` 分支是精简历史快照（提交数很少，无完整 zed 历史），因此**可以直接拉取，无需浅克隆**。
 
 ## 首次克隆项目后初始化
 
@@ -42,13 +42,13 @@ git submodule update --remote
 ## 验证
 
 ```shell
-git submodule status                 # 应显示 fbb3992 ... (heads/lean)
+git submodule status                 # 应显示 lean 分支的提交（指向上游定期同步的快照，不在文档维持具体 hash）
 git -C crates/vendor/zed-gpui branch --show-current   # 应为 lean
-git -C crates/vendor/zed-gpui log --oneline           # 应为 4 个提交
+git -C crates/vendor/zed-gpui log --oneline           # 应为少量提交的精简历史
 ```
 
 ## 注意事项
 
 - 上游代码禁止修改、不格式化、不加业务依赖（见 AGENTS.md「上游源码规范」）。
 - 上游同步只能在 zed-gpui 仓库内进行，本项目绝不单独 fetch/merge 上游仓库的其他分支。
-- 升级上游后需复核所有引用 gpui API 的代码签名。
+- 升级上游后需复核所有引用 gpui API 的代码签名。上游定期同步，文档不维持具体提交号，以 submodule 指针为准。

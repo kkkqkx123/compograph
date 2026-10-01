@@ -105,7 +105,7 @@ fn clamp_fill_angle(angle: f32) -> f32 {
 }
 
 /// Linear interpolation of two packed colors per channel.
-fn lerp_rgb(start: u32, end: u32, t: f32) -> u32 {
+pub(crate) fn lerp_rgb(start: u32, end: u32, t: f32) -> u32 {
     let sr = ((start >> 16) & 0xFF) as f32;
     let sg = ((start >> 8) & 0xFF) as f32;
     let sb = (start & 0xFF) as f32;

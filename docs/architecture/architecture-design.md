@@ -1,14 +1,14 @@
 # compograph 架构设计（Architecture Design）
 
-> 版本：v1.0（基于 `docs/compograph-design.md` 初步设计整合、并对照本地克隆逐项核验后定稿）
+> 版本：v1.0（基于 `docs/compograph-design.md` 初步设计整合、并对照本地来源逐项核验后定稿）
 > 日期：2026-09-28
-> 事实基线（本地克隆均已核验，行号可直接回溯）：
+> 事实基线（版本以仓库内实际来源为准，文档不维持提交号，行号可能随上游同步漂移）：
 >
-> | 项目 | 克隆位置 | HEAD | 版本 | 核验状态 |
-> |---|---|---|---|---|
-> | petgraph | `/workspace/repos/petgraph` | `a4d94bd`（2026-09-13） | 0.8.3 | ✅ 与设计文档基线一致 |
-> | zed-gpui（gpui fork） | `/workspace/repos/zed-gpui` | `212afa4`（2026-09-28） | gpui 0.2.2 | ✅ 行号核验通过 |
-> | cytoscape.js | `/workspace/repos/cytoscape.js` | `7ba6340`（2026-09-07） | 3.x | ✅ 行号核验通过 |
+> | 项目 | 位置 | 版本口径 | 核验状态 |
+> |---|---|---|---|
+> | petgraph | crates.io 依赖 | 以 `Cargo.lock` 为准（当前 0.8.3） | ✅ 与设计文档基线一致 |
+> | zed-gpui（gpui fork） | `crates/vendor/zed-gpui`（submodule，`lean` 分支） | 以 submodule 指针与其内 `Cargo.toml` 为准（当前 gpui 0.2.2） | ✅ 行号核验通过 |
+> | cytoscape.js | `ref/cytoscape-js`（随仓库 vendored） | 见其 `package.json`（当前 3.34.3） | ✅ 行号核验通过 |
 >
 > 配套文档：[功能清单](./feature-list.md) · [借鉴设计说明](./borrowing-design.md) · 上游分析 [`../ref/`](../ref/README.md)
 
@@ -60,7 +60,7 @@ compograph 是基于 **gpui**（Zed 的 GPU 加速 Rust 原生 GUI 框架）的�
 ```
 compograph/
 ├── Cargo.toml                 # workspace：依赖集中在 [workspace.dependencies]
-├── rust-toolchain.toml        # 钉定 1.98.1（继承 zed-gpui）
+├── rust-toolchain.toml        # 本仓库钉定工具链（当前 1.98.1；上游快照同期也钉定同一版本，各自维护）
 ├── .gitmodules                # crates/vendor/zed-gpui → zed-gpui lean 分支
 ├── crates/
 │   ├── vendor/
@@ -150,7 +150,7 @@ Caused by: `dependency.accesskit` was not found in `workspace.dependencies`
 
 ### 3.2 共享状态与变更事件（⚠️ 对初步设计的重要修正）
 
-初步设计写的是 gpui `Model<GraphStore>`。经对照实际钉选的 zed-gpui fork（`212afa4`）核验：**该版本 gpui 已无 `Model<T>`，共享状态类型为 `Entity<T>`**（`crates/gpui/src/app/entity_map.rs:435`）。事件与通知机制为：
+初步设计写的是 gpui `Model<GraphStore>`。经对照上游快照实际 API 核验：**该版本 gpui 已无 `Model<T>`，共享状态类型为 `Entity<T>`**（`crates/gpui/src/app/entity_map.rs:435`，行号以快照为准）。事件与通知机制为：
 
 | 能力 | API | 位置（zed-gpui fork） |
 |---|---|---|
@@ -214,7 +214,7 @@ pub struct PositionStore {
 
 ### 3.4 算法桥（直接复用 petgraph，零重写）
 
-已在 `a4d94bd` 逐项核验的算法入口（全部纯 headless、不依赖渲染/坐标）：
+已在 petgraph 当前版本（以 `Cargo.lock` 为准）逐项核验的算法入口（全部纯 headless、不依赖渲染/坐标）：
 
 | 算法 | API | 位置 |
 |---|---|---|
@@ -322,7 +322,7 @@ zed-gpui fork 把 wgpu 后端独立为 `gpui_wgpu` crate，且 `WgpuContext` 公
 
 | 编号 | 开放点 | 影响 | 建议 |
 |---|---|---|---|
-| OQ-1 | gpui API 版本复核 | 全部渲染代码 | ✅ 已部分解决：fork `212afa4` 行号已核验；`Model`→`Entity` 修正见 §3.2 |
+| OQ-1 | gpui API 版本复核 | 全部渲染代码 | ✅ 已部分解决：上游快照行号已核验（行号可能随同步漂移，使用时以实际源码为准）；`Model`→`Entity` 修正见 §3.2 |
 | OQ-2 | 渲染路线 A/B/C | 架构 | 默认 A→B 渐进 |
 | OQ-3 | 目标图规模 | LOD/索引/路线 | 需产品拍板 |
 | OQ-4 | L2/L3 是否仅依赖 visit trait | 可测试性 | 推荐是（§2 解耦选项） |

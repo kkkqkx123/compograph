@@ -1,8 +1,8 @@
 # Petgraph 与 Cytoscape.js 图算法差异分析
 
 > 对比对象：
-> - Petgraph（纯计算库）：`/workspace/src/petgraph`，算法见 `crates/petgraph/src/algo/` 与 `crates/petgraph/src/visit/`
-> - Cytoscape.js（分析+可视化库）：`/workspace/src/cytoscape.js`，算法见 `src/collection/algorithms/`
+> - Petgraph（纯计算库）：crates.io 依赖（版本以 `Cargo.lock` 为准），算法见其 `src/algo/` 与 `src/visit/`
+> - Cytoscape.js（分析+可视化库）：随仓库 vendored 于 `ref/cytoscape-js`，算法见 `src/collection/algorithms/`
 >
 > 核心结论先行：**两者几乎没有算法「正面竞争」**——Petgraph 偏「经典图论/组合算法」（最短路、最大流、匹配、连通性、同构、传递归约等），Cytoscape.js 偏「网络科学与聚类分析」（中心性、聚类、Euler、最小割、布局）。重叠部分很少（最短路、SCC、MST、PageRank、A*、BFS/DFS）。
 
@@ -14,7 +14,7 @@
 | --- | --- | --- |
 | 算法形态 | 自由函数，作用于**访问器 trait**（如 `IntoNeighbors`、`IntoEdgeReferences`），跨 6 种图类型复用（`algo/mod.rs:9-11`） | 方法挂在 `Collection.prototype` 上，运行在「活的」图模型，结果可写回元素 data/样式（`collection/algorithms/index.mjs:21-44`） |
 | 算法目标 | 通用图论计算、正确性、零成本抽象 | 网络分析、可视化前的属性计算 |
-| 可视化相关 | 无 | 含 9 种布局算法 + 渲染（非算法但常被一并比较） |
+| 可视化相关 | 无 | 含内置布局算法 + 渲染（非算法但常被一并比较） |
 
 ---
 

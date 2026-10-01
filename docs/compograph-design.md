@@ -1,11 +1,11 @@
 # compograph 引入 petgraph 与自研绘图库 — 初步设计
 
-> **文档状态（2026-09-28）**：本方案已由 `docs/architecture/architecture-design.md`（定稿架构）与 `docs/plan/compograph-implementation-plan.md`（分阶段实施方案）取代。过期点：共享状态类型 `Model<GraphStore>` 在 gpui（zed-gpui `212afa4`）中已不存在，应为 `Entity<GraphStore>`；crate 命名已改为 `crates/foundation/cg-graph`、`crates/engine/cg-layout`、`crates/render/{cg-render,cg-interact}`、`crates/app/compograph`，gpui 及其依赖以 git submodule 挂在 `crates/vendor/zed-gpui`。正文保留作为设计决策依据。
+> **文档状态（2026-09-28）**：本方案已由 `docs/architecture/architecture-design.md`（定稿架构）与 `docs/plan/compograph-implementation-plan.md`（分阶段实施方案）取代。过期点：共享状态类型 `Model<GraphStore>` 在当时核验的上游快照中已不存在，应为 `Entity<GraphStore>`；crate 命名已改为 `crates/foundation/cg-graph`、`crates/engine/cg-layout`、`crates/render/{cg-render,cg-interact}`、`crates/app/compograph`，gpui 及其依赖以 git submodule 挂在 `crates/vendor/zed-gpui`。正文保留作为设计决策依据，行号与提交号均以当时快照为准，不再维持。
 
-> 版本：初步设计（preliminary）  ·  日期：基于本地克隆源码核查
-> 引用基线：
-> - **petgraph** `0.8.3`，本地克隆 `HEAD = a4d94bd`（`/workspace/petgraph`）
-> - **gpui** `0.2.2`（Zed `crates/gpui`），本地克隆 `zed@bda9c0b`（`/workspace/zed-src/crates/gpui`）
+> 版本：初步设计（preliminary）  ·  日期：基于当时本地源码核查
+> 引用基线（历史记录，不再维持）：
+> - **petgraph**（当时 0.8.3，crates.io 依赖，以 `Cargo.lock` 为准）
+> - **gpui**（当时 0.2.2，submodule 快照，以指针为准）
 > - 前置分析：`docs/analysis/graph-algorithms-comparison.md`、`docs/architecture/cytoscape-js.md`、`docs/architecture/petgraph.md`
 
 ---
@@ -19,7 +19,7 @@
 动机来自上一轮分析的结论（`docs/analysis/graph-algorithms-comparison.md`）：
 
 - **petgraph** 覆盖经典图论/组合优化算法（最短路、流、匹配、同构、着色、极大团、SCC、PageRank…），但**完全没有布局、没有渲染、不产出坐标**。
-- **cytoscape.js** 覆盖 9 种布局 + Canvas/WebGL 渲染 + 部分网络科学算法，但其本质是一个 JS 前端库，且与 petgraph 的"算法内核"正交。
+- **cytoscape.js** 覆盖内置布局 + Canvas/WebGL 渲染 + 部分网络科学算法，但其本质是一个 JS 前端库，且与 petgraph 的"算法内核"正交。
 
 因此本方案用 **petgraph 替代 cytoscape 的"数据/算法层"**，用**自研绘图库替代其"布局/渲染层"**，二者组合后恰好补齐 cytoscape 在纯 Rust 桌面端的空缺。
 
@@ -29,11 +29,11 @@
 
 ## 1. 事实核查（Facts）
 
-下表为已实地核实的 API 落点。注意：gpui 迭代极快，`0.2.2 / zed@bda9c0b` 的行号需在 compograph 实际钉选的 gpui 版本上**二次复核**（见 OQ-1）。
+下表为当时实地核实的 API 落点（历史记录，行号可能随上游同步漂移，使用时以实际源码为准）。注意：gpui 迭代极快，行号需在实际钉选的 gpui 版本上**二次复核**（见 OQ-1）。
 
-### 1.1 petgraph 关键类型与算法（已克隆，`a4d94bd`）
+### 1.1 petgraph 关键类型与算法（当时版本，历史记录）
 
-| 项 | 位置（`/workspace/petgraph/...`） | 说明 |
+| 项 | 位置（当时 petgraph 源码内相对路径） | 说明 |
 |---|---|---|
 | `Graph<N,E,Ty,Ix>` | `crates/petgraph/src/graph_impl/mod.rs:392` | 邻接表图，索引删除后**会复用/失效** |
 | `StableGraph<N,E,Ty,Ix>` | `crates/petgraph/src/graph_impl/stable_graph/mod.rs:67` | 删除后索引稳定，适合可编辑图 |
@@ -56,9 +56,9 @@
 
 > 关键事实：**petgraph 不提供任何布局算法，也不存储坐标**。坐标层必须自研（见第 5 章）。
 
-### 1.2 gpui 渲染接入点（已克隆，`zed@bda9c0b`）
+### 1.2 gpui 渲染接入点（当时快照，历史记录）
 
-| 项 | 位置（`/workspace/zed-src/crates/gpui/...`） | 说明 |
+| 项 | 位置（当时上游快照内相对路径） | 说明 |
 |---|---|---|
 | `Element` trait（含 `paint`） | `src/element.rs:53` | 自定义图元需实现的接口；`paint(bounds, …, &mut Window, &mut App)` |
 | `canvas(prepaint, paint)` | `src/elements/canvas.rs:10` | **低层自定义绘制入口**，无需定义完整 Element |
@@ -200,7 +200,7 @@ let rank = page_rank(&store.graph, 0.85, 50);
 
 ## 5. 布局引擎设计（必须自研的主体之一）
 
-petgraph **零布局能力**，因此"把图摆开"是纯自研工作。这是相对 cytoscape.js 最大的补差项（`docs/architecture/cytoscape-js.md` 列出 cytoscape 有 9 种布局）。
+petgraph **零布局能力**，因此"把图摆开"是纯自研工作。这是相对 cytoscape.js 最大的补差项（`docs/architecture/cytoscape-js.md` 列出 cytoscape 的内置布局）。
 
 ### 5.1 统一接口
 
@@ -346,7 +346,7 @@ pub fn graph_view(store: Model<GraphStore>, positions: Positions) -> impl IntoEl
 
 > 以下为需在落地前拍板的开放点，编号 OQ-1..OQ-8。
 
-- **OQ-1（API 版本复核）**：本方案所有 gpui 行号基于 `zed@bda9c0b`（gpui `0.2.2`）。gpui 迭代快，必须在 compograph 实际钉选的 gpui 版本上复核 `canvas`/`Scene::Path`/`paint_quad`/`TransformationMatrix` 的签名与可用性。
+- **OQ-1（API 版本复核）**：本方案所有 gpui 行号基于当时的上游快照（历史记录）。gpui 迭代快，必须在实际钉选的 gpui 版本上复核 `canvas`/`Scene::Path`/`paint_quad`/`TransformationMatrix` 的签名与可用性。
 - **OQ-2（渲染路线）**：A/B/C 三选（默认 A→B 渐进），需确认 v1 是否接受即时模式的上限。
 - **OQ-3（目标规模）**：单图节点量级？决定 LOD、空间索引、是否上 B/C。
 - **OQ-4（解耦粒度）**：布局/渲染层是否仅依赖 `visit` trait（`visit/mod.rs:107/183`）而非直接依赖 `StableGraph`？影响可测试性与替换成本。
@@ -376,8 +376,8 @@ pub fn graph_view(store: Model<GraphStore>, positions: Positions) -> impl IntoEl
 3. 先实现 P0，用一张手绘固定坐标的小图验证 gpui `canvas` 绘制闭环。
 4. 回填本方案随代码落地而**过期**的部分（按你的规范：更新而非仅标记）。
 
-**参考（本地已克隆，可直接回溯源码）**：
-- petgraph `0.8.3`（`a4d94bd`）：`/workspace/petgraph`
-- gpui `0.2.2`（`zed@bda9c0b`）：`/workspace/zed-src/crates/gpui`
+**参考（历史记录，位置与版本均以当时为准，不再维持）**：
+- petgraph（crates.io 依赖，以 `Cargo.lock` 为准）
+- gpui（submodule 快照，以指针为准）
 - 前置分析：`docs/analysis/graph-algorithms-comparison.md`、`docs/architecture/cytoscape-js.md`、`docs/architecture/petgraph.md`
-- cytoscape.js 的 9 种布局可作为自研布局的对照基线（`docs/architecture/cytoscape-js.md`）
+- cytoscape.js 的内置布局可作为自研布局的对照基线（`docs/architecture/cytoscape-js.md`，注册表以 `ref/cytoscape-js/src/extensions/layout/index.mjs` 为准）

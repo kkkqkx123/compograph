@@ -2,13 +2,13 @@
 
 > 版本：v1.0 · 日期：2026-09-28
 > 目的：**明确 compograph 需要从 cytoscape.js / petgraph / zed-gpui(gpui) 三个项目分别借鉴哪些设计**，借鉴到什么程度（整段移植 / 数学直译 / 模式借鉴 / 架构参考 / 不借鉴），以及哪些明确**不能借鉴**及原因。
-> 事实基线（本地克隆已逐项核验行号）：
+> 事实基线（版本以仓库内实际来源为准，文档不维持提交号）：
 >
-> | 项目 | 克隆位置 | HEAD | 备注 |
+> | 项目 | 位置 | 版本口径 | 备注 |
 > |---|---|---|---|
-> | cytoscape.js | `/workspace/repos/cytoscape.js` | `7ba6340` | 借鉴主源（布局数学 + 几何数学 + 模式） |
-> | petgraph | `/workspace/repos/petgraph` | `a4d94bd`（=0.8.3） | 直接依赖复用（非移植） |
-> | zed-gpui | `/workspace/repos/zed-gpui` | `212afa4`（gpui 0.2.2） | 平台底座，直接使用其 API |
+> | cytoscape.js | `ref/cytoscape-js`（随仓库 vendored） | 见其 `package.json`（当前 3.34.3） | 借鉴主源（布局数学 + 几何数学 + 模式） |
+> | petgraph | crates.io 依赖 | 以 `Cargo.lock` 为准（当前 0.8.3） | 直接依赖复用（非移植） |
+> | zed-gpui | `crates/vendor/zed-gpui`（submodule，`lean` 分支） | 以 submodule 指针与其内 `Cargo.toml` 为准（当前 gpui 0.2.2） | 平台底座，直接使用其 API |
 >
 > 配套：[架构设计](./architecture-design.md) · [功能清单](./feature-list.md)
 
@@ -74,7 +74,7 @@ petgraph 是 Cargo 依赖而非"参照物"，借鉴=正确选用其能力边界�
 
 ## 3. 从 zed-gpui（gpui 0.2.2 fork）借鉴什么（平台 API 直接使用）
 
-| 设计点 | gpui API（fork `212afa4` 已核验） | compograph 用途 |
+| 设计点 | gpui API（以上游快照为准，行号可能随同步漂移） | compograph 用途 |
 |---|---|---|
 | 共享状态 | `Entity<T>`（`src/app/entity_map.rs:435`） | `Entity<GraphStore>`、`Entity<PositionStore>`。⚠️ 初步设计所写 `Model<T>` 在本 fork 已不存在，统一改为 `Entity`（见 [架构设计 §3.2](./architecture-design.md)） |
 | 变更广播 | `EventEmitter` + `App::subscribe`（`src/app.rs:1272`） | `GraphChangeEvent` 驱动布局/渲染 |
@@ -184,9 +184,9 @@ cytoscape `extension.mjs` 定义 core/collection/layout/renderer 四类扩展点
 
 ---
 
-## 7. 行号核验记录
+## 7. 行号核验说明
 
-以下符号已在本次克隆（cytoscape.js `7ba6340`、petgraph `a4d94bd`、zed-gpui `212afa4`）中逐一复核，与本文件引用一致：
+各表引用的上游文件行号以核验时的快照为准；cytoscape.js 随仓库 vendored（`ref/cytoscape-js`）、petgraph 以 `Cargo.lock` 为准、zed-gpui 定期同步，行号可能漂移，使用时以实际源码为准：
 
 - cytoscape.js：`CoseLayout.prototype.run`(cose.mjs:126)、`step`(cose.mjs:705)、`layoutPositions`(layout.mjs:41)、`modelToRenderedPosition`/`renderedToModelPosition`(math.mjs:9/14)、`findNearestElement`/`findNearestElements`/`getAllInBox`(coords.mjs:75/79/323)、`findHaystackPoints`/`findLoopPoints`/`findStraightEdgePoints`/`findBezierPoints`/`findTaxiPoints`(edge-control-points.mjs:64/162/251/257/309)、布局注册表 `index.mjs`（8 项 `{name, impl}`）、算法 index（18 模块 import，`collection/algorithms/index.mjs:2-19`）。
 - petgraph：`StableGraph`(stable_graph/mod.rs:67)、`Graph`(graph_impl/mod.rs:392)、`dijkstra`(dijkstra.rs:92)、`astar`(astar.rs:81)、`tarjan_scc`(tarjan_scc.rs:269)、`page_rank`(page_rank.rs:64)、`min_spanning_tree`/`min_spanning_tree_prim`(min_spanning_tree.rs:86/255)、`ford_fulkerson`(ford_fulkerson.rs:164)、`IntoNeighbors`/`IntoNodeIdentifiers`/`IntoEdges`(visit/mod.rs:107/183/147)。

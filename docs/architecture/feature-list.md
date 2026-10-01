@@ -10,7 +10,7 @@
 >
 > 阶段：P0 骨架闭环 → P1 可交互 → P2 接近 cytoscape 可用度 → P3 大规模。
 > **进度口径（2026-10-01 代码核查）**：P0/P1/P2 项已全部落地，P3 按决策口径落地（欧拉路/最小割 + 层次/马尔可夫/k 均值/亲和传播/距离度量已落地，复合节点渲染交互已接通、布局引擎内约束仍为后处理表达，布局切换动画已接通，拐点主链与数据映射链已接通，背景图为登记加回退最小闭环），表格"阶段"列保留原计划口径，已落地项在"状态"列标注。实测见 [功能实测分析报告](../plan/feature-analysis-report.md)。
-> 事实基线：petgraph `a4d94bd`（0.8.3）、zed-gpui `212afa4`（gpui 0.2.2）、cytoscape.js `7ba6340`，均已在本地克隆核验。
+> 事实基线：petgraph（版本以 `Cargo.lock` 为准）、zed-gpui（submodule `lean` 分支，指针为准）、cytoscape.js（`ref/cytoscape-js`，版本见其 `package.json`），文档不维持提交号。
 
 ---
 
@@ -26,7 +26,7 @@
 | 1.6 | 图 I/O（JSON/GraphML 导入导出） | `[自研]` | P2 | ✅ 已落地：JSON 导入导出 + 校验（`io.rs`）；GraphML 未做 |
 | 1.7 | DOT 导出/导入 | `[自研]` | P2 | ✅ 已落地：`export_dot`（petgraph `Dot`）+ 自写轻量 `import_dot`（`io.rs`） |
 
-### 1A. 算法库复用清单（petgraph `a4d94bd` 已核验）
+### 1A. 算法库复用清单（petgraph 版本以 `Cargo.lock` 为准）
 
 | 类别 | 算法/API | 位置 | UI 桥接阶段 |
 |---|---|---|---|

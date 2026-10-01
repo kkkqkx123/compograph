@@ -1,6 +1,6 @@
 # compograph 中 petgraph 的引入方式与设计评审
 
-> 日期：2026-09-29 · 基线：petgraph `0.8.3`（本地克隆 `/workspace/repos/petgraph` @ `a4d94bd`）、compograph HEAD `397e70f` + 本次阶段 0 收尾改动
+> 日期：2026-09-29 · 基线：petgraph（版本以 `Cargo.lock` 为准）、compograph 当前 HEAD + 本次阶段 0 收尾改动（文档不维持提交号）
 > 关联：[架构设计](./architecture-design.md) · [借鉴设计说明](./borrowing-design.md) · [分阶段实施方案](../plan/compograph-implementation-plan.md)
 
 ---

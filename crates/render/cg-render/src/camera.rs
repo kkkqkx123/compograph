@@ -1,6 +1,6 @@
 //! Viewport mapping between model coordinates and screen pixels.
 
-use cg_types::{Point2, Vec2};
+use cg_types::{Point2, Rect, Vec2};
 
 /// Pan and zoom state of the graph canvas.
 #[derive(Clone, Copy, Debug)]
@@ -61,6 +61,37 @@ impl Camera {
     pub fn pan_by(&mut self, delta: Vec2) {
         self.center = self.center + delta;
     }
+
+    /// Fits world `bounds` into the viewport, keeping `padding` pixels clear.
+    ///
+    /// Zoom becomes the largest scale that still contains the padded box,
+    /// clamped to the supported range, and the center moves to the box center.
+    /// Degenerate boxes count as one model unit per side so empty graphs never
+    /// divide by zero.
+    pub fn fit_to_bounds(&mut self, bounds: Rect, viewport_size: Vec2, padding: f32) {
+        let padding = if padding.is_finite() {
+            padding.max(0.0)
+        } else {
+            0.0
+        };
+        let width = if bounds.size.x > 0.0 {
+            bounds.size.x
+        } else {
+            1.0
+        };
+        let height = if bounds.size.y > 0.0 {
+            bounds.size.y
+        } else {
+            1.0
+        };
+        self.zoom = ((viewport_size.x - 2.0 * padding) / width)
+            .min((viewport_size.y - 2.0 * padding) / height)
+            .clamp(MIN_ZOOM, MAX_ZOOM);
+        self.center = Point2::new(
+            bounds.origin.x + bounds.size.x * 0.5,
+            bounds.origin.y + bounds.size.y * 0.5,
+        );
+    }
 }
 
 #[cfg(test)]
@@ -106,6 +137,24 @@ mod tests {
         camera.zoom_at(size, Point2::new(50.0, 50.0), 100.0);
         assert_eq!(camera.zoom, MAX_ZOOM);
         camera.zoom_at(size, Point2::new(50.0, 50.0), 0.0);
+        assert_eq!(camera.zoom, MAX_ZOOM);
+    }
+
+    #[test]
+    fn fit_centers_bounds_at_the_largest_containing_zoom() {
+        let mut camera = Camera::new(Point2::ZERO, 1.0);
+        let bounds = Rect::from_corners(Point2::new(0.0, 0.0), Point2::new(100.0, 50.0));
+        camera.fit_to_bounds(bounds, Vec2::new(800.0, 600.0), 10.0);
+        assert_eq!(camera.center, Point2::new(50.0, 25.0));
+        assert!((camera.zoom - 7.8).abs() < 1e-4);
+    }
+
+    #[test]
+    fn fit_sanitizes_degenerate_bounds_and_clamps() {
+        let mut camera = Camera::new(Point2::ZERO, 1.0);
+        let bounds = Rect::from_corners(Point2::new(5.0, 5.0), Point2::new(5.0, 5.0));
+        camera.fit_to_bounds(bounds, Vec2::new(800.0, 600.0), 10.0);
+        assert_eq!(camera.center, Point2::new(5.0, 5.0));
         assert_eq!(camera.zoom, MAX_ZOOM);
     }
 }

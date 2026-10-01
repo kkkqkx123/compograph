@@ -11,6 +11,7 @@ pub mod distances;
 pub mod euler;
 pub mod events;
 pub mod hierarchical;
+pub mod idmap;
 pub mod io;
 pub mod kmeans;
 pub mod markov;
@@ -38,6 +39,7 @@ pub use distances::{ClusterMetric, metric_clusters, point_distance};
 pub use euler::{eulerian_path_directed, eulerian_path_undirected};
 pub use events::GraphChangeEvent;
 pub use hierarchical::hierarchical_clusters;
+pub use idmap::IdMap;
 pub use io::{
     EdgeEntry, GraphDocument, IoError, NodeEntry, export_dot, import_dot, remap_positions,
 };

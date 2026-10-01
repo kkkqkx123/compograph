@@ -1,8 +1,7 @@
 # Cytoscape.js 架构设计分析
 
-> 分析对象：`https://github.com/cytoscape/cytoscape.js`（本地路径 `/workspace/src/cytoscape.js`）
-> 版本：`package.json` 中 `version = 3.35.0-unstable`（`/workspace/src/cytoscape.js/package.json:3`）
-> 定位：图论（网络）库，同时提供**图数据模型**与**可选的交互式渲染器**，面向浏览器与 Node.js 服务端分析（`README.md:11`）。
+> 分析对象：cytoscape.js（随仓库 vendored 于 `ref/cytoscape-js`，版本见其 `package.json`，当前 3.34.3）
+> 定位：图论（网络）库，同时提供**图数据模型**与**可选的交互式渲染器**，面向浏览器与 Node.js 服务端分析。
 
 ---
 
@@ -148,7 +147,7 @@ group.mjs  iteration.mjs  layout.mjs  style.mjs  traversing.mjs  zsort.mjs
 | 设计范式 | 对象模型（Core/Collection）+ 横切 mixin + 插件式扩展 |
 | 关注点分离 | 模型（core/collection）、视图（renderer）、查询（selector）、样式（style）分目录 |
 | 可扩展性 | `extension.mjs` 统一 core/collection/layout/renderer 四类扩展点 |
-| 可视化能力 | 内置 Canvas/WebGL 渲染 + 9 种布局算法 |
+| 可视化能力 | 内置 Canvas/WebGL 渲染 + 8 种布局算法 |
 | 计算能力 | 18 个图算法，偏「网络分析 + 聚类 + 中心性」 |
 | 语言/构建 | 纯 ES Module + Rollup + Babel |
 

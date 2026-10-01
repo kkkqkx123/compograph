@@ -2,7 +2,7 @@
 
 > 版本：v1.0 · 日期：2026-09-30
 > 关联文档：[P3 设计决策](./compograph-p3-plan.md) · [聚类分阶段方案](./compograph-p3-clustering-plan.md) · [P2 与远期方案](./compograph-p2-plan.md) · [功能清单](../architecture/feature-list.md) · [借鉴设计说明](../architecture/borrowing-design.md) · [AGENTS.md](../../AGENTS.md)
-> 事实基线：工具链 1.98.1；petgraph 0.8.3；zed-gpui `212afa4`；P2 六项已落地；欧拉路与最小割核心已落地；聚类中层次、马尔可夫、k 均值核心已落地，亲和传播已明确不纳入版本一。
+> 事实基线：工具链见 `rust-toolchain.toml`；petgraph 版本以 `Cargo.lock` 为准；zed-gpui 以 submodule 指针为准（文档不维持提交号）；P2 六项已落地；欧拉路与最小割核心已落地；聚类中层次、马尔可夫、k 均值核心已落地，亲和传播已明确不纳入版本一。
 > 落地状态：任务一与任务二已落地（应用壳 21 个面板入口，`algo_panel.rs` 新增欧拉路、最小割与分组结果映射，核心层零改动）。任务三与任务四尚未启动。
 
 ---

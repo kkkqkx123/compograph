@@ -1,6 +1,6 @@
 # Petgraph 架构设计分析
 
-> 分析对象：`https://github.com/petgraph/petgraph`（本地路径 `/workspace/src/petgraph`）
+> 分析对象：petgraph（crates.io 依赖，版本以 `Cargo.lock` 为准）
 > 结构：Cargo workspace（`crates/core` + `crates/petgraph` + `serialization-tests`），见 `Cargo.toml:1-4`
 > 定位：Rust 图数据结构与算法库，**纯计算、无渲染、无交互**，可在 `no_std` 环境使用（`src/petgraph/src/lib.rs:467`）
 

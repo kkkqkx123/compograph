@@ -21,11 +21,11 @@
 
 ## 事实基线
 
-| 项目 | 本地克隆 | HEAD | 关键结论 |
+| 项目 | 位置 | 版本口径 | 关键结论 |
 |---|---|---|---|
-| petgraph | `/workspace/repos/petgraph` | `a4d94bd`（0.8.3） | 纯计算无布局；`StableGraph` 适配编辑场景；算法直接复用 |
-| zed-gpui | `/workspace/repos/zed-gpui` | `212afa4`（gpui 0.2.2） | ⚠️ `Model<T>` 已不存在，用 `Entity<T>`；`canvas`/`Scene`/`paint_quad`/`TransformationMatrix` 为绘制落点；fork 的 `gpui_wgpu` 公开 device/queue |
-| cytoscape.js | `/workspace/repos/cytoscape.js` | `7ba6340` | 借布局物理与几何数学；内置布局注册表为 8 种（`extensions/layout/index.mjs`） |
+| petgraph | crates.io 依赖 | 以 `Cargo.lock` 为准 | 纯计算无布局；`StableGraph` 适配编辑场景；算法直接复用 |
+| zed-gpui | `crates/vendor/zed-gpui`（submodule，`lean` 分支） | 以 submodule 指针与其内 `Cargo.toml` 为准 | ⚠️ `Model<T>` 已不存在，用 `Entity<T>`；`canvas`/`Scene`/`paint_quad`/`TransformationMatrix` 为绘制落点；fork 的 `gpui_wgpu` 公开 device/queue |
+| cytoscape.js | `ref/cytoscape-js`（随仓库 vendored） | 见其 `package.json` | 借布局物理与几何数学；内置布局注册表为 8 种（`extensions/layout/index.mjs`） |
 
 ## 一图流
 

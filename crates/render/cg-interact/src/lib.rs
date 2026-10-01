@@ -1,7 +1,10 @@
 //! Pointer interaction state for the graph canvas.
 
+pub mod edit;
 pub mod handlers;
 pub mod input;
+
+pub use edit::{ConnectDraft, EditAction, EditTool};
 
 pub use handlers::{
     NODE_GRAB_TOLERANCE, NODE_HALF_EXTENT, apply_point_select, can_begin_drag, can_grab_node,

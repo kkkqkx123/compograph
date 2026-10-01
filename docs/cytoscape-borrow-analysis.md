@@ -3,7 +3,7 @@
 > **文档状态（2026-09-28）**：本分析的定稿与落地映射已由 `docs/architecture/borrowing-design.md` 取消（借鉴总表、不借鉴清单、源文件→模块映射均已更新至 cg-* crate 命名），正文保留作为逐子系统分析依据。
 
 > 配套：`compograph-design.md`（总体方案）。本文件聚焦**自研绘图库（L2 布局 + L3 渲染/交互）应从 cytoscape.js 借鉴什么、以及哪些不能直接参考**。
-> 引用基线：cytoscape.js 本地克隆 `/workspace/cytoscape.js`（行号基于当前 HEAD）。
+> 引用基线：cytoscape.js 随仓库 vendored 于 `ref/cytoscape-js`（版本见其 `package.json`，行号以实际源码为准）。
 > 角色对照：petgraph 负责"图模型+算法"，cytoscape.js 的"布局+渲染+交互"正是自研绘图库要替代/借鉴的对象。
 
 ---
@@ -208,7 +208,7 @@
 
 ## 7. 参考
 
-- 本地克隆：cytoscape.js `/workspace/cytoscape.js`、petgraph `/workspace/petgraph`、gpui `/workspace/zed-src/crates/gpui`
+- 参照源码：cytoscape.js 见 `ref/cytoscape-js`、petgraph 为 crates.io 依赖（版本以 `Cargo.lock` 为准）、gpui 见 `crates/vendor/zed-gpui`（submodule，行号以实际快照为准）
 - 总体方案：`docs/plan/compograph-design.md`
 - 架构分析：`docs/architecture/cytoscape-js.md`、`docs/architecture/petgraph.md`
 - 算法差异：`docs/analysis/graph-algorithms-comparison.md`

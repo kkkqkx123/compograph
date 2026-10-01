@@ -96,7 +96,7 @@ CSS 风格选择器的完整实现：词法分析（`tokens.mjs`）、语法解�
 
 ## 7. 布局（src/extensions/layout/）
 
-内置 9 种布局，统一 Layout 契约（options/stop 生命周期）：
+内置布局（注册表以 `src/extensions/layout/index.mjs` 为准，当前 8 种），统一 Layout 契约（options/stop 生命周期）：
 
 | 布局 | 策略 |
 |---|---|

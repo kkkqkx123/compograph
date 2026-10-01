@@ -17,6 +17,7 @@ pub mod spatial;
 pub mod style;
 pub mod synth;
 pub mod text;
+pub mod transition;
 pub mod view;
 pub mod waypoints;
 
@@ -56,6 +57,9 @@ pub use text::{
     LABEL_LINE_HEIGHT_SCALE, LabelBackground, MAX_LABEL_CHARS_PER_LINE, PaintedEdgeLabel,
     PaintedLabel, draws_labels, edge_label_anchor, edge_label_angle, estimate_label_block,
     label_envelope, line_height, paint_edge_labels_for, paint_labels_for, split_label_lines,
+};
+pub use transition::{
+    EdgeStyleTransition, NodeStyleTransition, blend_edge_style, blend_node_style,
 };
 pub use view::{
     ARROW_HALF_WIDTH, ARROW_LENGTH, EDGE_AGGREGATION_THRESHOLD, EdgePaintOptions, NODE_SIDE,
