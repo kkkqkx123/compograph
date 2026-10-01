@@ -5,9 +5,9 @@
 //! cubic curves, and pinned nodes hold their anchors for the whole run, so
 //! the driver can share its generation guard with background refinement.
 
-use cg_graph::{FixedNodes, Positions};
 #[cfg(test)]
 use cg_graph::NodeIndex;
+use cg_graph::{FixedNodes, Positions};
 use cg_types::Point2;
 
 /// Easing applied to interpolation progress.
@@ -25,7 +25,11 @@ pub enum Easing {
 ///
 /// Non-finite inputs rest at the start; out-of-range inputs clamp to the ends.
 pub fn apply_easing(easing: Easing, t: f32) -> f32 {
-    let clamped = if t.is_finite() { t.clamp(0.0, 1.0) } else { 0.0 };
+    let clamped = if t.is_finite() {
+        t.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
     match easing {
         Easing::Linear => clamped,
         Easing::CubicInOut => {
@@ -200,10 +204,7 @@ mod tests {
         let to = point(10.0, 20.0);
         assert_eq!(lerp_point(from, to, 0.0, Easing::Linear), from);
         assert_eq!(lerp_point(from, to, 1.0, Easing::Linear), to);
-        assert_eq!(
-            lerp_point(from, to, 0.5, Easing::Linear),
-            point(5.0, 15.0)
-        );
+        assert_eq!(lerp_point(from, to, 0.5, Easing::Linear), point(5.0, 15.0));
         assert_eq!(
             lerp_point(from, to, 0.5, Easing::CubicInOut),
             point(5.0, 15.0)
@@ -223,18 +224,9 @@ mod tests {
         let mut fixed = FixedNodes::new();
         fixed.insert(NodeIndex::new(1));
         let blended = blend_positions(&from, &to, 0.5, Easing::Linear, &fixed);
-        assert_eq!(
-            blended.get(&NodeIndex::new(0)),
-            Some(&point(5.0, 0.0))
-        );
-        assert_eq!(
-            blended.get(&NodeIndex::new(1)),
-            Some(&point(0.0, 0.0))
-        );
-        assert_eq!(
-            blended.get(&NodeIndex::new(2)),
-            Some(&point(7.0, 7.0))
-        );
+        assert_eq!(blended.get(&NodeIndex::new(0)), Some(&point(5.0, 0.0)));
+        assert_eq!(blended.get(&NodeIndex::new(1)), Some(&point(0.0, 0.0)));
+        assert_eq!(blended.get(&NodeIndex::new(2)), Some(&point(7.0, 7.0)));
         assert!(!blended.contains_key(&NodeIndex::new(9)));
     }
 

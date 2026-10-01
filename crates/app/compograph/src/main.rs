@@ -21,19 +21,20 @@ use cg_graph::{
 };
 use cg_interact::{
     BoxSelectState, DragState, InteractLocks, NODE_HALF_EXTENT, SelectMode, SelectionState,
-    apply_point_select, can_begin_drag, can_grab_node, drag_position, edges_in_rect,
-    expand_neighborhood, hover_node_shaped, neighborhood_edges, nodes_in_rect, press_hit_shaped,
-    should_clear_on_blank, wheel_zoom_factor,
+    apply_point_select, can_begin_drag, can_grab_node, compound_toggle_target, drag_position,
+    edges_in_rect, expand_neighborhood, hover_node_shaped, neighborhood_edges, nodes_in_rect,
+    press_hit_compound, press_hit_shaped, should_clear_on_blank, wheel_zoom_factor,
 };
 use cg_layout::{LayoutDriver, LayoutRegistry};
 use cg_render::{
     BypassStore, CacheVersions, Camera, DetailLevel, EdgeMapper, EdgePaintOptions, EdgeStylePatch,
     ExportRequest, ExportScope, ExportSnapshot, FrameMetrics, FrameSample, LodParams, NODE_SIDE,
-    NodeShape, NodeStylePatch, PaintedArrow, PaintedEdge, PaintedNode, PaintedRubberBand,
-    PlanCounts, RefreshInput, RetainedCache, SpatialIndex, StoredPlans, StyleMapper, StyleSheet,
-    edge_ordinals_for, encode_png, export_pixels, graph_view, paint_arrows_for_level,
-    paint_edge_labels_for, paint_edges_for, paint_labels_for, paint_nodes_for_level,
-    subscribe_repaint, visible_node_ids, world_viewport_rect,
+    NodeShape, NodeStylePatch, PaintedArrow, PaintedContainer, PaintedEdge, PaintedNode,
+    PaintedRubberBand, PlanCounts, RefreshInput, RetainedCache, SpatialIndex, StoredPlans,
+    StyleMapper, StyleSheet, all_compound_bounds, clip_painted_edge, edge_ordinals_for, encode_png,
+    export_pixels, graph_view, label_envelope, paint_arrows_for_level, paint_edge_labels_for,
+    paint_edges_for_with_waypoints, paint_labels_for, paint_nodes_for_level, subscribe_repaint,
+    visible_node_ids, world_viewport_rect,
 };
 use cg_types::{Point2, Rect, Vec2};
 use gpui::{
@@ -150,6 +151,8 @@ struct GraphWindow {
     spatial_version: Option<u64>,
     metrics: FrameMetrics,
     export_message: String,
+    waypoints: cg_render::WaypointStore,
+    images: cg_render::ImageCache,
 }
 
 impl GraphWindow {
@@ -246,6 +249,8 @@ impl GraphWindow {
             spatial_version: None,
             metrics: FrameMetrics::new(30),
             export_message: String::new(),
+            waypoints: cg_render::WaypointStore::new(),
+            images: cg_render::ImageCache::new(),
         };
         view.layout.update(cx, |driver, cx| {
             driver.request_refine(&view.store, cx);
@@ -267,8 +272,7 @@ impl GraphWindow {
         };
         let store = self.store.clone();
         self.layout.update(cx, |driver, cx| {
-            driver.set_engine(&store, engine, cx);
-            driver.request_refine(&store, cx);
+            driver.set_engine_animated(&store, engine, 24, cg_layout::Easing::CubicInOut, cx);
         });
         self.menu_open = false;
         cx.notify();
@@ -396,16 +400,97 @@ impl GraphWindow {
         let positions = self.layout.read(cx).positions().clone();
         let version = self.layout.read(cx).positions_version();
         self.refresh_spatial(&positions, version);
-        let nodes = nodes_in_rect(
+        let store = self.store.read(cx);
+        let visible_nodes = nodes_in_rect(
             &positions,
             &self.spatial,
             model_rect,
             NODE_HALF_EXTENT,
             |node| self.node_shape(cx, node),
-        );
-        let store = self.store.read(cx);
+        )
+        .into_iter()
+        .filter(|node| store.is_visible(*node))
+        .collect::<Vec<_>>();
+        let mut nodes = visible_nodes;
         let view: &dyn GraphView = store;
-        let edges = edges_in_rect(view, &positions, model_rect, NODE_SIDE);
+        let mut edges = edges_in_rect(view, &positions, model_rect, NODE_SIDE);
+        if self.lod != DetailLevel::Minimal {
+            let camera = self.camera;
+            let viewport = self.viewport;
+            for node in view.node_ids() {
+                let Some(center) = positions.get(&node) else {
+                    continue;
+                };
+                let label = store
+                    .node_data(node)
+                    .map(|data| data.label.clone())
+                    .unwrap_or_default();
+                if label.trim().is_empty() {
+                    continue;
+                }
+                let attrs = store.node_attrs(node);
+                let classes = store.node_classes(node);
+                let style = self.bypass.resolve_node_with_data(
+                    &self.sheet,
+                    &self.mapper,
+                    node,
+                    Some(label.as_str()),
+                    view.degree(node),
+                    &attrs,
+                    &classes,
+                );
+                let screen = camera.world_to_viewport(viewport, *center);
+                let side = (cg_render::NODE_SIDE * style.scale).max(4.0);
+                let origin = Point2::new(screen.x, screen.y + side / 2.0 + cg_render::LABEL_GAP);
+                let envelope = label_envelope(
+                    origin,
+                    &label,
+                    style.label_size,
+                    0.0,
+                    cg_render::LabelBackground::None,
+                );
+                if envelope.intersects(viewport_rect) && !nodes.contains(&node) {
+                    nodes.push(node);
+                }
+            }
+            for (source, target) in view.edges() {
+                let (Some(a), Some(b)) = (positions.get(&source), positions.get(&target)) else {
+                    continue;
+                };
+                let text = store
+                    .edge_weight(source, target)
+                    .map(|weight| weight.to_string())
+                    .unwrap_or_default();
+                if text.trim().is_empty() {
+                    continue;
+                }
+                let (attrs, classes) = Self::edge_attrs_classes(store, source, target);
+                let size = self
+                    .bypass
+                    .resolve_edge_with_data(
+                        &self.sheet,
+                        &self.edge_mapper,
+                        source,
+                        target,
+                        &attrs,
+                        &classes,
+                    )
+                    .label_size;
+                let start = camera.world_to_viewport(viewport, *a);
+                let end = camera.world_to_viewport(viewport, *b);
+                let anchor = Point2::new(
+                    (start.x + end.x) / 2.0,
+                    (start.y + end.y) / 2.0 + cg_render::EDGE_LABEL_GAP,
+                );
+                let envelope =
+                    label_envelope(anchor, &text, size, 0.0, cg_render::LabelBackground::None);
+                if envelope.intersects(viewport_rect) && !edges.contains(&(source, target)) {
+                    edges.push((source, target));
+                }
+            }
+            nodes.sort_unstable_by_key(|node| node.index());
+            edges.sort_unstable_by_key(|(source, target)| (source.index(), target.index()));
+        }
         if additive {
             self.selection.add_many(nodes);
             for pair in edges {
@@ -443,15 +528,40 @@ impl GraphWindow {
             .map(|data| data.label.clone())
             .unwrap_or_default();
         let view: &dyn GraphView = store;
+        let attrs = store.node_attrs(node);
+        let classes = store.node_classes(node);
         self.bypass
-            .resolve_node(
+            .resolve_node_with_data(
                 &self.sheet,
                 &self.mapper,
                 node,
                 Some(label.as_str()),
                 view.degree(node),
+                &attrs,
+                &classes,
             )
             .shape
+    }
+
+    fn edge_attrs_classes(
+        store: &GraphStore,
+        source: NodeIndex,
+        target: NodeIndex,
+    ) -> (
+        std::collections::HashMap<String, cg_graph::DataValue>,
+        std::collections::BTreeSet<String>,
+    ) {
+        let found = store
+            .graph()
+            .edge_indices()
+            .find(|edge| store.edge_endpoints(*edge) == Some((source, target)));
+        match found {
+            Some(edge) => (store.edge_attrs(edge), store.edge_classes(edge)),
+            None => (
+                std::collections::HashMap::new(),
+                std::collections::BTreeSet::new(),
+            ),
+        }
     }
 
     /// Sorted node identifiers currently in the store.
@@ -1024,8 +1134,9 @@ impl GraphWindow {
                             Ok(document) => {
                                 let count = document.nodes.len();
                                 this.apply_document(&document, cx);
+                                let skipped = this.skipped_relations_note();
                                 this.io_message = format!(
-                                    "imported {count} nodes from {} (picker unavailable)",
+                                    "imported {count} nodes from {}{skipped} (picker unavailable)",
                                     file_io::JSON_PATH
                                 );
                             }
@@ -1058,7 +1169,9 @@ impl GraphWindow {
                     Ok((document, path)) => {
                         let count = document.nodes.len();
                         this.apply_document(&document, cx);
-                        this.io_message = format!("imported {count} nodes from {}", path.display());
+                        let skipped = this.skipped_relations_note();
+                        this.io_message =
+                            format!("imported {count} nodes from {}{skipped}", path.display());
                     }
                     Err(note) => this.io_message = note,
                 }
@@ -1086,8 +1199,9 @@ impl GraphWindow {
                             Ok(document) => {
                                 let count = document.nodes.len();
                                 this.apply_document(&document, cx);
+                                let skipped = this.skipped_relations_note();
                                 this.io_message = format!(
-                                    "imported {count} nodes from {} (picker unavailable)",
+                                    "imported {count} nodes from {}{skipped} (picker unavailable)",
                                     file_io::DOT_PATH
                                 );
                             }
@@ -1120,7 +1234,9 @@ impl GraphWindow {
                     Ok((document, path)) => {
                         let count = document.nodes.len();
                         this.apply_document(&document, cx);
-                        this.io_message = format!("imported {count} nodes from {}", path.display());
+                        let skipped = this.skipped_relations_note();
+                        this.io_message =
+                            format!("imported {count} nodes from {}{skipped}", path.display());
                     }
                     Err(note) => this.io_message = note,
                 }
@@ -1186,6 +1302,7 @@ impl GraphWindow {
         let mut sorted: Vec<&NodeEntry> = document.nodes.iter().collect();
         sorted.sort_by_key(|entry| entry.id);
         let mut order: Vec<NodeIndex> = Vec::new();
+        let mut skipped_relations = 0usize;
         self.store.update(cx, |graph, cx| {
             graph.clear(cx);
             for entry in &sorted {
@@ -1218,14 +1335,19 @@ impl GraphWindow {
             }
             for (entry, node) in sorted.iter().zip(order.iter().copied()) {
                 if let Some(parent_id) = entry.parent {
-                    if let Some(parent) = by_id.get(&parent_id).copied() {
-                        graph.set_parent(cx, node, Some(parent)).ok();
+                    match by_id.get(&parent_id).copied() {
+                        Some(parent) => {
+                            if graph.set_parent(cx, node, Some(parent)).is_err() {
+                                skipped_relations += 1;
+                            }
+                        }
+                        None => skipped_relations += 1,
                     }
                 }
             }
             for (entry, node) in sorted.iter().zip(order.iter().copied()) {
-                if entry.collapsed {
-                    graph.set_collapsed(cx, node, true);
+                if entry.collapsed && !graph.set_collapsed(cx, node, true) {
+                    skipped_relations += 1;
                 }
             }
         });
@@ -1238,6 +1360,19 @@ impl GraphWindow {
         });
         self.clear_selection();
         self.clear_algo_highlights();
+        if skipped_relations > 0 {
+            self.io_message = format!("import skipped {skipped_relations} invalid relations");
+        }
+    }
+
+    fn skipped_relations_note(&mut self) -> String {
+        if self.io_message.starts_with("import skipped") {
+            let note = format!("; {}", self.io_message);
+            self.io_message.clear();
+            note
+        } else {
+            String::new()
+        }
     }
 
     fn export_image(&mut self, scope: ExportScope, cx: &mut Context<Self>) {
@@ -1254,25 +1389,37 @@ impl GraphWindow {
                 .node_data(*node)
                 .map(|data| data.label.clone())
                 .unwrap_or_default();
+            let attrs = store.node_attrs(*node);
+            let classes = store.node_classes(*node);
             node_styles.insert(
                 *node,
-                self.bypass.resolve_node(
+                self.bypass.resolve_node_with_data(
                     &self.sheet,
                     &self.mapper,
                     *node,
                     Some(label.as_str()),
                     view.degree(*node),
+                    &attrs,
+                    &classes,
                 ),
             );
         }
         for (source, target) in &pairs {
+            let (attrs, classes) = Self::edge_attrs_classes(store, *source, *target);
             edge_styles.insert(
                 (*source, *target),
-                self.bypass
-                    .resolve_edge(&self.sheet, &self.edge_mapper, *source, *target),
+                self.bypass.resolve_edge_with_data(
+                    &self.sheet,
+                    &self.edge_mapper,
+                    *source,
+                    *target,
+                    &attrs,
+                    &classes,
+                ),
             );
         }
         let positions = self.layout.read(cx).positions().clone();
+        let waypoints = self.waypoints.clone();
         let snapshot = ExportSnapshot {
             node_ids,
             pairs,
@@ -1282,6 +1429,7 @@ impl GraphWindow {
             camera: self.camera,
             viewport: self.viewport,
             aggregate: self.aggregate,
+            waypoints,
         };
         let request = ExportRequest {
             scope,
@@ -1410,6 +1558,17 @@ impl Render for GraphWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let size = window.viewport_size();
         self.viewport = Vec2::new(f32::from(size.width), f32::from(size.height));
+        let store_entity = self.store.clone();
+        let still_running = self.layout.update(cx, |driver, cx| {
+            if driver.has_transition() {
+                driver.step_transition(&store_entity, cx)
+            } else {
+                false
+            }
+        });
+        if still_running {
+            cx.notify();
+        }
         let store = self.store.read(cx);
         let view: &dyn GraphView = store;
         let positions: &Positions = self.layout.read(cx).positions();
@@ -1435,7 +1594,21 @@ impl Render for GraphWindow {
                 .find(|(id, _, _)| *id == node)
                 .map(|(_, label, degree)| (label.as_str(), *degree));
             let (label, degree) = entry.unwrap_or(("", 0));
-            bypass.resolve_node(sheet, mapper, node, Some(label), degree)
+            let attrs = store.node_attrs(node);
+            let classes = store.node_classes(node);
+            bypass.resolve_node_with_data(
+                sheet,
+                mapper,
+                node,
+                Some(label),
+                degree,
+                &attrs,
+                &classes,
+            )
+        };
+        let edge_style_of = |source: NodeIndex, target: NodeIndex| {
+            let (attrs, classes) = Self::edge_attrs_classes(store, source, target);
+            bypass.resolve_edge_with_data(sheet, edge_mapper, source, target, &attrs, &classes)
         };
         let world_rect = world_viewport_rect(&self.camera, self.viewport);
         // First pass with squares for a provisional level; the minimal level
@@ -1457,10 +1630,20 @@ impl Render for GraphWindow {
             let shapes: HashMap<NodeIndex, NodeShape> = labels
                 .iter()
                 .map(|(node, label, degree)| {
+                    let attrs = store.node_attrs(*node);
+                    let classes = store.node_classes(*node);
                     (
                         *node,
                         bypass
-                            .resolve_node(sheet, mapper, *node, Some(label.as_str()), *degree)
+                            .resolve_node_with_data(
+                                sheet,
+                                mapper,
+                                *node,
+                                Some(label.as_str()),
+                                *degree,
+                                &attrs,
+                                &classes,
+                            )
                             .shape,
                     )
                 })
@@ -1493,6 +1676,32 @@ impl Render for GraphWindow {
         pairs.sort_unstable_by_key(|(source, target)| (source.index(), target.index()));
         let camera = self.camera;
         let viewport = self.viewport;
+        let containers: Vec<PaintedContainer> = if store.has_compound() {
+            all_compound_bounds(store, positions, NODE_HALF_EXTENT)
+                .into_iter()
+                .map(|(id, world_rect)| {
+                    let far = Point2::new(
+                        world_rect.origin.x + world_rect.size.x,
+                        world_rect.origin.y + world_rect.size.y,
+                    );
+                    let screen_rect = Rect::from_corners(
+                        camera.world_to_viewport(viewport, world_rect.origin),
+                        camera.world_to_viewport(viewport, far),
+                    );
+                    let title = store
+                        .node_data(id)
+                        .map(|data| data.label.clone())
+                        .unwrap_or_default();
+                    PaintedContainer {
+                        id,
+                        rect: screen_rect,
+                        title,
+                    }
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         let plan_started = Instant::now();
         let cached_hit = self
             .retained
@@ -1506,23 +1715,29 @@ impl Render for GraphWindow {
                     viewport,
                     options: edge_options,
                     versions,
+                    waypoints: &self.waypoints,
                 },
                 style_of,
-                |source, target| bypass.resolve_edge(sheet, edge_mapper, source, target),
+                edge_style_of,
             );
         let (nodes, edges, arrows) = if cached_hit || partial_hit {
             self.cached_plans()
         } else {
             let nodes =
                 paint_nodes_for_level(&visible_ids, positions, &camera, viewport, lod, style_of);
-            let edges = paint_edges_for(
+            let raw_edges = paint_edges_for_with_waypoints(
                 &pairs,
                 positions,
                 &camera,
                 viewport,
                 edge_options,
-                |source, target| bypass.resolve_edge(sheet, edge_mapper, source, target),
+                &self.waypoints,
+                edge_style_of,
             );
+            let edges: Vec<PaintedEdge> = raw_edges
+                .into_iter()
+                .map(|edge| clip_painted_edge(&edge, &containers))
+                .collect();
             let arrows = paint_arrows_for_level(&edges, lod);
             if self.retained.enabled() {
                 let ordinals = edge_ordinals_for(&edges, &pairs);
@@ -1542,6 +1757,14 @@ impl Render for GraphWindow {
             }
             (nodes, edges, arrows)
         };
+        for node in &nodes {
+            if let Some(spec) = node.image.clone()
+                && self.images.request(&spec)
+                && !std::path::Path::new(&spec.path).exists()
+            {
+                self.images.fail(&spec.path, "missing file");
+            }
+        }
         // Labels are planned from the visible node plan every frame rather than
         // cached: their cache key would need a text-shaping dimension the
         // retained geometry cache does not track, and shaping is cheap relative
@@ -1562,11 +1785,7 @@ impl Render for GraphWindow {
                     .edge_weight(source, target)
                     .map(|weight| weight.to_string())
             },
-            |source, target| {
-                bypass
-                    .resolve_edge(sheet, edge_mapper, source, target)
-                    .label_size
-            },
+            |source, target| edge_style_of(source, target).label_size,
         );
         let plan_ms = plan_started.elapsed().as_secs_f64() * 1000.0;
         self.metrics.push(FrameSample {
@@ -1840,6 +2059,7 @@ impl Render for GraphWindow {
                             .relative()
                             .track_focus(&self.focus)
                             .child(graph_view(
+                                containers,
                                 nodes,
                                 edges,
                                 arrows,
@@ -1872,19 +2092,55 @@ impl Render for GraphWindow {
                                     this.refresh_spatial(&positions, version);
                                     let locks = this.locks;
                                     let mode = this.select_mode;
+                                    let click_count = event.click_count;
                                     let hit = if can_grab_node(&locks) {
-                                        press_hit_shaped(
-                                            world,
-                                            &positions,
-                                            &this.spatial,
-                                            this.hit_radius(),
-                                            |node| this.node_shape(cx, node),
-                                        )
+                                        let store = this.store.read(cx);
+                                        if store.has_compound() {
+                                            press_hit_compound(
+                                                world,
+                                                store,
+                                                &positions,
+                                                NODE_HALF_EXTENT,
+                                                this.hit_radius(),
+                                            )
+                                            .map(|node| {
+                                                let offset = positions
+                                                    .get(&node)
+                                                    .map(|center| world - *center)
+                                                    .unwrap_or_default();
+                                                (node, offset)
+                                            })
+                                        } else {
+                                            press_hit_shaped(
+                                                world,
+                                                &positions,
+                                                &this.spatial,
+                                                this.hit_radius(),
+                                                |node| this.node_shape(cx, node),
+                                            )
+                                        }
                                     } else {
                                         None
                                     };
                                     match hit {
                                         Some((node, offset)) => {
+                                            let toggleable = {
+                                                let store = this.store.read(cx);
+                                                compound_toggle_target(store, node)
+                                            };
+                                            if toggleable && click_count >= 2 {
+                                                let store_entity = this.store.clone();
+                                                this.store.update(cx, |graph, cx| {
+                                                    let collapsed = graph.is_collapsed(node);
+                                                    graph.set_collapsed(cx, node, !collapsed);
+                                                });
+                                                let _ = store_entity;
+                                                this.selection.select(node);
+                                                this.rubber.cancel();
+                                                this.rebuild_bypass();
+                                                cx.notify();
+                                                return;
+                                            }
                                             if can_begin_drag(&locks) {
                                                 this.drag.begin(node, offset);
                                             }
@@ -1955,13 +2211,26 @@ impl Render for GraphWindow {
                                             this.layout.read(cx).positions().clone();
                                         let version = this.layout.read(cx).positions_version();
                                         this.refresh_spatial(&positions, version);
-                                        let hovered = hover_node_shaped(
-                                            world,
-                                            &positions,
-                                            &this.spatial,
-                                            this.hit_radius(),
-                                            |node| this.node_shape(cx, node),
-                                        );
+                                        let hovered = {
+                                            let store = this.store.read(cx);
+                                            if store.has_compound() {
+                                                press_hit_compound(
+                                                    world,
+                                                    store,
+                                                    &positions,
+                                                    NODE_HALF_EXTENT,
+                                                    this.hit_radius(),
+                                                )
+                                            } else {
+                                                hover_node_shaped(
+                                                    world,
+                                                    &positions,
+                                                    &this.spatial,
+                                                    this.hit_radius(),
+                                                    |node| this.node_shape(cx, node),
+                                                )
+                                            }
+                                        };
                                         if hovered != this.hovered {
                                             this.hovered = hovered;
                                             this.hover_anchor = viewport_point;

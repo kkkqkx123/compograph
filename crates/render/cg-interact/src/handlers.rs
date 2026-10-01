@@ -594,11 +594,7 @@ mod tests {
         let one = expand_neighborhood(&graph, [NodeIndex::new(1)], 1);
         assert_eq!(
             one,
-            BTreeSet::from([
-                NodeIndex::new(0),
-                NodeIndex::new(1),
-                NodeIndex::new(2)
-            ])
+            BTreeSet::from([NodeIndex::new(0), NodeIndex::new(1), NodeIndex::new(2)])
         );
         let two = expand_neighborhood(&graph, [NodeIndex::new(1)], 2);
         assert_eq!(
@@ -635,8 +631,18 @@ mod tests {
             vec![NodeIndex::new(2)]
         );
         let mut additive = SelectionState::default();
-        apply_point_select(&mut additive, SelectMode::Additive, NodeIndex::new(1), false);
-        apply_point_select(&mut additive, SelectMode::Additive, NodeIndex::new(2), false);
+        apply_point_select(
+            &mut additive,
+            SelectMode::Additive,
+            NodeIndex::new(1),
+            false,
+        );
+        apply_point_select(
+            &mut additive,
+            SelectMode::Additive,
+            NodeIndex::new(2),
+            false,
+        );
         assert_eq!(additive.len(), 2);
         apply_point_select(&mut additive, SelectMode::Single, NodeIndex::new(1), true);
         assert!(!additive.contains(NodeIndex::new(1)));

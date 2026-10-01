@@ -35,5 +35,6 @@ pub use nodes::{
 };
 pub use plans::{
     ARROW_HALF_WIDTH, ARROW_LENGTH, EDGE_AGGREGATION_THRESHOLD, EdgePaintOptions, NODE_SIDE,
-    PARALLEL_STEP, PaintedArrow, PaintedEdge, PaintedNode, PaintedRubberBand, RUBBER_BAND_STROKE,
+    PARALLEL_STEP, PaintedArrow, PaintedContainer, PaintedEdge, PaintedNode, PaintedRubberBand,
+    RUBBER_BAND_STROKE,
 };

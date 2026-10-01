@@ -186,12 +186,14 @@ impl GraphDocument {
 
     /// Rejects duplicate identifiers and edges dangling past the node table.
     pub fn validate(&self) -> Result<(), IoError> {
+        use crate::compound::MAX_COMPOUND_DEPTH;
         let mut seen = HashSet::new();
         for entry in &self.nodes {
             if !seen.insert(entry.id) {
                 return Err(IoError::invalid(format!("duplicate node id {}", entry.id)));
             }
         }
+        let mut parent_of: HashMap<usize, usize> = HashMap::new();
         for entry in &self.nodes {
             if let Some(parent) = entry.parent {
                 if !seen.contains(&parent) {
@@ -206,13 +208,50 @@ impl GraphDocument {
                         entry.id
                     )));
                 }
+                parent_of.insert(entry.id, parent);
             }
-            for (_, value) in &entry.attrs {
-                if let DataValue::Number(number) = value {
-                    if !number.is_finite() {
-                        return Err(IoError::invalid("attribute numbers must be finite"));
-                    }
+            for value in entry.attrs.values() {
+                if let DataValue::Number(number) = value
+                    && !number.is_finite()
+                {
+                    return Err(IoError::invalid("attribute numbers must be finite"));
                 }
+            }
+        }
+        for entry in &self.nodes {
+            let mut cursor = entry.id;
+            let mut depth = 0usize;
+            let mut chain: HashSet<usize> = HashSet::new();
+            chain.insert(cursor);
+            while let Some(parent) = parent_of.get(&cursor).copied() {
+                if !chain.insert(parent) {
+                    return Err(IoError::invalid(format!(
+                        "node {} closes a parent cycle",
+                        entry.id
+                    )));
+                }
+                depth += 1;
+                if depth > MAX_COMPOUND_DEPTH {
+                    return Err(IoError::invalid(format!(
+                        "node {} exceeds the compound depth limit",
+                        entry.id
+                    )));
+                }
+                cursor = parent;
+            }
+        }
+        let mut has_child: HashSet<usize> = HashSet::new();
+        for child in parent_of.keys() {
+            if let Some(parent) = parent_of.get(child) {
+                has_child.insert(*parent);
+            }
+        }
+        for entry in &self.nodes {
+            if entry.collapsed && !has_child.contains(&entry.id) {
+                return Err(IoError::invalid(format!(
+                    "node {} is marked collapsed without children",
+                    entry.id
+                )));
             }
         }
         for entry in &self.edges {

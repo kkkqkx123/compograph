@@ -1,6 +1,6 @@
 # compograph 功能清单（Feature List）
 
-> 版本：v1.0 · 日期：2026-09-30
+> 版本：v1.0 · 日期：2026-10-01
 > 来源标注约定：
 > - `[petgraph]` 直接复用 petgraph 现成 API（不重写）
 > - `[cy→移植]` 数学/几何从 cytoscape.js 直译为 Rust（源码位置见 [借鉴设计说明](./borrowing-design.md)）
@@ -9,7 +9,7 @@
 > - `[gpui]` 直接使用 gpui（zed-gpui fork）平台能力
 >
 > 阶段：P0 骨架闭环 → P1 可交互 → P2 接近 cytoscape 可用度 → P3 大规模。
-> **进度口径（2026-09-30 代码核查）**：P0/P1/P2 项已全部落地，P3 按决策口径落地（欧拉路/最小割 + 层次/马尔可夫/k 均值已落地，亲和传播暂不纳入，其余远期项按决策未启动），表格"阶段"列保留原计划口径，已落地项在"状态"列标注。实测见 [功能实测分析报告](../plan/feature-analysis-report.md)。
+> **进度口径（2026-10-01 代码核查）**：P0/P1/P2 项已全部落地，P3 按决策口径落地（欧拉路/最小割 + 层次/马尔可夫/k 均值/亲和传播/距离度量已落地，复合节点渲染交互已接通、布局引擎内约束仍为后处理表达，布局切换动画已接通，拐点主链与数据映射链已接通，背景图为登记加回退最小闭环），表格"阶段"列保留原计划口径，已落地项在"状态"列标注。实测见 [功能实测分析报告](../plan/feature-analysis-report.md)。
 > 事实基线：petgraph `a4d94bd`（0.8.3）、zed-gpui `212afa4`（gpui 0.2.2）、cytoscape.js `7ba6340`，均已在本地克隆核验。
 
 ---
@@ -44,9 +44,9 @@
 | 中心性 | `page_rank`（`page_rank.rs:64`） | `algo/` | P2 |
 | 遍历 | `Bfs`/`Dfs`/`DfsPostOrder`/`Topo`、`depth_first_search` | `visit/` | P1（布局内部即用） |
 
-> petgraph 缺失、cytoscape 独有的部分“网络科学”算法中，亲和传播仍为远期暂不纳入；层次聚类、马尔可夫聚类、k 均值、Euler 路径、确定性全局最小割已按 P3 决策单点落地（见 §6）。度/接近/介数中心性已按 P1 方案自研落地，不在远期表。
+> petgraph 缺失、cytoscape 独有的部分“网络科学”算法中，层次聚类、马尔可夫聚类、k 均值、亲和传播、距离度量、Euler 路径、确定性全局最小割已单点落地（见 §6）。度/接近/介数中心性已按 P1 方案自研落地，不在远期表。
 >
-> **已桥接算法（`cg-graph/src/algo.rs`，共 18 个）**：`shortest_paths`/`shortest_path_cost`（Dijkstra）、`shortest_path`（A*）、`heuristic_shortest_path`（带位置启发式 A*）、`strongly_connected_components`（Tarjan）、`minimum_spanning_forest`（Kruskal）、`minimum_spanning_tree_single`（Prim）、`topological_order`、`immediate_dominators`、`rank_nodes`（PageRank）、`transitive_reduction`，另有 P1 新增 `all_pairs_shortest_paths`（自研 Floyd-Warshall）、`bellman_ford_paths` + `negative_cycle_path`、`articulation_points` + `bridges`（自研无向语义）、`breadth_first_order` + `depth_first_order`。中心性三件套在 `centrality.rs`（度/接近/介数，无权版本）。UI 已暴露 21 个面板入口（最短路/引导搜索/连通分量/PageRank/生成树/度中心性/割点桥/全源/负权/遍历/拓扑与归约/接近/介数/单源生成树/支配集/有向欧拉路/无向欧拉路/最小割/层次聚类/马尔可夫聚类/k 均值）。欧拉路双语义在 `euler.rs`，全局最小割在 `min_cut.rs`，三组聚类在 `hierarchical.rs` + `markov.rs` + `kmeans.rs`。
+> **已桥接算法（`cg-graph/src/algo.rs`，共 18 个）**：`shortest_paths`/`shortest_path_cost`（Dijkstra）、`shortest_path`（A*）、`heuristic_shortest_path`（带位置启发式 A*）、`strongly_connected_components`（Tarjan）、`minimum_spanning_forest`（Kruskal）、`minimum_spanning_tree_single`（Prim）、`topological_order`、`immediate_dominators`、`rank_nodes`（PageRank）、`transitive_reduction`，另有 P1 新增 `all_pairs_shortest_paths`（自研 Floyd-Warshall）、`bellman_ford_paths` + `negative_cycle_path`、`articulation_points` + `bridges`（自研无向语义）、`breadth_first_order` + `depth_first_order`。中心性三件套在 `centrality.rs`（度/接近/介数，无权版本）。UI 已暴露 23 个面板入口（最短路/引导搜索/连通分量/PageRank/生成树/度中心性/割点桥/全源/负权/遍历/拓扑与归约/接近/介数/单源生成树/支配集/有向欧拉路/无向欧拉路/最小割/层次聚类/马尔可夫聚类/k 均值/亲和传播/度量分组）。欧拉路双语义在 `euler.rs`，全局最小割在 `min_cut.rs`，五组聚类在 `hierarchical.rs` + `markov.rs` + `kmeans.rs` + `affinity.rs` + `distances.rs`。
 
 ---
 
@@ -127,11 +127,11 @@
 
 | 功能 | 说明 |
 |---|---|
-| 聚类套件（MCL、k-means/k-medoids、层次聚类、亲和传播） | petgraph 无任何聚类，远期按需单点启动（P3-1）；已落地层次单连接阈值、马尔可夫确定性归属、确定性 k 均值（`cg-graph/src/hierarchical.rs` + `markov.rs` + `kmeans.rs`），亲和传播暂不纳入，见分阶段方案 |
+| 聚类套件（MCL、k-means/k-medoids、层次聚类、亲和传播） | petgraph 无任何聚类，远期按需单点启动（P3-1）；已落地层次单连接阈值、马尔可夫确定性归属、确定性 k 均值、亲和传播、距离度量（`cg-graph/src/hierarchical.rs` + `markov.rs` + `kmeans.rs` + `affinity.rs` + `distances.rs`），见分阶段方案 |
 | Euler 路径（Hierholzer）、最小割 | ✅ 已落地：`cg-graph/src/euler.rs`（有向与无向双语义）+ `cg-graph/src/min_cut.rs`（Stoer-Wagner 确定性全局最小割），petgraph 0.8.3 无对应故自研（P3-2） |
-| 复合节点 | 跨三层改造，拍板前不动（P3-3） |
+| 复合节点 | ✅ 存储与渲染交互已接通（父子层级、折叠代理、容器绘制裁剪命中、双击折叠）；布局层为后处理表达（分组分离与容器对齐），引擎内力约束未单独立项（P3-3） |
 | 扩展机制 | 需求出现时再设计，不预做框架（P3-4） |
-| 布局动画链（含 Radial 插值） | 径向首版不做插值，插值并入本项（P3-5） |
+| 布局动画链（含 Radial 插值） | ✅ 已落地通用插值（线性与三次、代次守卫、取消语义），布局切换走动画切换并逐帧步进（P3-5） |
 | 实例化后端（十万级） | 先评估后决定，结论为否则不启动（P3-6） |
 | 完整样式 schema（cytoscape ~208 属性） | v1 仅做常用子集（3.11，描边与透明度已接线、不新增字段），扩展见 P2 方案 |
 
@@ -139,7 +139,7 @@
 
 ## 7. 阶段汇总
 
-> 实测进度（2026-09-30）：P0/P1/P2 项已全部落地；P3 中欧拉路、最小割、层次/马尔可夫/k 均值聚类与 PNG 导出已落地，未实现项仅剩路线 C、复合节点、扩展机制、布局动画链（均按 P3 决策未启动）与亲和传播（暂不纳入）。下表保留原计划口径，"已落地"以各表状态列为准。
+> 实测进度（2026-10-01）：P0/P1/P2 项已全部落地；P3 中欧拉路、最小割、层次/马尔可夫/k 均值/亲和传播/距离度量聚类与 PNG 导出已落地，复合节点存储渲染交互与布局切换动画已接通；未实现项仅剩路线 C、扩展机制（均按 P3 决策未启动）。下表保留原计划口径，"已落地"以各表状态列为准。
 
 | 阶段 | 目标 | 覆盖功能项 |
 |---|---|---|
@@ -153,4 +153,4 @@
 - **P1 五项**：算法桥、中心性三件套、Radial 布局、节点形状族、箭头形状族均已落地，见上表；面板已接全部算法桥（P2-2）。
 - **P2 六项**：边标签（P2-1，权重文本沿边中点）、多行标签与中文换行（P2-3）、出租车与分段曲线（P2-4，`taxi_polyline`/`segmented_polyline`/`manhattan_route`，绘制与框选共用采样；版本一为几何能力，产品默认直边、不暴露开关）、样式描边与透明度接线（P2-5，取描边与透明度子集、不新增字段）、PNG 导出（P2-6，自研编码、无图片依赖，仅覆盖节点与边几何）均已落地。
 - **3.17 路线 C**：未实现（P3-6，需先拍板规模）。
-- **§6 远期算法与机制**：Euler 与最小割已落地（P3-2）；聚类套件中层次/马尔可夫/k 均值已落地、亲和传播暂不纳入（P3-1）；复合节点、扩展机制、动画链均未做（P3-3–P3-5，聚类分析见 `docs/analysis/clustering-analysis.md`）。
+- **§6 远期算法与机制**：Euler 与最小割已落地（P3-2）；聚类套件中层次/马尔可夫/k 均值/亲和传播/距离度量已落地（P3-1）；复合节点存储渲染交互与布局切换动画已接通，布局引擎内力约束以后处理表达；扩展机制未做（P3-4，聚类分析见 `docs/analysis/clustering-analysis.md`）。

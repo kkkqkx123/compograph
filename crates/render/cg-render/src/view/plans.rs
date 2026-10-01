@@ -179,3 +179,14 @@ pub struct PaintedRubberBand {
     pub origin: Point2,
     pub size: Vec2,
 }
+
+/// A compound container scheduled for painting, in screen pixels.
+///
+/// The rectangle already includes padding and projection; the canvas draws
+/// background, border and title from it without reading layout state.
+#[derive(Clone, Debug)]
+pub struct PaintedContainer {
+    pub id: NodeIndex,
+    pub rect: cg_types::Rect,
+    pub title: String,
+}

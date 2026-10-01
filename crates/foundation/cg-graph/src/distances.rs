@@ -203,22 +203,10 @@ mod tests {
     fn point_distances_match_their_geometries() {
         let first = Point2::new(0.0, 0.0);
         let second = Point2::new(3.0, 4.0);
-        assert_eq!(
-            point_distance(first, second, ClusterMetric::Euclidean),
-            5.0
-        );
-        assert_eq!(
-            point_distance(first, second, ClusterMetric::Manhattan),
-            7.0
-        );
-        assert_eq!(
-            point_distance(first, second, ClusterMetric::Chebyshev),
-            4.0
-        );
-        assert_eq!(
-            point_distance(first, first, ClusterMetric::Euclidean),
-            0.0
-        );
+        assert_eq!(point_distance(first, second, ClusterMetric::Euclidean), 5.0);
+        assert_eq!(point_distance(first, second, ClusterMetric::Manhattan), 7.0);
+        assert_eq!(point_distance(first, second, ClusterMetric::Chebyshev), 4.0);
+        assert_eq!(point_distance(first, first, ClusterMetric::Euclidean), 0.0);
     }
 
     #[test]
@@ -229,8 +217,7 @@ mod tests {
             ClusterMetric::Manhattan,
             ClusterMetric::Chebyshev,
         ] {
-            let groups =
-                metric_clusters(&graph, &positions, metric, 50.0).expect("valid input");
+            let groups = metric_clusters(&graph, &positions, metric, 50.0).expect("valid input");
             assert_eq!(groups.len(), 2, "metric splits into two");
             for group in &groups {
                 assert_eq!(group.len(), 3);
@@ -252,8 +239,8 @@ mod tests {
     fn empty_graph_yields_no_groups() {
         let graph: Graph = StableGraph::default();
         let positions: Positions = StdHashMap::new();
-        let groups = metric_clusters(&graph, &positions, ClusterMetric::Euclidean, 10.0)
-            .expect("empty");
+        let groups =
+            metric_clusters(&graph, &positions, ClusterMetric::Euclidean, 10.0).expect("empty");
         assert!(groups.is_empty());
     }
 
@@ -272,19 +259,14 @@ mod tests {
     #[test]
     fn invalid_threshold_and_missing_positions_report_a_node() {
         let (graph, positions) = two_clusters();
-        let bad =
-            metric_clusters(&graph, &positions, ClusterMetric::Euclidean, f32::NAN).expect_err("nan");
+        let bad = metric_clusters(&graph, &positions, ClusterMetric::Euclidean, f32::NAN)
+            .expect_err("nan");
         assert!(graph.node_weight(bad).is_some());
         let negative = metric_clusters(&graph, &positions, ClusterMetric::Euclidean, -1.0)
             .expect_err("negative");
         assert!(graph.node_weight(negative).is_some());
-        let infinite = metric_clusters(
-            &graph,
-            &positions,
-            ClusterMetric::Euclidean,
-            f32::INFINITY,
-        )
-        .expect_err("infinite");
+        let infinite = metric_clusters(&graph, &positions, ClusterMetric::Euclidean, f32::INFINITY)
+            .expect_err("infinite");
         assert!(graph.node_weight(infinite).is_some());
         let mut sparse = positions;
         let missing = graph.node_indices().next().expect("a node exists");

@@ -191,11 +191,7 @@ impl LayoutDriver {
     ///
     /// Returns true while frames remain. Compound containers are polished
     /// after every frame so they follow their leaves through the motion.
-    pub fn step_transition(
-        &mut self,
-        store: &Entity<GraphStore>,
-        cx: &mut Context<Self>,
-    ) -> bool {
+    pub fn step_transition(&mut self, store: &Entity<GraphStore>, cx: &mut Context<Self>) -> bool {
         let Some(mut run) = self.transition.take() else {
             return false;
         };

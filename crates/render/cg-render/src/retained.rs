@@ -15,8 +15,9 @@ use crate::camera::Camera;
 use crate::style::{EdgeStyle, NodeStyle};
 use crate::view::{
     EdgePaintOptions, PaintedArrow, PaintedEdge, PaintedNode, paint_single_arrow,
-    paint_single_edge, paint_single_node,
+    paint_single_edge_with_waypoints, paint_single_node,
 };
+use crate::waypoints::WaypointStore;
 
 /// Three versions identifying what changed since the last refresh.
 ///
@@ -228,13 +229,14 @@ impl RetainedCache {
                 .edge_ordinals
                 .iter()
                 .position(|member| *member == ordinal);
-            match paint_single_edge(
+            match paint_single_edge_with_waypoints(
                 input.pairs,
                 ordinal,
                 input.positions,
                 input.camera,
                 input.viewport,
                 input.options,
+                input.waypoints,
                 &edge_style,
             ) {
                 Some(entry) => {
@@ -324,6 +326,7 @@ pub struct RefreshInput<'a> {
     pub viewport: Vec2,
     pub options: EdgePaintOptions,
     pub versions: CacheVersions,
+    pub waypoints: &'a WaypointStore,
 }
 
 /// Incident-edge filter for targeted refresh.
@@ -453,6 +456,7 @@ mod tests {
                 viewport,
                 options,
                 versions: refreshed,
+                waypoints: &WaypointStore::new(),
             },
             node_style,
             edge_style,
@@ -483,6 +487,7 @@ mod tests {
                 viewport,
                 options,
                 versions: culled,
+                waypoints: &WaypointStore::new(),
             },
             node_style,
             edge_style,
@@ -538,6 +543,7 @@ mod tests {
                 viewport,
                 options: haystack,
                 versions,
+                waypoints: &WaypointStore::new(),
             },
             node_style,
             edge_style,
@@ -560,6 +566,7 @@ mod tests {
                 viewport,
                 options: EdgePaintOptions::default(),
                 versions,
+                waypoints: &WaypointStore::new(),
             },
             node_style,
             edge_style,

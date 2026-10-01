@@ -83,8 +83,12 @@ impl GraphStore {
 
     /// Nodes carrying every class in `classes`, in index order.
     pub fn nodes_with_all_classes(&self, classes: &BTreeSet<String>) -> Vec<NodeIndex> {
+        if classes.is_empty() {
+            return self.visible_node_ids();
+        }
         let mut found: Vec<NodeIndex> = self
-            .node_ids()
+            .visible_node_ids()
+            .into_iter()
             .filter(|node| {
                 self.node_class_table
                     .get(node)

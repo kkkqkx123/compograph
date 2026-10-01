@@ -79,7 +79,13 @@ pub fn affinity_clusters(
     let mut responsibility = vec![0.0f64; size * size];
     let mut availability = vec![0.0f64; size * size];
     for _ in 0..max_iterations {
-        update_responsibility(&similarity, &availability, &mut responsibility, size, damping);
+        update_responsibility(
+            &similarity,
+            &availability,
+            &mut responsibility,
+            size,
+            damping,
+        );
         update_availability(&responsibility, &mut availability, size, damping);
     }
     let exemplars = elect_exemplars(&responsibility, &availability, size);
@@ -181,7 +187,8 @@ fn elect_exemplars(responsibility: &[f64], availability: &[f64], size: usize) ->
         let mut best = 0usize;
         let mut best_value = f64::NEG_INFINITY;
         for column in 0..size {
-            let value = responsibility[column * size + column] + availability[column * size + column];
+            let value =
+                responsibility[column * size + column] + availability[column * size + column];
             if value > best_value {
                 best_value = value;
                 best = column;

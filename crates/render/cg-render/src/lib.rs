@@ -23,8 +23,8 @@ pub mod waypoints;
 pub use arrows::ArrowKind;
 pub use camera::{Camera, MAX_ZOOM, MIN_ZOOM};
 pub use compound::{
-    COMPOUND_PADDING, all_compound_bounds, clip_to_compound_bounds, compound_bounds,
-    pick_compound_node,
+    COMPOUND_PADDING, all_compound_bounds, clip_painted_edge, clip_to_compound_bounds,
+    compound_bounds, pick_compound_node,
 };
 pub use export::{
     ExportRequest, ExportScope, ExportSnapshot, export_pixels, graph_bounds, scale_arrows,
@@ -59,10 +59,10 @@ pub use text::{
 };
 pub use view::{
     ARROW_HALF_WIDTH, ARROW_LENGTH, EDGE_AGGREGATION_THRESHOLD, EdgePaintOptions, NODE_SIDE,
-    PARALLEL_STEP, PaintedArrow, PaintedEdge, PaintedNode, PaintedRubberBand, bundle_slot,
-    edge_ordinals_for, graph_view, loop_ordinal, paint_arrows, paint_arrows_for_level, paint_edges,
-    paint_edges_for, paint_edges_for_with_waypoints, paint_edges_with_options, paint_nodes,
-    paint_nodes_for, paint_nodes_for_level, paint_single_arrow, paint_single_edge,
+    PARALLEL_STEP, PaintedArrow, PaintedContainer, PaintedEdge, PaintedNode, PaintedRubberBand,
+    bundle_slot, edge_ordinals_for, graph_view, loop_ordinal, paint_arrows, paint_arrows_for_level,
+    paint_edges, paint_edges_for, paint_edges_for_with_waypoints, paint_edges_with_options,
+    paint_nodes, paint_nodes_for, paint_nodes_for_level, paint_single_arrow, paint_single_edge,
     paint_single_edge_with_waypoints, paint_single_node, paint_single_node_for_level,
     painted_edge_hits, visible_node_ids, world_viewport_rect,
 };

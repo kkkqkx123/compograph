@@ -174,6 +174,50 @@ fn ray_hits_segment(origin: Point2, delta: Vec2, a: Point2, b: Point2) -> Option
     }
 }
 
+/// Screen-space edge with its endpoints clipped to container bounds.
+///
+/// Endpoints inside a container move to the boundary along the edge
+/// direction; loop edges and endpoints outside every container stay put.
+/// Bends themselves are untouched, only the two ends move.
+pub fn clip_painted_edge(
+    edge: &crate::view::PaintedEdge,
+    containers: &[crate::view::PaintedContainer],
+) -> crate::view::PaintedEdge {
+    if edge.loop_ctrls.is_some() || containers.is_empty() {
+        return edge.clone();
+    }
+    let mut clipped = edge.clone();
+    let first = edge.bends.first().copied().unwrap_or(edge.end);
+    let last = edge.bends.last().copied().unwrap_or(edge.start);
+    if let Some(rect) = smallest_containing(containers, edge.start) {
+        let delta = first - edge.start;
+        clipped.start = clip_to_compound_bounds(edge.start, delta, rect);
+    }
+    if let Some(rect) = smallest_containing(containers, edge.end) {
+        let delta = last - edge.end;
+        clipped.end = clip_to_compound_bounds(edge.end, delta, rect);
+    }
+    clipped
+}
+
+fn smallest_containing(
+    containers: &[crate::view::PaintedContainer],
+    point: Point2,
+) -> Option<Rect> {
+    let mut best: Option<Rect> = None;
+    let mut best_area = f32::INFINITY;
+    for container in containers {
+        if container.rect.contains(point) {
+            let area = (container.rect.size.x.max(0.0)) * (container.rect.size.y.max(0.0));
+            if area < best_area {
+                best_area = area;
+                best = Some(container.rect);
+            }
+        }
+    }
+    best
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

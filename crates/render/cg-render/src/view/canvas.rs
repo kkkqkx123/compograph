@@ -17,10 +17,21 @@ use crate::shapes::NodeShape;
 use crate::style::NodeFill;
 use crate::text::{LabelBackground, PaintedEdgeLabel, PaintedLabel};
 
-use super::plans::{PaintedArrow, PaintedEdge, PaintedNode, PaintedRubberBand, RUBBER_BAND_STROKE};
+use super::plans::{
+    PaintedArrow, PaintedContainer, PaintedEdge, PaintedNode, PaintedRubberBand, RUBBER_BAND_STROKE,
+};
 
 /// Fill of the rubber-band box-selection rectangle.
 const RUBBER_BAND_FILL: u32 = 0x4a9eff22;
+
+/// Fill of a compound container background.
+const COMPOUND_FILL: u32 = 0xe8eef7;
+
+/// Border of a compound container.
+const COMPOUND_BORDER: u32 = 0x8a93a6;
+
+/// Title text of a compound container.
+const COMPOUND_TITLE: u32 = 0x39424e;
 
 /// Canvas element painting edges under arrows under nodes under labels.
 ///
@@ -30,6 +41,7 @@ const RUBBER_BAND_FILL: u32 = 0x4a9eff22;
 /// so weight text stays readable on dense bundles. The closure receives owned
 /// plans so the element stays `'static`.
 pub fn graph_view(
+    containers: Vec<PaintedContainer>,
     nodes: Vec<PaintedNode>,
     edges: Vec<PaintedEdge>,
     arrows: Vec<PaintedArrow>,
@@ -40,6 +52,42 @@ pub fn graph_view(
     canvas(
         |_bounds: Bounds<Pixels>, _window: &mut Window, _cx: &mut App| {},
         move |_bounds: Bounds<Pixels>, (), window: &mut Window, cx: &mut App| {
+            for container in &containers {
+                let quad = fill(
+                    Bounds {
+                        origin: gpui::point(
+                            gpui::px(container.rect.origin.x),
+                            gpui::px(container.rect.origin.y),
+                        ),
+                        size: gpui::size(
+                            gpui::px(container.rect.size.x),
+                            gpui::px(container.rect.size.y),
+                        ),
+                    },
+                    rgb(COMPOUND_FILL),
+                );
+                window.paint_quad(quad);
+                let mut outline = gpui::PathBuilder::stroke(gpui::px(1.5));
+                let far = Point2::new(
+                    container.rect.origin.x + container.rect.size.x,
+                    container.rect.origin.y + container.rect.size.y,
+                );
+                outline.move_to(to_pixels(container.rect.origin));
+                outline.line_to(to_pixels(Point2::new(far.x, container.rect.origin.y)));
+                outline.line_to(to_pixels(far));
+                outline.line_to(to_pixels(Point2::new(container.rect.origin.x, far.y)));
+                outline.line_to(to_pixels(container.rect.origin));
+                if let Ok(path) = outline.build() {
+                    window.paint_path(path, rgb(COMPOUND_BORDER));
+                }
+                if !container.title.is_empty() {
+                    let at = Point2::new(
+                        container.rect.origin.x + container.rect.size.x / 2.0,
+                        container.rect.origin.y + 4.0,
+                    );
+                    paint_text_at(&container.title, 12.0, COMPOUND_TITLE, at, window, cx);
+                }
+            }
             for edge in &edges {
                 let mut strokes = gpui::PathBuilder::stroke(gpui::px(edge.width.max(0.5)));
                 strokes.move_to(to_pixels(edge.start));

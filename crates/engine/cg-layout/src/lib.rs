@@ -18,7 +18,9 @@ pub mod registry;
 pub mod ring;
 pub mod static_view;
 
-pub use anim::{Easing, PositionTransition, apply_easing, blend_positions, lerp_point, tween_scalar};
+pub use anim::{
+    Easing, PositionTransition, apply_easing, blend_positions, lerp_point, tween_scalar,
+};
 pub use breadthfirst::{BfsDirection, BreadthFirstLayout, BreadthFirstOptions};
 pub use circle::{CircleLayout, CircleOptions};
 pub use compound::{

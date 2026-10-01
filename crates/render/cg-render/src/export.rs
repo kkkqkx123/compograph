@@ -16,8 +16,9 @@ use crate::raster::rasterize;
 use crate::style::{EdgeStyle, NodeStyle};
 use crate::view::{
     EDGE_AGGREGATION_THRESHOLD, EdgePaintOptions, NODE_SIDE, PaintedArrow, PaintedEdge,
-    PaintedNode, paint_arrows_for_level, paint_edges_for, paint_nodes_for,
+    PaintedNode, paint_arrows_for_level, paint_edges_for_with_waypoints, paint_nodes_for,
 };
+use crate::waypoints::WaypointStore;
 
 pub use super::png::encode_png;
 pub use super::raster::solid_background;
@@ -152,6 +153,7 @@ pub struct ExportSnapshot {
     pub camera: Camera,
     pub viewport: Vec2,
     pub aggregate: bool,
+    pub waypoints: WaypointStore,
 }
 
 /// Builds scaled plans for `scope` and renders them to a flat RGB buffer.
@@ -192,12 +194,13 @@ pub fn export_pixels(
         viewport,
         |node| snapshot.node_styles.get(&node).cloned().unwrap_or_default(),
     );
-    let edges = paint_edges_for(
+    let edges = paint_edges_for_with_waypoints(
         &snapshot.pairs,
         &snapshot.positions,
         &camera,
         viewport,
         options,
+        &snapshot.waypoints,
         |source, target| {
             snapshot
                 .edge_styles
@@ -266,6 +269,7 @@ mod tests {
             camera: Camera::new(Point2::ZERO, 1.0),
             viewport: Vec2::new(100.0, 50.0),
             aggregate: false,
+            waypoints: WaypointStore::new(),
         };
         let request = ExportRequest {
             scope: ExportScope::Viewport,
@@ -293,6 +297,7 @@ mod tests {
                     camera: Camera::new(Point2::ZERO, 1.0),
                     viewport: Vec2::new(100.0, 50.0),
                     aggregate: false,
+                    waypoints: WaypointStore::new(),
                 },
             )
             .is_none()
