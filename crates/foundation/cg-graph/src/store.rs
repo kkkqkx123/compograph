@@ -335,9 +335,17 @@ impl GraphStore {
     ///
     /// A single event is emitted instead of one per removed element, which
     /// keeps bulk reloads from flooding subscribers.
+    ///
+    /// The freed capacity is released as well. petgraph's `clear` keeps the
+    /// underlying allocations, so a store that hosted a large document would
+    /// otherwise hold that footprint until the graph grows back. Clearing is
+    /// a semantic reset where every index is invalidated together, so the
+    /// one-off compaction is safe here; incremental removals never shrink
+    /// because stable indices must keep their tombstone slots.
     pub fn clear(&mut self, cx: &mut Context<Self>) {
         self.before_mutation();
         self.graph.clear();
+        self.graph.shrink_to_fit();
         self.clear_attr_tables();
         self.clear_class_tables();
         self.clear_compound();
@@ -588,5 +596,16 @@ mod tests {
         assert!(!store.contains_node(NodeIndex::new(99)));
         assert_eq!(store.find_edge(a, b), Some(EdgeIndex::new(0)));
         assert_eq!(store.find_edge(b, a), None);
+    }
+
+    /// `GraphStore::clear` relies on shrink releasing the spare capacity that
+    /// petgraph's `clear` keeps, so this pins the raw-graph behavior the store
+    /// depends on.
+    #[test]
+    fn shrink_after_clear_releases_the_underlying_capacity() {
+        let (mut graph, _) = diamond();
+        graph.clear();
+        graph.shrink_to_fit();
+        assert_eq!(graph.capacity(), (0, 0));
     }
 }

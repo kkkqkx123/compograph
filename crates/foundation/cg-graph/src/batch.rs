@@ -44,6 +44,13 @@ impl GraphStore {
         }
     }
 
+    /// Installs `snapshot` as the current state.
+    ///
+    /// The restored graph is compacted once on the way in: snapshots clone the
+    /// whole [`StableGraph`] including its spare capacity, and every later
+    /// [`GraphStore::before_mutation`] copies that capacity again, so dropping
+    /// the slack here keeps the undo chain from carrying dead allocations
+    /// forward. Indices keep their meaning, so downstream caches stay valid.
     pub(crate) fn restore(&mut self, snapshot: StoreSnapshot) {
         self.graph = snapshot.graph;
         self.node_attr_table = snapshot.node_attr_table;
@@ -53,6 +60,7 @@ impl GraphStore {
         self.parents = snapshot.parents;
         self.children = snapshot.children;
         self.collapsed = snapshot.collapsed;
+        self.graph.shrink_to_fit();
     }
 
     /// Records the pre-mutation state for undo.
