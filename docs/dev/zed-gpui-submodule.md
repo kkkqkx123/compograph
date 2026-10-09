@@ -1,5 +1,7 @@
 # zed-gpui submodule 拉取指南
 
+**当前已改用longbridge的gpui-pre，该文档作为参考，如果后续要换回gpui-zed则可以参考该文档**
+
 上游 gpui 源码以 git submodule 挂载在 `crates/vendor/zed-gpui`，指向 [kkkqkx123/zed-gpui](https://github.com/kkkqkx123/zed-gpui) 的 `lean` 分支。`lean` 分支是精简历史快照（提交数很少，无完整 zed 历史），因此**可以直接拉取，无需浅克隆**。
 
 ## 首次克隆项目后初始化

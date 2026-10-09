@@ -1,14 +1,14 @@
 # compograph 借鉴设计说明（Borrowing Design）
 
 > 版本：v1.0 · 日期：2026-09-28
-> 目的：**明确 compograph 需要从 cytoscape.js / petgraph / zed-gpui(gpui) 三个项目分别借鉴哪些设计**，借鉴到什么程度（整段移植 / 数学直译 / 模式借鉴 / 架构参考 / 不借鉴），以及哪些明确**不能借鉴**及原因。
+> 目的：**明确 compograph 需要从 cytoscape.js / petgraph / gpui（gpui-pre 快照）三个来源分别借鉴哪些设计**，借鉴到什么程度（整段移植 / 数学直译 / 模式借鉴 / 架构参考 / 不借鉴），以及哪些明确**不能借鉴**及原因。
 > 事实基线（版本以仓库内实际来源为准，文档不维持提交号）：
 >
 > | 项目 | 位置 | 版本口径 | 备注 |
 > |---|---|---|---|
 > | cytoscape.js | `ref/cytoscape-js`（随仓库 vendored） | 见其 `package.json`（当前 3.34.3） | 借鉴主源（布局数学 + 几何数学 + 模式） |
 > | petgraph | crates.io 依赖 | 以 `Cargo.lock` 为准（当前 0.8.3） | 直接依赖复用（非移植） |
-> | zed-gpui | `crates/vendor/zed-gpui`（submodule，`lean` 分支） | 以 submodule 指针与其内 `Cargo.toml` 为准（当前 gpui 0.2.2） | 平台底座，直接使用其 API |
+> | gpui | crates.io 依赖（`gpui-pre` 快照） | 以根 `Cargo.toml` 精确 pin 与 `Cargo.lock` 为准（当前 `=0.3.8`） | 平台底座，直接使用其 API |
 >
 > 配套：[架构设计](./architecture-design.md) · [功能清单](./feature-list.md)
 
@@ -23,7 +23,7 @@
 | 项目 | 在 compograph 中的角色 | 借鉴方式 |
 |---|---|---|
 | petgraph | **L1 数据/算法内核** | Cargo 依赖直接复用，不复制源码 |
-| zed-gpui（gpui 0.2.2） | **平台底座**（状态/事件/绘制/异步） | Cargo 依赖直接使用 API |
+| gpui（gpui-pre 快照） | **平台底座**（状态/事件/绘制/异步） | Cargo 依赖直接使用 API |
 | cytoscape.js | **参照系**（布局/几何/模式的来源） | 数学直译为 Rust + 模式重实现 |
 
 ---
@@ -34,11 +34,11 @@
 |---|---|---|---|---|---|
 | B1 | 图数据模型 `StableGraph` + 算法库 | petgraph `graph_impl/stable_graph/mod.rs:67`、`algo/*` | 直接依赖 | core | P0 |
 | B2 | trait 解耦思想（算法不绑图实体） | petgraph `visit/mod.rs`（`IntoNeighbors:107` 等） | 思想借鉴 | core（暴露只读视图 trait） | P1 |
-| B3 | 共享状态 + 订阅 + 重绘通知 | gpui `Entity`（`entity_map.rs:435`）、`subscribe`（`app.rs:1272`）、`notify`（`context.rs:221`） | 直接使用 | core / 全部 | P0 |
+| B3 | 共享状态 + 订阅 + 重绘通知 | gpui `Entity`（`entity_map.rs:435`）、`subscribe`（`app.rs:1353`）、`notify`（`context.rs:221`） | 直接使用 | core / 全部 | P0 |
 | B4 | 低层自定义绘制入口 | gpui `canvas`（`elements/canvas.rs:10`） | 直接使用 | render | P0 |
-| B5 | 图元：`Quad`/`Path`/`Scene` | gpui `scene.rs:41/222`、`paint_quad`（`window.rs:4502`）、Path API（`scene.rs:840/847/859/876`） | 直接使用 | render | P0/P1 |
+| B5 | 图元：`Quad`/`Path`/`Scene` | gpui `scene.rs:41/222`、`paint_quad`（`window.rs:4550`）、Path API（`scene.rs:840/847/859/876`） | 直接使用 | render | P0/P1 |
 | B6 | 相机变换 | gpui `TransformationMatrix`（`scene.rs:608`）+ cytoscape `math.mjs:9/14` 公式 | API 直接用 + 公式借 | render | P1 |
-| B7 | 后台执行模型 | gpui `App::spawn`（`app.rs:2039`）、`background_executor`（`app.rs:300`） | 直接使用 | layout / core | P1 |
+| B7 | 后台执行模型 | gpui `App::spawn`（`app.rs:2177`）、`background_executor`（`app.rs:311`） | 直接使用 | layout / core | P1 |
 | B8 | 力导向物理（斥力/引力/温度退火） | cytoscape `cose.mjs`（`run:126`、物理步 `step:705`） | ★★★ 数学直译 | layout | P1 |
 | B9 | 简单布局（grid/circle/breadthfirst/concentric/random/preset） | cytoscape `extensions/layout/{grid:30,circle:31,breadthfirst:42,concentric:37,random:21,preset:25}.mjs` | ★★★ 数学直译 | layout | P0–P2 |
 | B10 | 布局注册表（name→impl） | cytoscape `extensions/layout/index.mjs`（`{name, impl}` 数组注册 8 种） | ★★★ 模式借鉴 | layout | P0 |
@@ -53,7 +53,7 @@
 | B19 | bypass（局部覆盖样式） | cytoscape `style/bypass.mjs` | ★★ 概念借 | render/interact | P2 |
 | B20 | 扩展机制思想（四类扩展点） | cytoscape `extension.mjs`（core/collection/layout/renderer） | ★ 思想借 → Rust trait 注册 | layout/render trait 设计 | P2 |
 | B21 | WebGL 实例化架构 | cytoscape `webgl/drawing-elements-webgl.mjs`（`instanced:163`） | ★ 仅架构参考 | render 路线 C | P3/按需 |
-| B22 | wgpu 设备/队列访问 | zed-gpui fork `gpui_wgpu`（`WgpuContext` 公开 `device/queue`，`wgpu_context.rs:13-14`） | 直接使用 | render 路线 C | P3/按需 |
+| B22 | wgpu 设备/队列访问 | gpui 快照的 `gpui_wgpu`（`gpui-pre-wgpu`，`WgpuContext` 公开 `device/queue`，`wgpu_context.rs:14-15`） | 直接使用 | render 路线 C | P3/按需 |
 | B23 | headless 测试设施 | gpui `TestAppContext`（`src/app/test_context.rs`） | 直接使用 | 全部测试 | P1 |
 
 ---
@@ -72,19 +72,19 @@ petgraph 是 Cargo 依赖而非"参照物"，借鉴=正确选用其能力边界�
 
 ---
 
-## 3. 从 zed-gpui（gpui 0.2.2 fork）借鉴什么（平台 API 直接使用）
+## 3. 从 gpui（gpui-pre 快照）借鉴什么（平台 API 直接使用）
 
-| 设计点 | gpui API（以上游快照为准，行号可能随同步漂移） | compograph 用途 |
+| 设计点 | gpui API（以 gpui-pre 快照为准，行号可能随升级漂移） | compograph 用途 |
 |---|---|---|
-| 共享状态 | `Entity<T>`（`src/app/entity_map.rs:435`） | `Entity<GraphStore>`、`Entity<PositionStore>`。⚠️ 初步设计所写 `Model<T>` 在本 fork 已不存在，统一改为 `Entity`（见 [架构设计 §3.2](./architecture-design.md)） |
-| 变更广播 | `EventEmitter` + `App::subscribe`（`src/app.rs:1272`） | `GraphChangeEvent` 驱动布局/渲染 |
-| 重绘触发 | `Context::notify`（`src/app/context.rs:221`）/ `App::notify`（`src/app.rs:2794`） | 状态变更 → gpui 帧 → `paint` |
+| 共享状态 | `Entity<T>`（`src/app/entity_map.rs:435`） | `Entity<GraphStore>`、`Entity<PositionStore>`。⚠️ 初步设计所写 `Model<T>` 在该版本已不存在，统一改为 `Entity`（见 [架构设计 §3.2](./architecture-design.md)） |
+| 变更广播 | `EventEmitter` + `App::subscribe`（`src/app.rs:1353`） | `GraphChangeEvent` 驱动布局/渲染 |
+| 重绘触发 | `Context::notify`（`src/app/context.rs:221`）/ `App::notify`（`src/app.rs:2932`） | 状态变更 → gpui 帧 → `paint` |
 | 自定义绘制 | `canvas(prepaint, paint)`（`src/elements/canvas.rs:10`）；`Element` trait（`src/element.rs:53`，路线 B 用） | 路线 A 的 `GraphView` |
-| 绘制图元 | `Scene`/`Primitive`（`src/scene.rs:41/222`，按类型批处理）；`paint_quad`（`src/window.rs:4502`）；`Path::move_to/line_to/curve_to/push_triangle`（`src/scene.rs:840/847/859/876`） | 节点=Quad、边/曲线=Path、箭头=三角 |
+| 绘制图元 | `Scene`/`Primitive`（`src/scene.rs:41/222`，按类型批处理）；`paint_quad`（`src/window.rs:4550`）；`Path::move_to/line_to/curve_to/push_triangle`（`src/scene.rs:840/847/859/876`） | 节点=Quad、边/曲线=Path、箭头=三角 |
 | 相机 | `TransformationMatrix`（`src/scene.rs:608`，compose `:658`） | GPU 级平移/缩放（进阶） |
-| 异步 | `App::spawn`（`src/app.rs:2039`）、`background_executor`（`src/app.rs:300`） | 力导向后台迭代、大图算法 |
+| 异步 | `App::spawn`（`src/app.rs:2177`）、`background_executor`（`src/app.rs:311`） | 力导向后台迭代、大图算法 |
 | 测试 | `TestAppContext`（`src/app/test_context.rs`） | headless 渲染/拾取单测（OQ-8） |
-| 路线 C 通道 | fork 独有 `gpui_wgpu`：`WgpuContext` 公开 `pub device: Arc<wgpu::Device>` / `pub queue: Arc<wgpu::Queue>`（`crates/gpui_wgpu/src/wgpu_context.rs:13-14`） | 十万级实例化渲染时可直接拿 GPU 上下文，比原判"最脆弱"更可行 |
+| 路线 C 通道 | 快照提供的 `gpui_wgpu`（`gpui-pre-wgpu`）：`WgpuContext` 公开 `pub device: Arc<wgpu::Device>` / `pub queue: Arc<wgpu::Queue>`（`crates/gpui_wgpu/src/wgpu_context.rs:14-15`） | 十万级实例化渲染时可直接拿 GPU 上下文，比原判"最脆弱"更可行 |
 
 ---
 
@@ -186,10 +186,10 @@ cytoscape `extension.mjs` 定义 core/collection/layout/renderer 四类扩展点
 
 ## 7. 行号核验说明
 
-各表引用的上游文件行号以核验时的快照为准；cytoscape.js 随仓库 vendored（`ref/cytoscape-js`）、petgraph 以 `Cargo.lock` 为准、zed-gpui 定期同步，行号可能漂移，使用时以实际源码为准：
+各表引用的上游文件行号以核验时的快照为准；cytoscape.js 随仓库 vendored（`ref/cytoscape-js`）、petgraph 以 `Cargo.lock` 为准、gpui-pre 快照按版本升级，行号可能漂移，使用时以实际源码为准：
 
 - cytoscape.js：`CoseLayout.prototype.run`(cose.mjs:126)、`step`(cose.mjs:705)、`layoutPositions`(layout.mjs:41)、`modelToRenderedPosition`/`renderedToModelPosition`(math.mjs:9/14)、`findNearestElement`/`findNearestElements`/`getAllInBox`(coords.mjs:75/79/323)、`findHaystackPoints`/`findLoopPoints`/`findStraightEdgePoints`/`findBezierPoints`/`findTaxiPoints`(edge-control-points.mjs:64/162/251/257/309)、布局注册表 `index.mjs`（8 项 `{name, impl}`）、算法 index（18 模块 import，`collection/algorithms/index.mjs:2-19`）。
 - petgraph：`StableGraph`(stable_graph/mod.rs:67)、`Graph`(graph_impl/mod.rs:392)、`dijkstra`(dijkstra.rs:92)、`astar`(astar.rs:81)、`tarjan_scc`(tarjan_scc.rs:269)、`page_rank`(page_rank.rs:64)、`min_spanning_tree`/`min_spanning_tree_prim`(min_spanning_tree.rs:86/255)、`ford_fulkerson`(ford_fulkerson.rs:164)、`IntoNeighbors`/`IntoNodeIdentifiers`/`IntoEdges`(visit/mod.rs:107/183/147)。
-- zed-gpui：`canvas`(elements/canvas.rs:10)、`Element`(element.rs:53)、`Scene`/`Primitive`(scene.rs:41/222)、`paint_quad`(window.rs:4502)、`Path::move_to/line_to/curve_to/push_triangle`(scene.rs:840/847/859/876)、`TransformationMatrix`(scene.rs:608)、`Entity`(app/entity_map.rs:435)、`subscribe`(app.rs:1272)、`notify`(app/context.rs:221)、`App::spawn`(app.rs:2039)、`background_executor`(app.rs:300)、`WgpuContext{device,queue}`(gpui_wgpu/src/wgpu_context.rs:13-14)。
+- gpui（gpui-pre）：`canvas`(elements/canvas.rs:10)、`Element`(element.rs:53)、`Scene`/`Primitive`(scene.rs:41/222)、`paint_quad`(window.rs:4550)、`Path::move_to/line_to/curve_to/push_triangle`(scene.rs:840/847/859/876)、`TransformationMatrix`(scene.rs:608)、`Entity`(app/entity_map.rs:435)、`subscribe`(app.rs:1353)、`notify`(app/context.rs:221)、`App::spawn`(app.rs:2177)、`background_executor`(app.rs:311)、`WgpuContext{device,queue}`(gpui_wgpu/src/wgpu_context.rs:14-15)。
 
 > 注：cytoscape.js 内置布局注册表实际为 **8 种**（breadthfirst/circle/concentric/cose/grid/null/preset/random，`index.mjs`）；此前文档表述"9 种"口径含 headless null/扩展生态，使用时以注册表为准。

@@ -1,6 +1,6 @@
 # compograph 引入 petgraph 与自研绘图库 — 初步设计
 
-> **文档状态（2026-09-28）**：本方案已由 `docs/architecture/architecture-design.md`（定稿架构）与 `docs/plan/compograph-implementation-plan.md`（分阶段实施方案）取代。过期点：共享状态类型 `Model<GraphStore>` 在当时核验的上游快照中已不存在，应为 `Entity<GraphStore>`；crate 命名已改为 `crates/foundation/cg-graph`、`crates/engine/cg-layout`、`crates/render/{cg-render,cg-interact}`、`crates/app/compograph`，gpui 及其依赖以 git submodule 挂在 `crates/vendor/zed-gpui`。正文保留作为设计决策依据，行号与提交号均以当时快照为准，不再维持。
+> **文档状态（2026-09-28）**：本方案已由 `docs/architecture/architecture-design.md`（定稿架构）与 `docs/plan/compograph-implementation-plan.md`（分阶段实施方案）取代。过期点：共享状态类型 `Model<GraphStore>` 在当时核验的上游快照中已不存在，应为 `Entity<GraphStore>`；crate 命名已改为 `crates/foundation/cg-graph`、`crates/engine/cg-layout`、`crates/render/{cg-render,cg-interact}`、`crates/app/compograph`，gpui 及其依赖来自 crates.io 的 `gpui-pre` 快照依赖。正文保留作为设计决策依据，行号与提交号均以当时快照为准，不再维持。
 
 > 版本：初步设计（preliminary）  ·  日期：基于当时本地源码核查
 > 引用基线（历史记录，不再维持）：

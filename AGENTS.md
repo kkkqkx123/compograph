@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-compograph is a pure Rust desktop graph visualization application: the graph model and algorithm core are based on petgraph, the UI foundation is gpui from zed-gpui (Zed's GPU-accelerated GUI framework), and layout, rendering, and interaction are developed in-house by this project.
+compograph is a pure Rust desktop graph visualization application: the graph model and algorithm core are based on petgraph, the UI foundation is gpui from the `gpui-pre` snapshot of Zed's GPU-accelerated GUI framework, and layout, rendering, and interaction are developed in-house by this project.
 
 **No-backward-compatible**: The project is in the development phase; backward compatibility does not need to be considered, only a reasonable architecture needs to be maintained.
 
@@ -12,17 +12,17 @@ compograph is a pure Rust desktop graph visualization application: the graph mod
 
 ## Code Architecture
 
-The top level contains `crates/`, `docs/`, `Cargo.toml`, `rust-toolchain.toml`, `.gitmodules`, and `AGENTS.md`.
+The top level contains `crates/`, `docs/`, `Cargo.toml`, `rust-toolchain.toml`, and `AGENTS.md`.
 
-`crates/` is divided into two parts: self-built layers and upstream mount points:
+`crates/` holds the self-built layers; gpui itself is a registry dependency, not source in the tree:
 
-- **Upstream source (gpui and its dependencies)**: Mounted as a **git submodule** at `crates/vendor/zed-gpui`, containing a snapshot of the `lean` branch of the zed-gpui repository, preserving the upstream original layout (`crates/gpui`, `crates/refineable/derive_refineable`, `tooling/perf`, and other paths consistent with upstream). This project consumes the crates within it through `path` dependencies, for example `gpui = { path = "crates/vendor/zed-gpui/crates/gpui" }`.
+- **gpui and its platform backend**: Consumed as the published `gpui-pre` / `gpui-pre-platform` snapshot crates from crates.io (the same snapshot line gpui-kit pins, currently `=0.3.8`), declared once in `[workspace.dependencies]`. There is no vendored gpui source and no submodule mount point.
 - **foundation layer**: `cg-types` (geometry primitives, leaf crate), `cg-geometry` (hit testing and curve geometry, framework-agnostic), `cg-graph` (`GraphStore` graph storage + petgraph `StableGraph` adaptation + change event broadcasting and subscription filtering)
 - **engine layer**: `cg-layout` (`LayoutEngine` trait, layout registry, concrete layout implementations, `LayoutDriver` change-driven position maintenance)
 - **render layer**: `cg-render` (GraphView canvas, `Camera` viewport mapping, draw planning), `cg-interact` (pointer drag/pan/zoom/selection state)
 - **app layer**: `compograph` (desktop application binary, gpui bootstrapping and assembly)
 
-Self-built crates are layered as `foundation/`, `engine/`, `render/`, and `app/`; upstream is not among them, so this project's own code is visible at a glance and is not drowned out by upstream files.
+Self-built crates are layered as `foundation/`, `engine/`, `render/`, and `app/`; no upstream source lives in the tree, so this project's own code is visible at a glance and is not drowned out by vendor files.
 
 ### Rust Crate Dependency DAG
 
@@ -33,7 +33,7 @@ engine: cg-graph + cg-types <- cg-layout (subscription-driven requires gpui's Co
 render: cg-graph + cg-layout + cg-geometry + cg-types <- cg-render
 cg-graph + cg-render + cg-types <- cg-interact
 app: all of the above <- compograph (also depends on gpui_platform)
-upstream: 27 upstream crates within crates/vendor/zed-gpui interdepend,
+upstream: the gpui-pre snapshot crates from crates.io interdepend,
  and never depend in reverse on any cg-* crate
 ```
 
@@ -41,13 +41,13 @@ upstream: 27 upstream crates within crates/vendor/zed-gpui interdepend,
 
 Strict DAG; circular dependencies of any form are prohibited. `cg-graph` depends on gpui because the `EventEmitter` marker trait must be implemented on the type definition side (orphan rule); `cg-layout` depends on it in order to establish change subscriptions using `Context`/`App`. Neither depends on any gpui platform backend, so they can still be unit tested headlessly.
 
-## Upstream Source Specifications
+## GPUI Dependency Specifications
 
-- Upstream is a submodule snapshot of the zed-gpui `lean` branch, preserving the upstream layout as-is.
-- **Modifying** upstream code is **prohibited**; do not format it or add business dependencies. When changes to upstream are needed, complete them within the zed-gpui repository and go through its synchronization/release process, then update the submodule pointer in this project.
-- **Upstream synchronization may only be performed within the zed-gpui repository**. This project never separately fetches/merges upstream: the `.git` of `crates/vendor/zed-gpui` does not participate in this project's workflow and serves only as a read-only mount point.
-- The `lean` snapshot has already expanded workspace inheritance (`dep.workspace = true`, etc.) at release time, so this project does not need to restate gpui's workspace table; if you encounter `error inheriting ... from workspace root manifest`, it means the submodule points to unexpanded content or has not been initialized.
-- The gpui API line number baseline is `212afa4`; after upgrading upstream, all code referencing gpui APIs must have signatures rechecked.
+- gpui arrives from crates.io as the `gpui-pre` / `gpui-pre-platform` snapshot crates, pinned to an exact version in `[workspace.dependencies]`. The pin must stay identical to gpui-kit's workspace pin, because both must build against one GPUI API baseline; bump them together.
+- The pin is exact on purpose: a caret requirement would let a newer snapshot move the build onto an API this project was never compiled against.
+- The snapshot carries published, workspace-inheritance-free manifests, so this project never restates a gpui workspace table.
+- Do not vendor gpui source into this tree or reintroduce a submodule mount point.
+- After upgrading the pin, recheck the signatures of all code that references gpui APIs.
 
 ## Rust Development Specifications
 
@@ -66,7 +66,7 @@ crates/<name>/src/
 
 ## Build and Run
 
-Prerequisites: `rust-toolchain.toml` pins the toolchain (currently 1.98.1). After cloning, first initialize the submodule: `git submodule update --init --depth 1`. In restricted network environments, cargo needs to be configured with a crates.io mirror (such as rsproxy) and a GitHub proxy (such as `git config --global url."https://gh-proxy.com/https://github.com/".insteadOf "https://github.com/"`).
+Prerequisites: `rust-toolchain.toml` pins the toolchain (currently 1.98.1). In restricted network environments, cargo needs to be configured with a crates.io mirror (such as rsproxy).
 
 ```shell
 cargo clippy --all-targets --all-features   # full compilation check

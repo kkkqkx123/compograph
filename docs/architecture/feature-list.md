@@ -6,11 +6,11 @@
 > - `[cy→移植]` 数学/几何从 cytoscape.js 直译为 Rust（源码位置见 [借鉴设计说明](./borrowing-design.md)）
 > - `[cy→模式]` 借鉴 cytoscape.js 的设计模式/契约，实现自写
 > - `[自研]` 无现成参照或仅参照思路，纯自研
-> - `[gpui]` 直接使用 gpui（zed-gpui fork）平台能力
+> - `[gpui]` 直接使用 gpui（gpui-pre 快照）平台能力
 >
 > 阶段：P0 骨架闭环 → P1 可交互 → P2 接近 cytoscape 可用度 → P3 大规模。
 > **进度口径（2026-10-01 代码核查）**：P0/P1/P2 项已全部落地，P3 按决策口径落地（欧拉路/最小割 + 层次/马尔可夫/k 均值/亲和传播/距离度量已落地，复合节点渲染交互已接通、布局引擎内约束仍为后处理表达，布局切换动画已接通，拐点主链与数据映射链已接通，背景图为登记加回退最小闭环），表格"阶段"列保留原计划口径，已落地项在"状态"列标注。实测见 [功能实测分析报告](../plan/feature-analysis-report.md)。
-> 事实基线：petgraph（版本以 `Cargo.lock` 为准）、zed-gpui（submodule `lean` 分支，指针为准）、cytoscape.js（`ref/cytoscape-js`，版本见其 `package.json`），文档不维持提交号。
+> 事实基线：petgraph（版本以 `Cargo.lock` 为准）、gpui（`gpui-pre` 精确 pin，以 `Cargo.lock` 为准）、cytoscape.js（`ref/cytoscape-js`，版本见其 `package.json`），文档不维持提交号。
 > 跟进（2026-10-04 代码核查）：差距后续方案项已全部落地，见 §8；通用选项默认保持既有行为。
 
 ---
@@ -21,7 +21,7 @@
 |---|---|---|---|---|
 | 1.1 | 可编辑图容器（增删节点/边） | `[petgraph]` | P0 | `StableGraph`（`graph_impl/stable_graph/mod.rs:67`），删除后索引稳定 |
 | 1.2 | 节点/边业务数据（label、weight、样式字段） | `[自研]` | P0 | `NodeData`/`EdgeData` 权重类型 |
-| 1.3 | 共享状态容器 + 变更事件 | `[gpui]` | P0 | `Entity<GraphStore>`（`entity_map.rs:435`）+ `EventEmitter` + `subscribe`（`app.rs:1272`） |
+| 1.3 | 共享状态容器 + 变更事件 | `[gpui]` | P0 | `Entity<GraphStore>`（`entity_map.rs:435`）+ `EventEmitter` + `subscribe`（`app.rs:1353`） |
 | 1.4 | 坐标外挂 `PositionStore` | `[自研]` | P0 | petgraph 不存坐标；`Positions = HashMap<NodeIndex,(f32,f32)>` + `fixed` 集 |
 | 1.5 | 只读图视图 trait（解耦 L2/L3） | `[petgraph]` | P1 | 基于 `visit` trait 簇（`IntoNeighbors:107`、`IntoNodeIdentifiers:183`、`IntoEdges:147`） |
 | 1.6 | 图 I/O（JSON/GraphML 导入导出） | `[自研]` | P2 | ✅ 已落地：JSON 导入导出 + 校验（`io.rs`）；GraphML 未做 |
@@ -75,7 +75,7 @@
 
 | # | 功能 | 来源 | 阶段 | 说明 |
 |---|---|---|---|---|
-| 3.1 | 路线 A：`gpui::canvas` 即时绘制 `GraphView` | `[gpui]` | P0 | `elements/canvas.rs:10`；节点 `paint_quad`（`window.rs:4502`） |
+| 3.1 | 路线 A：`gpui::canvas` 即时绘制 `GraphView` | `[gpui]` | P0 | `elements/canvas.rs:10`；节点 `paint_quad`（`window.rs:4550`） |
 | 3.2 | 边绘制（直线/折线/贝塞尔） | `[cy→移植]+[gpui]` | P1 | 几何借 `edge-control-points.mjs`（`findStraightEdgePoints:251`、`findBezierPoints:257`、`findTaxiPoints:309`、`findLoopPoints:162`），落为 `Path`（`scene.rs:840/847/859`） |
 | 3.3 | 箭头形状族（三角/燕尾/丁形/圆点/菱形/方形/V 形） | `[cy→移植]+[gpui]` | P1 | ✅ 已落地（`arrows.rs` 的多边形顶点表 + `view.rs` 统一入口；方形前边中心落端点，V 形深凹点区别于燕尾） |
 | 3.4 | 节点形状族（方/圆/椭圆/圆角矩形/三角/菱形/五边形/六边形/八边形/五角星） | `[cy→移植]+[gpui]` | P1/P2 | ✅ 已落地（`shapes.rs` 顶点表，绘制、点选、框选、可见查询共用，默认方形，最简档回退方形） |

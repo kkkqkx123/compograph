@@ -7,7 +7,7 @@
 > | 项目 | 位置 | 版本口径 | 核验状态 |
 > |---|---|---|---|
 > | petgraph | crates.io 依赖 | 以 `Cargo.lock` 为准（当前 0.8.3） | ✅ 与设计文档基线一致 |
-> | zed-gpui（gpui fork） | `crates/vendor/zed-gpui`（submodule，`lean` 分支） | 以 submodule 指针与其内 `Cargo.toml` 为准（当前 gpui 0.2.2） | ✅ 行号核验通过 |
+> | gpui（`gpui-pre` 快照） | crates.io 依赖（无仓库内源码） | 以根 `Cargo.toml` 精确 pin 与 `Cargo.lock` 为准（当前 `=0.3.8`，zed@279fe07 快照） | ✅ 行号核验通过 |
 > | cytoscape.js | `ref/cytoscape-js`（随仓库 vendored） | 见其 `package.json`（当前 3.34.3） | ✅ 行号核验通过 |
 >
 > 配套文档：[功能清单](./feature-list.md) · [借鉴设计说明](./borrowing-design.md) · 上游分析 [`../ref/`](../ref/README.md)
@@ -55,26 +55,13 @@ compograph 是基于 **gpui**（Zed 的 GPU 加速 Rust 原生 GUI 框架）的�
 
 ## 2. 模块划分与依赖方向
 
-> 2026-09-28 起项目结构已按本节初始化（workspace 解析验证通过）；上游 gpui 源码以 git submodule 挂在 `crates/vendor/zed-gpui`，保持 zed-gpui 的原始布局。
+> 2026-09-28 起项目结构已按本节初始化（workspace 解析验证通过）；gpui 以 crates.io 的 `gpui-pre` 快照依赖引入，仓库内不再保留上游源码。
 
 ```
 compograph/
-├── Cargo.toml                 # workspace：依赖集中在 [workspace.dependencies]
-├── rust-toolchain.toml        # 本仓库钉定工具链（当前 1.98.1；上游快照同期也钉定同一版本，各自维护）
-├── .gitmodules                # crates/vendor/zed-gpui → zed-gpui lean 分支
+├── Cargo.toml                 # workspace：依赖集中在 [workspace.dependencies]（含 gpui-pre 精确 pin）
+├── rust-toolchain.toml        # 本仓库钉定工具链（当前 1.98.1）
 ├── crates/
-│   ├── vendor/
-│   │   └── zed-gpui/          # 上游 submodule（lean 分支，原地保留上游布局，禁止修改）
-│   │       ├── crates/        # gpui/ gpui_macros/ gpui_platform/ gpui_linux/
-│   │       │                  #   gpui_macos/ gpui_windows/ gpui_apple/ gpui_web/
-│   │       │                  #   gpui_wgpu/ gpui_tokio/ gpui_util/
-│   │       │                  #   gpui_shared_string/ collections/ sum_tree/ util/
-│   │       │                  #   util_macros/ path/ scheduler/ zlog/ ztracing/
-│   │       │                  #   ztracing_macro/ bench_metrics/ http_client/
-│   │       │                  #   http_client_tls/ reqwest_client/ refineable/
-│   │       │                  #   （refineable 内含子包 derive_refineable/）
-│   │       └── tooling/perf/  # 上游工具包（util_macros 依赖，保持上游位置）
-│   │  ── 自建 crate ──
 │   ├── foundation/
 │   │   ├── cg-types/          # 几何原语（叶子）
 │   │   ├── cg-geometry/       # 命中测试与曲线几何（框架无关）
@@ -91,7 +78,7 @@ compograph/
 │       └── compograph/        # 主应用二进制：gpui 引导、命令面板、工具栏
 ```
 
-上游以 submodule 挂载、自建 crate 独立分层：本项目自身的代码不被上游文件淹没，且上游同步问题完全封闭在 zed-gpui 仓库内部（见 AGENTS.md 上游源码规范）。本项目通过 `path` 依赖消费上游，例如 `gpui = { path = "crates/vendor/zed-gpui/crates/gpui" }`。
+gpui 以 crates.io 快照依赖引入、自建 crate 独立分层：仓库内没有上游源码，本项目自身的代码一眼可见。gpui 与 `gpui_platform` 在根 `Cargo.toml` 的 `[workspace.dependencies]` 中以精确版本 pin（见 AGENTS.md GPUI 依赖规范）。
 
 依赖方向（单向 DAG，禁止循环）：
 
@@ -101,44 +88,27 @@ cg-types     ← cg-graph（另依赖 petgraph + gpui 的 EventEmitter 标记）
 cg-graph     ← cg-layout
 cg-graph + cg-layout + cg-geometry ← cg-render ← cg-interact
 以上全部 ← compograph（另依赖 gpui_platform）
-crates/vendor/zed-gpui 内各上游包 互依，绝不反向依赖 cg-*
+gpui-pre 快照内部各 crate 互依，绝不反向依赖 cg-*
 ```
 
 cg-graph 依赖 gpui 仅因 `EventEmitter` 标记 trait 必须在类型定义侧实现（孤儿规则）；cg-layout 依赖它是为了用 `Context`/`App` 建立变更订阅。
 
 **解耦选项（推荐）**：L2/L3 不直接依赖 `StableGraph` 实体，而是依赖 core 暴露的只读视图 trait（基于 petgraph `visit` 的 `IntoNeighbors:107` / `IntoNodeIdentifiers:183` / `IntoEdges:147` 等，见 `petgraph/src/visit/mod.rs`）。好处：布局/渲染可用轻量 mock 图做 headless 单测，未来可替换图实现。
 
-### 2.1 上游为何用 submodule 而非平铺
+### 2.1 gpui 为何是 crates.io 快照而非仓库内源码
 
-**决策：上游以 git submodule 挂在 `crates/vendor/zed-gpui`，绝不平铺进 `crates/`。**
+**决策：gpui 以 crates.io 的 `gpui-pre` 快照依赖引入，精确 pin；仓库内不保留上游源码（不 vendored、不挂 submodule）。**
 
-曾一度把上游 27 个包直接展开平铺在 `crates/` 下，理由是"vendor 是子集、路径不匹配、patch 可回灌上游"。该方案被否决，因为它弄反了主从关系：
+历史上本项目曾以 submodule 挂载 zed-gpui `lean` 快照并以 path 依赖消费，2026-10-09
+切换为 gpui-pre。完整分析与取舍见 gpui-kit 仓库 `docs/plan/compograph-gpui-pre-migration.md`。
 
-| 维度 | 平铺（已否决） | submodule（当前） |
+| 维度 | 仓库内源码（submodule + path，已否决） | crates.io 快照（当前） |
 |---|---|---|
-| 上游同步 | 本项目克隆里没有上游历史与 remote，**完全无法与 zed-gpui 同步** | 指向 zed-gpui `lean`，同步只发生在 zed-gpui 内 |
-| 代码可读性 | 27 个上游包淹没 `crates/`，自建 crate 需靠命名区分 | 自建分层与 `vendor/` 一眼分离 |
-| 职责归属 | 上游戏改动散落在本项目，两边都要维护 | 上游改动只归 zed-gpui；本项目只升 submodule 指向 |
-| fork 价值 | fork 出来的 zed-gpui 失去被引用的意义 | `lean` 的唯一目的就是被本项目直接包含 |
-
-关键认识：**`lean` 分支的存在目的就是被其他项目包含**。因此应当让 zed-gpui 去适配消费方需要的结构，而不是反过来让消费方去适配 zed 的内部布局。
-
-**自包含是 zed-gpui 的责任，不是本项目的。** Cargo 解析 `workspace = true` 系列继承时，会向上找到**使用者构建的工作区根**，并越过 path 依赖所在的仓库边界继续上溯（仓库内再嵌一个 `[workspace]` 也不能阻止）。所以只要 `crates/vendor/zed-gpui/crates/gpui/Cargo.toml` 里还有一条 `accesskit.workspace = true`，本项目就被迫重建 gpui 的整张 `[workspace.dependencies]` 表才能编译。
-
-实测证据（本项目根 `Cargo.toml` 只写 `gpui = { path = "crates/vendor/zed-gpui/crates/gpui" }`）：
-
-```
-# submodule 指向未展开的 lean：
-error: failed to load manifest for workspace member `crates/foundation/cg-graph`
-Caused by: failed to load manifest for dependency `gpui`
-Caused by: failed to parse manifest at `.../crates/vendor/zed-gpui/crates/gpui/Cargo.toml`
-Caused by: error inheriting `accesskit` from workspace root manifest's `workspace.dependencies.accesskit`
-Caused by: `dependency.accesskit` was not found in `workspace.dependencies`
-
-# submodule 指向展开后的 lean：cargo metadata 通过，cg-* 全量编译与测试通过
-```
-
-因此 **zed-gpui 在发布 `lean` 时执行 `scripts/expand-workspace.py`**，把每个 crate 的继承项改写成展开形式（详见 zed-gpui `docs/dev/branch-sync.md`）。展开复杂度全部封闭在 zed-gpui 内部，本项目零配合。
+| 与 gpui-kit 的关系 | 两套不同来源的 gpui 类型互不兼容，图视图无法嵌入 gpui-kit 应用 | 与 gpui-kit 同一精确 pin、同一 API 基线、同一依赖解析 |
+| 同步职责 | 需自建 fork 的同步、workspace 展开、快照发布流程 | 升级 = 修改一个精确版本号并复核 API 签名 |
+| 依赖解析 | 连带 git 依赖（proptest/scap/wasm_thread 的 zed fork），受限网络需 GitHub 代理 | 全部来自 crates.io（镜像可解析） |
+| 代码可读性 | 27 个上游包进入仓库，淹没自建 crate | 仓库内只有自建 crate |
+| manifest 继承 | path 依赖的 `workspace = true` 会越过仓库边界上溯到本工作区，须在发布时展开 | 发布 manifest 已规范化，本项目零配合 |
 
 ---
 
@@ -152,11 +122,11 @@ Caused by: `dependency.accesskit` was not found in `workspace.dependencies`
 
 初步设计写的是 gpui `Model<GraphStore>`。经对照上游快照实际 API 核验：**该版本 gpui 已无 `Model<T>`，共享状态类型为 `Entity<T>`**（`crates/gpui/src/app/entity_map.rs:435`，行号以快照为准）。事件与通知机制为：
 
-| 能力 | API | 位置（zed-gpui fork） |
+| 能力 | API | 位置（gpui-pre 快照） |
 |---|---|---|
 | 共享状态容器 | `Entity<T>` | `src/app/entity_map.rs:435` |
-| 事件广播 | `EventEmitter` trait + `App::subscribe` | `src/app.rs:1272` |
-| 重绘通知 | `Context::notify` / `App::notify` | `src/app/context.rs:221`、`src/app.rs:2794` |
+| 事件广播 | `EventEmitter` trait + `App::subscribe` | `src/app.rs:1353` |
+| 重绘通知 | `Context::notify` / `App::notify` | `src/app/context.rs:221`、`src/app.rs:2932` |
 
 因此 L1 的形态为：
 
@@ -256,7 +226,7 @@ pub trait LayoutEngine: 'static {
 ### 4.3 执行模型
 
 - **增量布局**：结构小改时固定未变节点，只对新节点/被拖节点做局部力导向，避免整图抖动。
-- **后台线程**：力导向迭代昂贵，放 gpui `App::spawn`（`src/app.rs:2039`）/ `background_executor`（`src/app.rs:300`）执行，分批回写 `PositionStore` 并 notify，形成动画式收敛，不阻塞 UI。
+- **后台线程**：力导向迭代昂贵，放 gpui `App::spawn`（`src/app.rs:2177`）/ `background_executor`（`src/app.rs:311`）执行，分批回写 `PositionStore` 并 notify，形成动画式收敛，不阻塞 UI。
 
 ---
 
@@ -268,7 +238,7 @@ pub trait LayoutEngine: 'static {
 |---|---|---|---|
 | 实现复杂度 | 低（闭包即可，`elements/canvas.rs:10`） | 中（自管缓存/脏标记，`element.rs:53`） | 高（深入 GPU 内部） |
 | 单图规模 | 数百~数千节点 | 数千~数万 | 十万级 |
-| 与 gpui 升级解耦 | 高 | 中 | 中（fork 提供 `gpui_wgpu`，见 5.4） |
+| 与 gpui 升级解耦 | 高 | 中 | 中（gpui-pre 提供 `gpui_wgpu`，见 5.4） |
 | 每帧开销 | 高（重建图元） | 低（增量 flush） | 最低 |
 | 建议 | **v1 落地** | **v2 演进** | 按需（v3） |
 
@@ -276,11 +246,11 @@ pub trait LayoutEngine: 'static {
 
 ### 5.2 图元映射（gpui 原语，行号已核验）
 
-| 视觉元素 | gpui API | 位置（zed-gpui fork） |
+| 视觉元素 | gpui API | 位置（gpui-pre 快照） |
 |---|---|---|
 | 边（直线） | `Path::move_to`/`line_to` → `scene().insert_primitive` | `scene.rs:840/847` |
 | 边（曲线） | `Path::curve_to` | `scene.rs:859` |
-| 节点 | `window.paint_quad(PaintQuad)` | `window.rs:4502` |
+| 节点 | `window.paint_quad(PaintQuad)` | `window.rs:4550` |
 | 箭头 | `Path::push_triangle` | `scene.rs:876` |
 | 场景容器 | `Scene` / `Primitive`（Quad/Path/Shadow/…，按类型批处理） | `scene.rs:41/222` |
 | 相机变换 | `TransformationMatrix` | `scene.rs:608`（compose `:658`） |
@@ -290,9 +260,9 @@ pub trait LayoutEngine: 'static {
 - `Camera { offset: (f32,f32), zoom: f32 }`：v1 用 CPU 侧仿射（公式思路借 cytoscape `math.mjs:9/14` 的 `modelToRenderedPosition`），进阶用 `TransformationMatrix` 做 GPU 级变换。
 - 拾取：gpui 只有元素级命中，**节点/边级命中需自建空间索引**（四叉树/均匀网格）。命中数学直译 cytoscape `coords.mjs`：`findNearestElement:75`、`getAllInBox:323`（框选）；边命中用贝塞尔采样距离（`edge-projection.mjs:5`）或简化为中垂线距离（开放点）。
 
-### 5.4 路线 C 的新证据（fork 特有）
+### 5.4 路线 C 的新证据（快照特有）
 
-zed-gpui fork 把 wgpu 后端独立为 `gpui_wgpu` crate，且 `WgpuContext` 公开暴露 `pub device: Arc<wgpu::Device>`、`pub queue: Arc<wgpu::Queue>`（`crates/gpui_wgpu/src/wgpu_context.rs:13-14`）。相比原设计"路线 C 依赖 gpui 内部上下文、最脆弱"的判断，**该 fork 上路线 C 的可行性显著提高**，但仍属后期选项。
+gpui 快照把 wgpu 后端独立为 `gpui_wgpu` crate（gpui-pre 对应 `gpui-pre-wgpu`），且 `WgpuContext` 公开暴露 `pub device: Arc<wgpu::Device>`、`pub queue: Arc<wgpu::Queue>`（`wgpu_context.rs:14-15`）。相比原设计"路线 C 依赖 gpui 内部上下文、最脆弱"的判断，**该快照上路线 C 的可行性显著提高**，但仍属后期选项。
 
 ---
 

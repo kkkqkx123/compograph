@@ -7,11 +7,6 @@ members = [
     "crates/render/*",
     "crates/app/*",
 ]
-# The upstream snapshot stays a plain path dependency: excluding it keeps
-# `cargo --workspace` / `--all-targets` commands to the crates this project
-# owns, so upstream benches and tests (which need files the lean snapshot
-# does not ship) never enter the default build plan.
-exclude = ["crates/vendor/zed-gpui"]
 
 [workspace.package]
 publish = false
@@ -27,10 +22,13 @@ declare_interior_mutable_const = "deny"
 redundant_clone = "deny"
 disallowed_methods = "deny"
 
-# gpui and its sibling crates come from the submodule at crates/vendor/zed-gpui.
-# That snapshot is published in expanded form (see the submodule's
-# docs/dev/branch-sync.md), so the paths below are all this workspace needs:
-# there is no gpui workspace table to restate here.
+# gpui comes from the `gpui-pre` / `gpui-pre-platform` snapshots of Zed's
+# crates on crates.io: the same snapshot crates gpui-kit pins, so both
+# workspaces build against one GPUI API baseline. The requirements are exact
+# on purpose — a caret requirement would let a newer snapshot move the build
+# onto an API this project was never compiled against. Bump them together
+# with the gpui-kit workspace pin. `gpui_platform` enables the desktop
+# backends and macOS font/shader features exactly like gpui-kit does.
 [workspace.dependencies]
 cg-geometry = { path = "crates/foundation/cg-geometry" }
 cg-graph = { path = "crates/foundation/cg-graph" }
@@ -39,11 +37,13 @@ cg-layout = { path = "crates/engine/cg-layout" }
 cg-render = { path = "crates/render/cg-render" }
 cg-types = { path = "crates/foundation/cg-types" }
 
-gpui = { path = "crates/vendor/zed-gpui/crates/gpui", default-features = false }
-gpui_macros = { path = "crates/vendor/zed-gpui/crates/gpui_macros" }
-gpui_platform = { path = "crates/vendor/zed-gpui/crates/gpui_platform", default-features = false }
-gpui_shared_string = { path = "crates/vendor/zed-gpui/crates/gpui_shared_string" }
-gpui_util = { path = "crates/vendor/zed-gpui/crates/gpui_util" }
+gpui = { package = "gpui-pre", version = "=0.3.8" }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.8", features = [
+    "font-kit",
+    "x11",
+    "wayland",
+    "runtime_shaders",
+] }
 
 petgraph = "0.8"
 serde = { version = "1", features = ["derive"] }

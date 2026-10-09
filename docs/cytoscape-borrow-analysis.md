@@ -132,7 +132,7 @@
 ### 4.1 渲染原语模型不同（最关键的调整）
 
 - cytoscape 所有绘制都通过 **Canvas2D `context`**（fill/stroke/arc/bezierCurveTo…）。
-- gpui 的绘制原语是 **`Scene` 中的 `Primitive::Quad` 与 `Primitive::Path`**（`scene.rs:222`），通过 `window.paint_quad()`（`window.rs:4502`）和 `window.scene().insert_primitive(Path)`（`scene.rs:87`）注入。
+- gpui 的绘制原语是 **`Scene` 中的 `Primitive::Quad` 与 `Primitive::Path`**（`scene.rs:222`），通过 `window.paint_quad()`（`window.rs:4550`）和 `window.scene().insert_primitive(Path)`（`scene.rs:87`）注入。
 - **结论**：第 3.4 节的"绘制流程结构"可借，**但每个 `context.fill()/stroke()` 必须改为构造 `Quad`/`Path` 图元**。Canvas2D 的 `ctx.save/restore/translate/rotate` 也要换成 gpui 的 `TransformationMatrix`（`scene.rs:658`）或先 CPU 变换坐标。
 
 ### 4.2 数据模型不同（所有"按 ele 取数据"需改）
@@ -208,7 +208,7 @@
 
 ## 7. 参考
 
-- 参照源码：cytoscape.js 见 `ref/cytoscape-js`、petgraph 为 crates.io 依赖（版本以 `Cargo.lock` 为准）、gpui 见 `crates/vendor/zed-gpui`（submodule，行号以实际快照为准）
+- 参照源码：cytoscape.js 见 `ref/cytoscape-js`、petgraph 为 crates.io 依赖（版本以 `Cargo.lock` 为准）、gpui 为 crates.io 的 `gpui-pre` 快照依赖（版本以 `Cargo.lock` 为准，行号以实际快照为准）
 - 总体方案：`docs/plan/compograph-design.md`
 - 架构分析：`docs/architecture/cytoscape-js.md`、`docs/architecture/petgraph.md`
 - 算法差异：`docs/analysis/graph-algorithms-comparison.md`
