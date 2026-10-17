@@ -249,7 +249,7 @@ fn sorted_groups(mut groups: Vec<Vec<NodeIndex>>) -> Vec<Vec<NodeIndex>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cg_types::Point2;
+    use compograph_types::Point2;
 
     fn labelled(label: &str) -> NodeData {
         NodeData {

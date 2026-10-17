@@ -4,13 +4,13 @@
 //! owned paint plans and wires the mouse and keyboard gestures to the
 //! selection module; it never runs algorithms or touches dialogs.
 
-use cg_graph::GraphView;
-use cg_interact::{
+use compograph_graph::GraphView;
+use compograph_interact::{
     NODE_HALF_EXTENT, apply_point_select, can_begin_drag, can_grab_node, compound_toggle_target,
     drag_position, hover_node_shaped, press_hit_compound, press_hit_shaped,
     should_clear_on_blank, wheel_zoom_factor,
 };
-use cg_render::{DetailLevel, graph_view};
+use compograph_render::{DetailLevel, graph_view};
 use gpui::{
     App, Context, InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, ParentElement, ScrollDelta, ScrollWheelEvent, Styled, Window,

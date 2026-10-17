@@ -1,6 +1,6 @@
 //! Evaluation of quadratic Bezier curves used for curved edges.
 
-use cg_types::Point2;
+use compograph_types::Point2;
 
 /// Point on the quadratic Bezier from `start` to `end` with control point
 /// `ctrl`, evaluated at parameter `t` in `[0, 1]`.
@@ -34,7 +34,7 @@ pub fn sample_quadratic_bezier(
 /// units, so parallel edges spread symmetrically around the straight line.
 /// Degenerate endpoints fall back to a horizontal nudge to avoid NaNs.
 pub fn bezier_control_for_edge(start: Point2, end: Point2, offset: f32) -> Point2 {
-    use cg_types::Vec2;
+    use compograph_types::Vec2;
 
     let mid = Point2::new((start.x + end.x) / 2.0, (start.y + end.y) / 2.0);
     let delta = end - start;

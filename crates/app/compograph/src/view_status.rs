@@ -3,7 +3,7 @@
 //! This module builds the status line only. It reads counters and messages
 //! and formats them; it never mutates state.
 
-use cg_render::DetailLevel;
+use compograph_render::DetailLevel;
 use gpui::{Context, IntoElement, ParentElement, Styled, div};
 
 use crate::app_state::GraphWindow;

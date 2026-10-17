@@ -6,12 +6,12 @@
 //! mutation and its assertion in separate updates, so the queue drains in
 //! between and the assertions observe a settled state.
 
-use cg_graph::{ChangeFilter, GraphStore, Positions, subscribe_graph};
-use cg_layout::anim::Easing;
-use cg_layout::driver::LayoutDriver;
-use cg_layout::random::RandomLayout;
-use cg_layout::reaction::{LayoutWork, work_for};
-use cg_types::Point2;
+use compograph_graph::{ChangeFilter, GraphStore, Positions, subscribe_graph};
+use compograph_layout::anim::Easing;
+use compograph_layout::driver::LayoutDriver;
+use compograph_layout::random::RandomLayout;
+use compograph_layout::reaction::{LayoutWork, work_for};
+use compograph_types::Point2;
 use gpui::{App, AppContext, Context, Entity, Subscription, TestAppContext};
 
 /// Records every event a subscriber observes, so tests can assert on the exact
@@ -185,7 +185,7 @@ fn drag_pin_holds_the_node_and_versions_the_write(cx: &mut TestAppContext) {
             assert!(driver.pinned().contains(&node));
             assert!(driver.move_pinned(node, Point2::new(7.0, 8.0), cx));
             assert_eq!(driver.positions().get(&node), Some(&Point2::new(7.0, 8.0)));
-            assert!(!driver.move_pinned(cg_graph::NodeIndex::new(99), Point2::ZERO, cx));
+            assert!(!driver.move_pinned(compograph_graph::NodeIndex::new(99), Point2::ZERO, cx));
         });
     });
     assert_eq!(cx.update(|cx| layout.read(cx).positions_version()), 1);

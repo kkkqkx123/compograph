@@ -178,7 +178,7 @@ impl GraphDocument {
         let mut positions = Positions::new();
         for entry in &self.nodes {
             if let (Some(position), Some(node)) = (entry.position, resolve(entry.id)) {
-                positions.insert(node, cg_types::Point2::new(position[0], position[1]));
+                positions.insert(node, compograph_types::Point2::new(position[0], position[1]));
             }
         }
         positions
@@ -283,8 +283,8 @@ mod tests {
         });
         graph.add_edge(a, b, EdgeData { weight: 2.5 });
         let positions: Positions = [
-            (a, cg_types::Point2::new(10.0, 20.0)),
-            (b, cg_types::Point2::new(30.0, 40.0)),
+            (a, compograph_types::Point2::new(10.0, 20.0)),
+            (b, compograph_types::Point2::new(30.0, 40.0)),
         ]
         .into_iter()
         .collect();

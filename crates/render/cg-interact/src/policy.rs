@@ -1,6 +1,6 @@
 //! Gesture gating and selection policy for pointer input.
 
-use cg_graph::NodeIndex;
+use compograph_graph::NodeIndex;
 
 use super::input::{InteractLocks, SelectMode, SelectionState};
 

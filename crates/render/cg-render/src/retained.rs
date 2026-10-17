@@ -8,8 +8,8 @@
 
 use std::collections::HashSet;
 
-use cg_graph::{NodeIndex, Positions};
-use cg_types::{Point2, Vec2};
+use compograph_graph::{NodeIndex, Positions};
+use compograph_types::{Point2, Vec2};
 
 use crate::camera::Camera;
 use crate::style::{EdgeStyle, NodeStyle};
@@ -346,7 +346,7 @@ pub fn incident_edges(edges: &[PaintedEdge], moved: &HashSet<NodeIndex>) -> Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cg_graph::NodeIndex;
+    use compograph_graph::NodeIndex;
 
     fn edge_between(a: usize, b: usize) -> PaintedEdge {
         PaintedEdge {
@@ -404,7 +404,7 @@ mod tests {
     fn partial_refresh_matches_a_full_rebuild() {
         use crate::style::{EdgeStyle, NodeStyle};
         use crate::view::{EdgePaintOptions, paint_arrows, paint_edges_for, paint_nodes_for};
-        use cg_graph::Positions;
+        use compograph_graph::Positions;
 
         let pairs = vec![
             (NodeIndex::new(0), NodeIndex::new(1)),
@@ -502,7 +502,7 @@ mod tests {
     #[test]
     fn reuse_key_covers_options_beside_versions() {
         use crate::style::{EdgeStyle, NodeStyle};
-        use cg_graph::Positions;
+        use compograph_graph::Positions;
 
         let versions = CacheVersions {
             structure: 1,

@@ -6,9 +6,9 @@
 //! the driver can share its generation guard with background refinement.
 
 #[cfg(test)]
-use cg_graph::NodeIndex;
-use cg_graph::{FixedNodes, Positions};
-use cg_types::Point2;
+use compograph_graph::NodeIndex;
+use compograph_graph::{FixedNodes, Positions};
+use compograph_types::Point2;
 
 /// Easing applied to interpolation progress.
 ///

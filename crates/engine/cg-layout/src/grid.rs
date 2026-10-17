@@ -8,8 +8,8 @@
 
 use std::collections::HashMap;
 
-use cg_graph::{FixedNodes, GraphView, Positions};
-use cg_types::Point2;
+use compograph_graph::{FixedNodes, GraphView, Positions};
+use compograph_types::Point2;
 
 use crate::engine::{CommonOptions, LayoutEngine};
 
@@ -231,7 +231,7 @@ fn aspect_shape(cells: usize, width: f32, height: f32) -> (usize, usize) {
 
 #[cfg(test)]
 mod tests {
-    use cg_graph::{FixedNodes, MockGraph, NodeIndex};
+    use compograph_graph::{FixedNodes, MockGraph, NodeIndex};
 
     use super::*;
 

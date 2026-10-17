@@ -4,7 +4,7 @@
 //! haystack lines with hashed fan-out and orthogonal polylines with at most
 //! two bends. Both stay deterministic so repeated renders agree exactly.
 
-use cg_types::{Point2, Vec2};
+use compograph_types::{Point2, Vec2};
 
 /// Radius of the haystack fan around a node anchor, in node-side multiples.
 pub const HAYSTACK_RADIUS_SCALE: f32 = 0.9;

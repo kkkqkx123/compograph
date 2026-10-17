@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 
-use cg_types::Point2;
+use compograph_types::Point2;
 use gpui::{
     App, Background, Bounds, Font, Hsla, IntoElement, Pixels, Rgba, SharedString, TextAlign,
     TextRun, Window, canvas, fill, linear_color_stop, linear_gradient, rgb,

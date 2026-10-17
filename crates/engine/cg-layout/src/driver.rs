@@ -3,7 +3,7 @@
 use std::collections::{HashSet, VecDeque};
 use std::time::Instant;
 
-use cg_graph::{
+use compograph_graph::{
     FixedNodes, GraphChangeEvent, GraphStore, GraphView, NodeIndex, Positions, subscribe_graph,
 };
 use gpui::{App, Context, Entity, Subscription, Task};
@@ -393,7 +393,7 @@ impl LayoutDriver {
     pub fn move_pinned(
         &mut self,
         node: NodeIndex,
-        position: cg_types::Point2,
+        position: compograph_types::Point2,
         cx: &mut Context<Self>,
     ) -> bool {
         if !self.positions.contains_key(&node) {
@@ -457,7 +457,7 @@ impl LayoutDriver {
         working.retain(|node, _| live.contains(node));
         for node in snapshot.nodes.iter() {
             if !working.contains_key(node) {
-                working.insert(*node, cg_types::Point2::ZERO);
+                working.insert(*node, compograph_types::Point2::ZERO);
             }
         }
         let pinned = self.pinned.clone();

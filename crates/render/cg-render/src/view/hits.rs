@@ -3,11 +3,11 @@
 //! Straight edges use the segment test while curved edges and self loops are
 //! flattened with the shared sampling, so selection matches the paint.
 
-use cg_geometry::{
+use compograph_geometry::{
     BEZIER_HIT_SAMPLES, polyline_intersects_rect, sample_cubic_bezier, sample_quadratic_bezier,
     segment_intersects_rect,
 };
-use cg_types::Rect;
+use compograph_types::Rect;
 
 use super::plans::PaintedEdge;
 
@@ -32,8 +32,8 @@ pub fn painted_edge_hits(edge: &PaintedEdge, rect: Rect) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cg_graph::NodeIndex;
-    use cg_types::{Point2, Vec2};
+    use compograph_graph::NodeIndex;
+    use compograph_types::{Point2, Vec2};
 
     use crate::arrows::ArrowKind;
 

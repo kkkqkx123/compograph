@@ -8,8 +8,8 @@
 
 use std::collections::HashMap;
 
-use cg_graph::{FixedNodes, GraphView, NodeIndex, Positions};
-use cg_types::Point2;
+use compograph_graph::{FixedNodes, GraphView, NodeIndex, Positions};
+use compograph_types::Point2;
 
 use crate::engine::{CommonOptions, LayoutEngine};
 use crate::ring::{level_width, ring_radii, ring_step, scores_with_table, to_levels};
@@ -175,7 +175,7 @@ fn node_values(
 
 #[cfg(test)]
 mod tests {
-    use cg_graph::MockGraph;
+    use compograph_graph::MockGraph;
 
     use super::*;
 

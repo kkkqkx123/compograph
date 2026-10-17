@@ -5,8 +5,8 @@
 
 use std::collections::HashMap;
 
-use cg_graph::{GraphStore, NodeIndex, Positions};
-use cg_types::{Point2, Rect};
+use compograph_graph::{GraphStore, NodeIndex, Positions};
+use compograph_types::{Point2, Rect};
 
 /// Gap kept between separated top-level groups, in model units.
 pub const GROUP_GAP: f32 = 80.0;

@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use cg_graph::DataValue;
+use compograph_graph::DataValue;
 
 use crate::appearance::{EdgeStylePatch, NodeStylePatch};
 use crate::fill::{NodeFill, lerp_rgb};
@@ -105,7 +105,7 @@ mod tests {
     use crate::bypass::BypassStore;
     use crate::edge_rules::EdgeMapper;
     use crate::node_rules::{NodeDataTables, StyleMapper};
-    use cg_graph::NodeIndex;
+    use compograph_graph::NodeIndex;
     use std::collections::BTreeSet;
 
     #[test]

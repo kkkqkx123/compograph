@@ -9,8 +9,9 @@ members = [
 ]
 
 [workspace.package]
-publish = false
+publish = true
 edition = "2024"
+license = "Apache-2.0"
 
 [workspace.lints.rust]
 unexpected_cfgs = { level = "allow" }
@@ -30,12 +31,12 @@ disallowed_methods = "deny"
 # with the gpui-kit workspace pin. `gpui_platform` enables the desktop
 # backends and macOS font/shader features exactly like gpui-kit does.
 [workspace.dependencies]
-cg-geometry = { path = "crates/foundation/cg-geometry" }
-cg-graph = { path = "crates/foundation/cg-graph" }
-cg-interact = { path = "crates/render/cg-interact" }
-cg-layout = { path = "crates/engine/cg-layout" }
-cg-render = { path = "crates/render/cg-render" }
-cg-types = { path = "crates/foundation/cg-types" }
+compograph-geometry = { path = "crates/foundation/cg-geometry", version = "0.1.0" }
+compograph-graph = { path = "crates/foundation/cg-graph", version = "0.1.0" }
+compograph-interact = { path = "crates/render/cg-interact", version = "0.1.0" }
+compograph-layout = { path = "crates/engine/cg-layout", version = "0.1.0" }
+compograph-render = { path = "crates/render/cg-render", version = "0.1.0" }
+compograph-types = { path = "crates/foundation/cg-types", version = "0.1.0" }
 
 gpui = { package = "gpui-pre", version = "=0.3.8" }
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.8", features = [

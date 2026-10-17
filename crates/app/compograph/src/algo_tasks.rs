@@ -7,7 +7,7 @@
 
 use std::time::Instant;
 
-use cg_graph::{
+use compograph_graph::{
     GraphView, NodeIndex, Positions, affinity_clusters, all_pairs_shortest_paths,
     articulation_points, bellman_ford_paths, betweenness_centrality, bidirectional_path_cost,
     biconnected_components, breadth_first_order, bridges, closeness_centrality, condensation_groups, degree_centrality,
@@ -811,9 +811,9 @@ impl GraphWindow {
             let started = Instant::now();
             let elapsed_ms = || started.elapsed().as_secs_f64() * 1000.0;
             let label = match linkage {
-                cg_graph::Linkage::Min => "hierarchical min",
-                cg_graph::Linkage::Max => "hierarchical max",
-                cg_graph::Linkage::Mean => "hierarchical mean",
+                compograph_graph::Linkage::Min => "hierarchical min",
+                compograph_graph::Linkage::Max => "hierarchical max",
+                compograph_graph::Linkage::Mean => "hierarchical mean",
             };
             match hierarchical_clusters_with_linkage(&snapshot, &positions, threshold, linkage) {
                 Ok(groups) => algo_panel::groups_outcome(&groups, label, elapsed_ms()),

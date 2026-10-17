@@ -802,58 +802,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f079e83a288787bcd14a6aea84cee5c87a67c5a3e660c30f557a3d24761b3527"
 
 [[package]]
-name = "cg-geometry"
-version = "0.1.0"
-dependencies = [
- "cg-types",
-]
-
-[[package]]
-name = "cg-graph"
-version = "0.1.0"
-dependencies = [
- "cg-types",
- "gpui-pre",
- "petgraph",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "cg-interact"
-version = "0.1.0"
-dependencies = [
- "cg-geometry",
- "cg-graph",
- "cg-render",
- "cg-types",
-]
-
-[[package]]
-name = "cg-layout"
-version = "0.1.0"
-dependencies = [
- "cg-graph",
- "cg-types",
- "gpui-pre",
-]
-
-[[package]]
-name = "cg-render"
-version = "0.1.0"
-dependencies = [
- "cg-geometry",
- "cg-graph",
- "cg-layout",
- "cg-types",
- "gpui-pre",
-]
-
-[[package]]
-name = "cg-types"
-version = "0.1.0"
-
-[[package]]
 name = "cgl"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -978,14 +926,66 @@ checksum = "3d7b894f5411737b7867f4827955924d7c254fc9f4d91a6aad6b097804b1018b"
 name = "compograph"
 version = "0.1.0"
 dependencies = [
- "cg-graph",
- "cg-interact",
- "cg-layout",
- "cg-render",
- "cg-types",
+ "compograph-graph",
+ "compograph-interact",
+ "compograph-layout",
+ "compograph-render",
+ "compograph-types",
  "gpui-pre",
  "gpui-pre-platform",
 ]
+
+[[package]]
+name = "compograph-geometry"
+version = "0.1.0"
+dependencies = [
+ "compograph-types",
+]
+
+[[package]]
+name = "compograph-graph"
+version = "0.1.0"
+dependencies = [
+ "compograph-types",
+ "gpui-pre",
+ "petgraph",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "compograph-interact"
+version = "0.1.0"
+dependencies = [
+ "compograph-geometry",
+ "compograph-graph",
+ "compograph-render",
+ "compograph-types",
+]
+
+[[package]]
+name = "compograph-layout"
+version = "0.1.0"
+dependencies = [
+ "compograph-graph",
+ "compograph-types",
+ "gpui-pre",
+]
+
+[[package]]
+name = "compograph-render"
+version = "0.1.0"
+dependencies = [
+ "compograph-geometry",
+ "compograph-graph",
+ "compograph-layout",
+ "compograph-types",
+ "gpui-pre",
+]
+
+[[package]]
+name = "compograph-types"
+version = "0.1.0"
 
 [[package]]
 name = "compression-codecs"

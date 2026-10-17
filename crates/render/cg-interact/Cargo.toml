@@ -1,14 +1,16 @@
 [package]
-name = "cg-interact"
+name = "compograph-interact"
 version = "0.1.0"
 edition.workspace = true
+license.workspace = true
+description = "Pointer interaction state for compograph"
 publish.workspace = true
 
 [lints]
 workspace = true
 
 [dependencies]
-cg-geometry.workspace = true
-cg-graph.workspace = true
-cg-render.workspace = true
-cg-types.workspace = true
+compograph-geometry.workspace = true
+compograph-graph.workspace = true
+compograph-render.workspace = true
+compograph-types.workspace = true

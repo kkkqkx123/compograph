@@ -3,7 +3,7 @@
 //! Every kind shares one orientation rule; the dot needs only a center.
 //! Self loops point along the return tangent from the second loop control.
 
-use cg_types::Vec2;
+use compograph_types::Vec2;
 
 use crate::arrows::arrow_polygon;
 use crate::lod::DetailLevel;
@@ -71,13 +71,13 @@ fn edge_direction(edge: &PaintedEdge) -> Vec2 {
 
 #[cfg(test)]
 mod tests {
-    use cg_graph::{MockGraph, NodeIndex, Positions};
+    use compograph_graph::{MockGraph, NodeIndex, Positions};
 
     use super::*;
     use crate::arrows::ArrowKind;
     use crate::camera::Camera;
     use crate::style::EdgeStyle;
-    use cg_types::{Point2, Vec2};
+    use compograph_types::{Point2, Vec2};
 
     fn viewport() -> Vec2 {
         Vec2::new(1024.0, 768.0)

@@ -30,9 +30,9 @@ petgraph = "0.8"
 | crate | 层的角色 | 与 petgraph 的关系 |
 |---|---|---|
 | `cg-graph` | foundation / 图模型 | **唯一直接依赖**：拥有 `StableGraph` 实例、定义 `NodeData`/`EdgeData` 权重、发出 `NodeIndex`/`EdgeIndex`、算法桥 |
-| `cg-layout` | engine / 布局 | 经 `cg-graph` 的 `node_ids()` 遍历，标识用 `cg_graph::NodeIndex` |
+| `cg-layout` | engine / 布局 | 经 `cg-graph` 的 `node_ids()` 遍历，标识用 `compograph_graph::NodeIndex` |
 | `cg-render` | render / 渲染 | 同上 |
-| `cg-interact` | render / 交互 | 携带 `cg_graph::NodeIndex` 标识拖拽目标 |
+| `cg-interact` | render / 交互 | 携带 `compograph_graph::NodeIndex` 标识拖拽目标 |
 | `compograph` | app / 应用 | 经 `cg-graph` 的 `node_ids()` 遍历 |
 
 > 改造前这 5 个 crate 均直接 `use petgraph::...`（共 7 处引用）；改造后仅 `cg-graph` 依赖 petgraph，其余全部经 `cg-graph` 门面访问。

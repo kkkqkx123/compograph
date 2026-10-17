@@ -7,10 +7,10 @@
 
 use std::collections::HashMap;
 
-use cg_graph::{
+use compograph_graph::{
     GraphDocument, GraphView, NodeIndex, export_dot_document, sync_document,
 };
-use cg_render::{ExportRequest, ExportScope, ExportSnapshot, encode_png, export_pixels};
+use compograph_render::{ExportRequest, ExportScope, ExportSnapshot, encode_png, export_pixels};
 use gpui::{App, Context, PathPromptOptions};
 
 use crate::app_state::{EXPORT_SCALE, GraphWindow, working_directory};
@@ -294,7 +294,7 @@ impl GraphWindow {
                     *node,
                     Some(label.as_str()),
                     view.degree(*node),
-                    cg_render::NodeDataTables {
+                    compograph_render::NodeDataTables {
                         attrs: &attrs,
                         classes: &classes,
                     },

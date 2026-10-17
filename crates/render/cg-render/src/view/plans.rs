@@ -5,9 +5,9 @@
 //! consume them. Keeping the vocabulary in one leaf module lets plan
 //! producers and painters depend only on types without pulling in gpui.
 
-use cg_geometry::OrthoDirection;
-use cg_graph::NodeIndex;
-use cg_types::{Point2, Vec2};
+use compograph_geometry::OrthoDirection;
+use compograph_graph::NodeIndex;
+use compograph_types::{Point2, Vec2};
 
 use crate::arrows::ArrowKind;
 use crate::image::NodeImage;
@@ -187,6 +187,6 @@ pub struct PaintedRubberBand {
 #[derive(Clone, Debug)]
 pub struct PaintedContainer {
     pub id: NodeIndex,
-    pub rect: cg_types::Rect,
+    pub rect: compograph_types::Rect,
     pub title: String,
 }

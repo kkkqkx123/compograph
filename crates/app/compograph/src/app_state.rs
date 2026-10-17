@@ -8,17 +8,17 @@
 use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 
-use cg_graph::{
+use compograph_graph::{
     ChangeFilter, ClusterMetric, GraphChangeEvent, GraphStore, Linkage, NodeIndex, subscribe_graph,
 };
-use cg_interact::{BoxSelectState, DragState, InteractLocks, SelectMode, SelectionState};
-use cg_layout::{LayoutDriver, LayoutRegistry};
-use cg_render::{
+use compograph_interact::{BoxSelectState, DragState, InteractLocks, SelectMode, SelectionState};
+use compograph_layout::{LayoutDriver, LayoutRegistry};
+use compograph_render::{
     BypassStore, Camera, DetailLevel, EdgeMapper, EdgeStylePatch, FrameMetrics, ImageCache,
     LodParams, NodeStylePatch, RetainedCache, SpatialIndex, StyleMapper, StyleSheet,
     subscribe_repaint,
 };
-use cg_types::{Point2, Vec2};
+use compograph_types::{Point2, Vec2};
 use gpui::{AppContext, Context, Entity, FocusHandle, Subscription, Task};
 
 use crate::algo_panel::EdgePair;
@@ -169,7 +169,7 @@ pub(crate) struct GraphWindow {
     pub(crate) spatial_version: Option<u64>,
     pub(crate) metrics: FrameMetrics,
     pub(crate) export_message: String,
-    pub(crate) waypoints: cg_render::WaypointStore,
+    pub(crate) waypoints: compograph_render::WaypointStore,
     pub(crate) images: ImageCache,
 }
 
@@ -277,8 +277,8 @@ impl GraphWindow {
             spatial_version: None,
             metrics: FrameMetrics::new(30),
             export_message: String::new(),
-            waypoints: cg_render::WaypointStore::new(),
-            images: cg_render::ImageCache::new(),
+            waypoints: compograph_render::WaypointStore::new(),
+            images: compograph_render::ImageCache::new(),
         };
         view.layout.update(cx, |driver, cx| {
             driver.request_refine(&view.store, cx);
@@ -300,7 +300,7 @@ impl GraphWindow {
         };
         let store = self.store.clone();
         self.layout.update(cx, |driver, cx| {
-            driver.set_engine_animated(&store, engine, 24, cg_layout::Easing::CubicInOut, cx);
+            driver.set_engine_animated(&store, engine, 24, compograph_layout::Easing::CubicInOut, cx);
         });
         self.fit_on_settle = true;
         self.menu_open = false;

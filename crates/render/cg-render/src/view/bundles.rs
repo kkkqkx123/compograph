@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use cg_graph::NodeIndex;
+use compograph_graph::NodeIndex;
 
 use super::culling::unordered_key;
 use super::plans::PaintedEdge;

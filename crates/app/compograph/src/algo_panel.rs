@@ -6,8 +6,8 @@
 //! the UI thread, then the view commits it through the generation guard, which
 //! drops write-backs from runs the user has already superseded.
 
-use cg_graph::{MinCut, NodeIndex};
-use cg_render::{EdgeStylePatch, NodeStylePatch, scale_for_rank, scc_fill};
+use compograph_graph::{MinCut, NodeIndex};
+use compograph_render::{EdgeStylePatch, NodeStylePatch, scale_for_rank, scc_fill};
 
 /// Ordered node pair identifying one highlighted edge.
 pub type EdgePair = (NodeIndex, NodeIndex);

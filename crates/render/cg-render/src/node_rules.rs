@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use cg_graph::{DataValue, NodeIndex};
+use compograph_graph::{DataValue, NodeIndex};
 
 use crate::appearance::{NodeStyle, NodeStylePatch};
 use crate::mapping::{NodeColorMap, linear_map};

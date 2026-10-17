@@ -5,8 +5,8 @@
 //! off-screen bodies. Minimal detail degrades every shape to a square while
 //! keeping positions and fills.
 
-use cg_graph::{GraphView, NodeIndex, Positions};
-use cg_types::{Point2, Rect, Vec2};
+use compograph_graph::{GraphView, NodeIndex, Positions};
+use compograph_types::{Point2, Rect, Vec2};
 
 use crate::camera::Camera;
 use crate::lod::DetailLevel;
@@ -184,7 +184,7 @@ pub fn paint_single_node_for_level(
 
 #[cfg(test)]
 mod tests {
-    use cg_graph::MockGraph;
+    use compograph_graph::MockGraph;
 
     use super::*;
     use crate::style::{

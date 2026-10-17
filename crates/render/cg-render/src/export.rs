@@ -7,8 +7,8 @@
 
 use std::collections::HashMap;
 
-use cg_graph::{NodeIndex, Positions};
-use cg_types::{Point2, Rect, Vec2};
+use compograph_graph::{NodeIndex, Positions};
+use compograph_types::{Point2, Rect, Vec2};
 
 use crate::camera::Camera;
 use crate::lod::DetailLevel;

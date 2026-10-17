@@ -22,15 +22,15 @@ impl GraphWindow {
         let cluster_metric = self.cluster_metric;
         let cluster_threshold = self.cluster_threshold;
         let cluster_metric_label = match cluster_metric {
-            cg_graph::ClusterMetric::Euclidean => "euclidean",
-            cg_graph::ClusterMetric::Manhattan => "manhattan",
-            cg_graph::ClusterMetric::Chebyshev => "chebyshev",
+            compograph_graph::ClusterMetric::Euclidean => "euclidean",
+            compograph_graph::ClusterMetric::Manhattan => "manhattan",
+            compograph_graph::ClusterMetric::Chebyshev => "chebyshev",
         };
         let linkage = self.linkage;
         let linkage_label = match linkage {
-            cg_graph::Linkage::Min => "min",
-            cg_graph::Linkage::Max => "max",
-            cg_graph::Linkage::Mean => "mean",
+            compograph_graph::Linkage::Min => "min",
+            compograph_graph::Linkage::Max => "max",
+            compograph_graph::Linkage::Mean => "mean",
         };
         let weighted_alpha = self.weighted_alpha;
         let weighted_directed = self.weighted_directed;

@@ -1,7 +1,7 @@
 //! Layout that scatters nodes on a sunflower spiral inside a circle.
 
-use cg_graph::{FixedNodes, GraphView, Positions};
-use cg_types::Point2;
+use compograph_graph::{FixedNodes, GraphView, Positions};
+use compograph_types::Point2;
 
 use crate::engine::LayoutEngine;
 
@@ -48,7 +48,7 @@ impl LayoutEngine for RandomLayout {
 
 #[cfg(test)]
 mod tests {
-    use cg_graph::MockGraph;
+    use compograph_graph::MockGraph;
 
     use super::*;
 

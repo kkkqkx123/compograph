@@ -1,6 +1,6 @@
 //! Hit-testing predicates for pointer-driven selection.
 
-use cg_types::{Point2, Rect};
+use compograph_types::{Point2, Rect};
 
 use crate::curves::sample_quadratic_bezier;
 
@@ -228,7 +228,7 @@ pub fn polyline_intersects_rect(points: &[Point2], rect: Rect) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cg_types::Vec2;
+    use compograph_types::Vec2;
 
     #[test]
     fn distance_to_segment_clamps_to_endpoints() {

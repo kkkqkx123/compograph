@@ -5,17 +5,17 @@
 
 use std::time::Instant;
 
-use cg_graph::MockGraph;
-use cg_render::{
+use compograph_graph::MockGraph;
+use compograph_render::{
     Camera, EdgeStyle, NODE_SIDE, NodeStyle, SpatialIndex, chain_with_cross_edges,
     grid_with_random_edges, measure_ms, paint_edges, paint_nodes,
 };
-use cg_types::{Point2, Vec2};
+use compograph_types::{Point2, Vec2};
 
 fn measure(
     nodes: usize,
-    edges: &[(cg_graph::NodeIndex, cg_graph::NodeIndex)],
-    positions: &cg_graph::Positions,
+    edges: &[(compograph_graph::NodeIndex, compograph_graph::NodeIndex)],
+    positions: &compograph_graph::Positions,
 ) -> (f64, f64, usize, usize) {
     let mut graph = MockGraph::isolated(nodes);
     for (source, target) in edges {

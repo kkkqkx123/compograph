@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeSet, HashMap, VecDeque};
 
-use cg_graph::{GraphView, NodeIndex};
+use compograph_graph::{GraphView, NodeIndex};
 
 /// Nodes within `hops` undirected steps of `seeds`, seeds included.
 ///
@@ -61,7 +61,7 @@ pub fn neighborhood_edges(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cg_graph::MockGraph;
+    use compograph_graph::MockGraph;
 
     #[test]
     fn neighborhood_expands_by_hops_and_clears_with_seeds() {

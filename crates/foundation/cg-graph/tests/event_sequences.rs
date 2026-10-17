@@ -4,7 +4,7 @@
 //! when the outermost update finishes. Mutations and assertions therefore
 //! live in separate updates so the queue drains in between.
 
-use cg_graph::{
+use compograph_graph::{
     ChangeFilter, GraphDocument, GraphStore, Positions, subscribe_graph, sync_document,
 };
 use gpui::{App, AppContext, Context, Entity, Subscription, TestAppContext};
@@ -14,23 +14,23 @@ struct SequenceRecorder {
     _subscription: Subscription,
 }
 
-fn event_name(event: &cg_graph::GraphChangeEvent) -> String {
+fn event_name(event: &compograph_graph::GraphChangeEvent) -> String {
     match event {
-        cg_graph::GraphChangeEvent::NodeAdded(_) => "node-added".to_string(),
-        cg_graph::GraphChangeEvent::NodeRemoved(_) => "node-removed".to_string(),
-        cg_graph::GraphChangeEvent::EdgeAdded(_) => "edge-added".to_string(),
-        cg_graph::GraphChangeEvent::EdgeRemoved(_) => "edge-removed".to_string(),
-        cg_graph::GraphChangeEvent::NodeAttrChanged(_) => "node-attr".to_string(),
-        cg_graph::GraphChangeEvent::EdgeAttrChanged(_) => "edge-attr".to_string(),
-        cg_graph::GraphChangeEvent::NodeClassChanged(_) => "node-class".to_string(),
-        cg_graph::GraphChangeEvent::EdgeClassChanged(_) => "edge-class".to_string(),
-        cg_graph::GraphChangeEvent::NodeDataChanged(_) => "node-data".to_string(),
-        cg_graph::GraphChangeEvent::EdgeDataChanged(_) => "edge-data".to_string(),
-        cg_graph::GraphChangeEvent::EdgeEndpointsChanged(_) => "edge-moved".to_string(),
-        cg_graph::GraphChangeEvent::ParentChanged(_) => "parent".to_string(),
-        cg_graph::GraphChangeEvent::CollapsedChanged(_) => "collapsed".to_string(),
-        cg_graph::GraphChangeEvent::StructureReset => "reset".to_string(),
-        cg_graph::GraphChangeEvent::BatchCommitted => "batch".to_string(),
+        compograph_graph::GraphChangeEvent::NodeAdded(_) => "node-added".to_string(),
+        compograph_graph::GraphChangeEvent::NodeRemoved(_) => "node-removed".to_string(),
+        compograph_graph::GraphChangeEvent::EdgeAdded(_) => "edge-added".to_string(),
+        compograph_graph::GraphChangeEvent::EdgeRemoved(_) => "edge-removed".to_string(),
+        compograph_graph::GraphChangeEvent::NodeAttrChanged(_) => "node-attr".to_string(),
+        compograph_graph::GraphChangeEvent::EdgeAttrChanged(_) => "edge-attr".to_string(),
+        compograph_graph::GraphChangeEvent::NodeClassChanged(_) => "node-class".to_string(),
+        compograph_graph::GraphChangeEvent::EdgeClassChanged(_) => "edge-class".to_string(),
+        compograph_graph::GraphChangeEvent::NodeDataChanged(_) => "node-data".to_string(),
+        compograph_graph::GraphChangeEvent::EdgeDataChanged(_) => "edge-data".to_string(),
+        compograph_graph::GraphChangeEvent::EdgeEndpointsChanged(_) => "edge-moved".to_string(),
+        compograph_graph::GraphChangeEvent::ParentChanged(_) => "parent".to_string(),
+        compograph_graph::GraphChangeEvent::CollapsedChanged(_) => "collapsed".to_string(),
+        compograph_graph::GraphChangeEvent::StructureReset => "reset".to_string(),
+        compograph_graph::GraphChangeEvent::BatchCommitted => "batch".to_string(),
     }
 }
 
@@ -96,7 +96,7 @@ fn node_removal_reports_edges_first_and_clears_tables(cx: &mut TestAppContext) {
             let a = graph.add_node(cx, "a");
             let b = graph.add_node(cx, "b");
             let edge = graph.add_edge(cx, a, b, 1.0);
-            graph.set_edge_attr(cx, edge, "kind", cg_graph::DataValue::Text("x".into()));
+            graph.set_edge_attr(cx, edge, "kind", compograph_graph::DataValue::Text("x".into()));
             graph.add_edge_class(cx, edge, "fast");
             graph.add_edge(cx, b, b, 2.0);
             graph.remove_node(cx, a);
@@ -120,7 +120,7 @@ fn node_removal_reports_edges_first_and_clears_tables(cx: &mut TestAppContext) {
         store.update(cx, |graph, _cx| {
             assert_eq!(graph.node_count(), 1);
             assert_eq!(graph.edge_count(), 1);
-            assert!(graph.edge_attrs(cg_graph::EdgeIndex::new(0)).is_empty());
+            assert!(graph.edge_attrs(compograph_graph::EdgeIndex::new(0)).is_empty());
         });
     });
 }
@@ -134,17 +134,17 @@ fn reconnect_moves_endpoints_without_add_or_remove(cx: &mut TestAppContext) {
             let b = graph.add_node(cx, "b");
             let c = graph.add_node(cx, "c");
             let edge = graph.add_edge(cx, a, b, 3.0);
-            graph.set_edge_attr(cx, edge, "kind", cg_graph::DataValue::Text("x".into()));
+            graph.set_edge_attr(cx, edge, "kind", compograph_graph::DataValue::Text("x".into()));
             let moved = graph.reconnect_edge(cx, edge, a, c).expect("reconnect works");
             assert_eq!(graph.edge_endpoints(moved), Some((a, c)));
             assert_eq!(
                 graph.edge_attr(moved, "kind"),
-                Some(cg_graph::DataValue::Text("x".into()))
+                Some(compograph_graph::DataValue::Text("x".into()))
             );
             assert!(graph.reconnect_edge(cx, moved, a, c).is_none());
             assert!(
                 graph
-                    .reconnect_edge(cx, moved, a, cg_graph::NodeIndex::new(99))
+                    .reconnect_edge(cx, moved, a, compograph_graph::NodeIndex::new(99))
                     .is_none()
             );
         });
@@ -173,10 +173,10 @@ fn payload_edits_announce_data_events(cx: &mut TestAppContext) {
             let edge = graph.add_edge(cx, a, b, 1.0);
             assert!(graph.set_node_label(cx, a, "alpha"));
             assert!(!graph.set_node_label(cx, a, "alpha"));
-            assert!(!graph.set_node_label(cx, cg_graph::NodeIndex::new(99), "x"));
+            assert!(!graph.set_node_label(cx, compograph_graph::NodeIndex::new(99), "x"));
             assert!(graph.set_edge_weight(cx, edge, 2.5));
             assert!(!graph.set_edge_weight(cx, edge, f32::NAN));
-            assert!(!graph.set_edge_weight(cx, cg_graph::EdgeIndex::new(77), 1.0));
+            assert!(!graph.set_edge_weight(cx, compograph_graph::EdgeIndex::new(77), 1.0));
         });
     });
     assert_eq!(
@@ -201,7 +201,7 @@ fn undo_groups_batches_and_redo_reapplies(cx: &mut TestAppContext) {
             let a = graph.add_node(cx, "a");
             graph.batch(cx, |graph, cx| {
                 graph.add_node(cx, "b");
-                graph.add_edge(cx, a, cg_graph::NodeIndex::new(1), 1.0);
+                graph.add_edge(cx, a, compograph_graph::NodeIndex::new(1), 1.0);
                 assert!(!graph.undo(cx));
             });
             assert_eq!(graph.history_len(), 2);
@@ -244,7 +244,7 @@ fn sync_updates_in_place_and_replaces_on_reshape(cx: &mut TestAppContext) {
             assert!(!report.replaced);
             assert_eq!(report.updated, 2);
             assert_eq!(report.added, 0);
-            assert_eq!(graph.node_data(cg_graph::NodeIndex::new(0)).unwrap().label, "alpha");
+            assert_eq!(graph.node_data(compograph_graph::NodeIndex::new(0)).unwrap().label, "alpha");
         });
     });
     cx.update(|cx| {
@@ -252,19 +252,19 @@ fn sync_updates_in_place_and_replaces_on_reshape(cx: &mut TestAppContext) {
             let mut positions = Positions::new();
             let document = GraphDocument {
                 nodes: vec![
-                    cg_graph::NodeEntry {
+                    compograph_graph::NodeEntry {
                         id: 10,
                         label: "x".to_string(),
                         ..Default::default()
                     },
-                    cg_graph::NodeEntry {
+                    compograph_graph::NodeEntry {
                         id: 11,
                         label: "y".to_string(),
                         position: Some([1.0, 1.0]),
                         ..Default::default()
                     },
                 ],
-                edges: vec![cg_graph::EdgeEntry {
+                edges: vec![compograph_graph::EdgeEntry {
                     source: 10,
                     target: 11,
                     weight: 2.0,
@@ -284,12 +284,12 @@ fn sync_updates_in_place_and_replaces_on_reshape(cx: &mut TestAppContext) {
         store.update(cx, |graph, cx| {
             let mut positions = Positions::new();
             let bad = GraphDocument {
-                nodes: vec![cg_graph::NodeEntry {
+                nodes: vec![compograph_graph::NodeEntry {
                     id: 0,
                     label: "a".to_string(),
                     ..Default::default()
                 }],
-                edges: vec![cg_graph::EdgeEntry {
+                edges: vec![compograph_graph::EdgeEntry {
                     source: 0,
                     target: 9,
                     weight: 1.0,

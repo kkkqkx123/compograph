@@ -3,8 +3,8 @@
 //! Graphs are generated from a fixed seed only, so baseline and optimized
 //! runs compare identical structure. They live in code rather than on disk.
 
-use cg_graph::{NodeIndex, Positions};
-use cg_types::Point2;
+use compograph_graph::{NodeIndex, Positions};
+use compograph_types::Point2;
 
 /// One synthetic benchmark case.
 #[derive(Clone, Debug)]

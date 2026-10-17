@@ -2,16 +2,16 @@
 
 use std::collections::HashMap;
 
-use cg_geometry::{
+use compograph_geometry::{
     BEZIER_HIT_SAMPLES, OrthoDirection, bezier_control_for_edge, manhattan_route, parallel_offsets,
     polyline_intersects_rect, sample_quadratic_bezier, segment_intersects_rect, self_loop_polyline,
 };
-use cg_graph::{GraphView, NodeIndex, Positions};
-use cg_render::{
+use compograph_graph::{GraphView, NodeIndex, Positions};
+use compograph_render::{
     BundleSlot, DetailLevel, EdgeCurve, EdgePaintOptions, EdgeStyle, PARALLEL_STEP, curve_control,
     routed_options,
 };
-use cg_types::{Point2, Rect};
+use compograph_types::{Point2, Rect};
 
 /// True when the edge between `start` and `end` touches `rect`.
 ///
@@ -238,8 +238,8 @@ fn dedup_pairs(found: &mut Vec<(NodeIndex, NodeIndex)>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cg_render::NODE_SIDE;
-    use cg_types::Vec2;
+    use compograph_render::NODE_SIDE;
+    use compograph_types::Vec2;
 
     #[test]
     fn rect_select_judges_edges_by_intersection() {
@@ -275,7 +275,7 @@ mod tests {
 
     #[test]
     fn edges_in_rect_matches_straight_and_loop_edges() {
-        use cg_graph::MockGraph;
+        use compograph_graph::MockGraph;
 
         let mut graph = MockGraph::chain(3);
         graph.push_edge(2, 2);
@@ -299,7 +299,7 @@ mod tests {
 
     #[test]
     fn routed_box_select_follows_the_taxi_corner() {
-        use cg_graph::MockGraph;
+        use compograph_graph::MockGraph;
 
         let graph = MockGraph::chain(2);
         let mut positions = Positions::new();
@@ -323,8 +323,8 @@ mod tests {
 
     #[test]
     fn styled_box_select_follows_the_forced_curve() {
-        use cg_graph::MockGraph;
-        use cg_render::EdgeCurve;
+        use compograph_graph::MockGraph;
+        use compograph_render::EdgeCurve;
 
         let graph = MockGraph::chain(2);
         let mut positions = Positions::new();

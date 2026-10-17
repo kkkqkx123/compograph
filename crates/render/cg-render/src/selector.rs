@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use cg_graph::{DataValue, GraphStore, NodeIndex, ParseError, SelectorQuery, parse_selector};
+use compograph_graph::{DataValue, GraphStore, NodeIndex, ParseError, SelectorQuery, parse_selector};
 
 /// Which element kinds a selector may match.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -327,7 +327,7 @@ impl SelectorSheet {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cg_graph::GraphStore;
+    use compograph_graph::GraphStore;
 
     #[test]
     fn empty_selector_matches_nothing() {

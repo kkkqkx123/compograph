@@ -4,8 +4,8 @@
 //! touched here. Consumers validate each action against their own rules and
 //! apply it to the store, which keeps undo and business checks on their side.
 
-use cg_graph::NodeIndex;
-use cg_types::Point2;
+use compograph_graph::NodeIndex;
+use compograph_types::Point2;
 
 /// Active authoring tool of the canvas.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

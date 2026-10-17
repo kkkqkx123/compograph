@@ -5,7 +5,7 @@
 //! remaining gap: an edit that leaves positions untouched still has to repaint,
 //! because the set of nodes and edges the canvas iterates over has changed.
 
-use cg_graph::{ChangeFilter, GraphStore, subscribe_graph};
+use compograph_graph::{ChangeFilter, GraphStore, subscribe_graph};
 use gpui::{App, Context, Entity, EntityId, Subscription};
 
 /// Subscribes the calling view to structural changes of `store`.

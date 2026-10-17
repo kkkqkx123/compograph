@@ -1,7 +1,7 @@
 //! Compound container hit testing and toggle detection.
 
-use cg_graph::{GraphStore, NodeIndex, Positions};
-use cg_types::Point2;
+use compograph_graph::{GraphStore, NodeIndex, Positions};
+use compograph_types::Point2;
 
 /// True when `node` may fold or unfold as a compound container.
 pub fn compound_toggle_target(store: &GraphStore, node: NodeIndex) -> bool {
@@ -22,5 +22,5 @@ pub fn press_hit_compound(
     if !store.has_compound() {
         return None;
     }
-    cg_render::pick_compound_node(store, positions, world_point, half_extent, tolerance)
+    compograph_render::pick_compound_node(store, positions, world_point, half_extent, tolerance)
 }

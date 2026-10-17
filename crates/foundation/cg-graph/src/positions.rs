@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use cg_types::Point2;
+use compograph_types::Point2;
 use petgraph::stable_graph::NodeIndex;
 
 /// Layout output: one position per node currently present in the graph.

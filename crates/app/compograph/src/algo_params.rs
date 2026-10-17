@@ -4,7 +4,7 @@
 //! Every adjustment clamps to its legal range and notifies, so the sidebar
 //! can never push the runs out of bounds.
 
-use cg_graph::{ClusterMetric, Linkage};
+use compograph_graph::{ClusterMetric, Linkage};
 use gpui::Context;
 
 use crate::app_state::{

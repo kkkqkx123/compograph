@@ -1,8 +1,8 @@
 //! Edge paint plan tests covering bundling, routing and rebuild agreement.
 
-use cg_geometry::OrthoDirection;
-use cg_graph::{GraphView, MockGraph, NodeIndex, Positions};
-use cg_types::{Point2, Rect, Vec2};
+use compograph_geometry::OrthoDirection;
+use compograph_graph::{GraphView, MockGraph, NodeIndex, Positions};
+use compograph_types::{Point2, Rect, Vec2};
 
 use super::edges::{
     EdgeOrdinal, edge_ordinals_for, paint_edges, paint_edges_for, paint_edges_for_with_waypoints,

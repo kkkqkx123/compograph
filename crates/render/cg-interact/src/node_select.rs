@@ -2,11 +2,11 @@
 
 use std::collections::BTreeSet;
 
-use cg_graph::{NodeIndex, Positions};
-use cg_render::{
+use compograph_graph::{NodeIndex, Positions};
+use compograph_render::{
     LabelStyle, NodeShape, SpatialIndex, label_envelope_styled, node_label_origin, shape_hits_rect,
 };
-use cg_types::{Point2, Rect, Vec2};
+use compograph_types::{Point2, Rect, Vec2};
 
 /// Nodes whose bodies touch `rect`, in index order.
 ///
@@ -92,7 +92,7 @@ mod tests {
 
     #[test]
     fn rect_select_picks_nodes_by_body_overlap() {
-        use cg_render::NodeShape;
+        use compograph_render::NodeShape;
 
         let mut positions = Positions::new();
         positions.insert(NodeIndex::new(0), Point2::new(0.0, 0.0));
@@ -110,7 +110,7 @@ mod tests {
 
     #[test]
     fn rect_select_rejects_corners_a_tap_rejects() {
-        use cg_render::NodeShape;
+        use compograph_render::NodeShape;
 
         let mut positions = Positions::new();
         positions.insert(NodeIndex::new(0), Point2::ZERO);
@@ -132,8 +132,8 @@ mod tests {
 
     #[test]
     fn label_box_select_unions_the_text_envelope() {
-        use cg_graph::MockGraph;
-        use cg_render::NodeShape;
+        use compograph_graph::MockGraph;
+        use compograph_render::NodeShape;
 
         let graph = MockGraph::isolated(1);
         let mut positions = Positions::new();

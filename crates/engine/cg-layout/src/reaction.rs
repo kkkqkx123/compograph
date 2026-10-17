@@ -4,7 +4,7 @@
 //! tested headlessly. Deciding *when* to run lives here, driven by
 //! [`crate::driver::LayoutDriver`].
 
-use cg_graph::{ChangeFilter, GraphChangeEvent};
+use compograph_graph::{ChangeFilter, GraphChangeEvent};
 
 /// The work a layout run must perform after a mutation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -22,7 +22,7 @@ pub enum LayoutWork {
 /// Maps a graph change to the layout work it implies.
 ///
 /// Node additions only need placement, because
-/// [`cg_graph::ChangeFilter`] keeps removals cheap: dropping a node cannot move
+/// [`compograph_graph::ChangeFilter`] keeps removals cheap: dropping a node cannot move
 /// its neighbours in a position-preserving layout.
 pub fn work_for(event: &GraphChangeEvent) -> LayoutWork {
     match event {
@@ -56,7 +56,7 @@ pub const LAYOUT_FILTER: ChangeFilter = ChangeFilter {
 
 #[cfg(test)]
 mod tests {
-    use cg_graph::{EdgeIndex, NodeIndex};
+    use compograph_graph::{EdgeIndex, NodeIndex};
 
     use super::*;
 

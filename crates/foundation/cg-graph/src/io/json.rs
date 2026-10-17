@@ -45,8 +45,8 @@ mod tests {
         let b = graph.add_node(NodeData { label: "b".into() });
         graph.add_edge(a, b, EdgeData { weight: 2.5 });
         let positions: Positions = [
-            (a, cg_types::Point2::new(10.0, 20.0)),
-            (b, cg_types::Point2::new(30.0, 40.0)),
+            (a, compograph_types::Point2::new(10.0, 20.0)),
+            (b, compograph_types::Point2::new(30.0, 40.0)),
         ]
         .into_iter()
         .collect();

@@ -1,8 +1,8 @@
 //! Point hit testing and drag geometry for pointer gestures.
 
-use cg_graph::{NodeIndex, Positions};
-use cg_render::{NODE_SIDE, NodeShape, SpatialIndex, point_hits_shape};
-use cg_types::{Point2, Rect, Vec2};
+use compograph_graph::{NodeIndex, Positions};
+use compograph_render::{NODE_SIDE, NodeShape, SpatialIndex, point_hits_shape};
+use compograph_types::{Point2, Rect, Vec2};
 
 /// Half extent of a node body in model units, derived from the paint plan.
 pub const NODE_HALF_EXTENT: f32 = NODE_SIDE / 2.0;
@@ -83,7 +83,7 @@ mod tests {
 
     #[test]
     fn press_finds_the_node_under_the_pointer() {
-        use cg_render::NodeShape;
+        use compograph_render::NodeShape;
 
         let mut positions = Positions::new();
         positions.insert(NodeIndex::new(0), Point2::new(0.0, 0.0));
@@ -97,7 +97,7 @@ mod tests {
 
     #[test]
     fn press_misses_empty_space() {
-        use cg_render::NodeShape;
+        use compograph_render::NodeShape;
 
         let mut positions = Positions::new();
         positions.insert(NodeIndex::new(0), Point2::new(0.0, 0.0));
@@ -125,7 +125,7 @@ mod tests {
 
     #[test]
     fn shaped_press_rejects_triangle_corners() {
-        use cg_render::NodeShape;
+        use compograph_render::NodeShape;
 
         let mut positions = Positions::new();
         positions.insert(NodeIndex::new(0), Point2::new(0.0, 0.0));
@@ -147,7 +147,7 @@ mod tests {
 
     #[test]
     fn hover_agrees_with_press_hits() {
-        use cg_render::NodeShape;
+        use compograph_render::NodeShape;
 
         let mut positions = Positions::new();
         positions.insert(NodeIndex::new(0), Point2::new(0.0, 0.0));

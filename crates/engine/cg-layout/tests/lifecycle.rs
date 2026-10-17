@@ -5,13 +5,13 @@
 //! gpui subscriptions, keeping the deferred-delivery rule: mutate and assert
 //! in separate updates.
 
-use cg_graph::{GraphStore, NodeIndex};
-use cg_layout::driver::LayoutDriver;
-use cg_layout::engine::{CommonOptions, SortKey};
-use cg_layout::grid::{GridLayout, GridOptions};
-use cg_layout::lifecycle::LayoutEvent;
-use cg_layout::{Easing, LayoutEngine};
-use cg_types::Point2;
+use compograph_graph::{GraphStore, NodeIndex};
+use compograph_layout::driver::LayoutDriver;
+use compograph_layout::engine::{CommonOptions, SortKey};
+use compograph_layout::grid::{GridLayout, GridOptions};
+use compograph_layout::lifecycle::LayoutEvent;
+use compograph_layout::{Easing, LayoutEngine};
+use compograph_types::Point2;
 use gpui::{App, AppContext, Entity, TestAppContext};
 
 fn grid_engine() -> Box<dyn LayoutEngine> {

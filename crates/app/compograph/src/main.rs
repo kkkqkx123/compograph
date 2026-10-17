@@ -76,8 +76,8 @@ mod tests {
 
     use crate::algo_panel::AlgoOutcome;
     use crate::app_state::{endpoint_slot, is_dismiss_key};
-    use cg_graph::{GraphDocument, NodeEntry, NodeIndex};
-    use cg_render::NodeStylePatch;
+    use compograph_graph::{GraphDocument, NodeEntry, NodeIndex};
+    use compograph_render::NodeStylePatch;
 
     #[test]
     fn only_escape_dismisses_the_selection() {
@@ -150,7 +150,7 @@ mod tests {
 
     #[gpui::test]
     fn json_import_restores_positions_after_driver_reactions(cx: &mut TestAppContext) {
-        use cg_types::Point2;
+        use compograph_types::Point2;
         let view = cx.update(|cx: &mut App| cx.new(GraphWindow::new));
         let document = GraphDocument {
             nodes: vec![
@@ -167,11 +167,11 @@ mod tests {
                     ..NodeEntry::default()
                 },
             ],
-            edges: vec![cg_graph::EdgeEntry {
+            edges: vec![compograph_graph::EdgeEntry {
                 source: 0,
                 target: 1,
                 weight: 1.0,
-                ..cg_graph::EdgeEntry::default()
+                ..compograph_graph::EdgeEntry::default()
             }],
         };
         cx.update(|cx| {

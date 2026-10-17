@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 
-use cg_types::{Point2, Rect, Vec2};
+use compograph_types::{Point2, Rect, Vec2};
 
 /// How a decoded image fills the node body.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

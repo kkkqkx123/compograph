@@ -6,8 +6,8 @@
 
 use std::collections::HashMap;
 
-use cg_graph::{NodeIndex, Positions};
-use cg_types::{Point2, Rect};
+use compograph_graph::{NodeIndex, Positions};
+use compograph_types::{Point2, Rect};
 
 /// Cell multiplier applied to the node extent for adaptive sizing.
 pub const ADAPTIVE_CELL_MULTIPLE: f32 = 2.0;
@@ -157,7 +157,7 @@ mod tests {
         assert!(index.query_point(Point2::ZERO, 10.0).is_empty());
         assert!(
             index
-                .query_rect(Rect::new(Point2::ZERO, cg_types::Vec2::new(10.0, 10.0)))
+                .query_rect(Rect::new(Point2::ZERO, compograph_types::Vec2::new(10.0, 10.0)))
                 .is_empty()
         );
     }
@@ -178,7 +178,7 @@ mod tests {
             (1, 15.0, 5.0),
             (2, 50.0, 50.0),
         ]));
-        let rect = Rect::new(Point2::new(0.0, 0.0), cg_types::Vec2::new(20.0, 10.0));
+        let rect = Rect::new(Point2::new(0.0, 0.0), compograph_types::Vec2::new(20.0, 10.0));
         assert_eq!(
             index.query_rect(rect),
             vec![NodeIndex::new(0), NodeIndex::new(1)]

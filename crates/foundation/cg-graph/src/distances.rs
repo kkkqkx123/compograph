@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use petgraph::Directed;
 use petgraph::stable_graph::{NodeIndex, StableGraph};
 
-use cg_types::Point2;
+use compograph_types::Point2;
 
 use crate::positions::Positions;
 use crate::store::{EdgeData, NodeData};

@@ -1,7 +1,7 @@
 //! Node and edge label paint planning for the graph canvas.
 
-use cg_graph::NodeIndex;
-use cg_types::{Point2, Vec2};
+use compograph_graph::NodeIndex;
+use compograph_types::{Point2, Vec2};
 
 use crate::label_envelope::{EDGE_LABEL_GAP, edge_label_anchor, node_label_origin};
 use crate::label_style::{

@@ -85,7 +85,7 @@ fn update_in_place(
         if let Some(position) = entry.position {
             positions.insert(
                 node,
-                cg_types::Point2::new(position[0], position[1]),
+                compograph_types::Point2::new(position[0], position[1]),
             );
         }
         updated += 1;
@@ -169,7 +169,7 @@ fn replace_all(
         if let (Some(position), Some(node)) =
             (entry.position, id_map.get(&entry.id).copied())
         {
-            fresh.insert(node, cg_types::Point2::new(position[0], position[1]));
+            fresh.insert(node, compograph_types::Point2::new(position[0], position[1]));
         }
     }
     *positions = fresh;

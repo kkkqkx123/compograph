@@ -6,13 +6,13 @@
 
 use std::collections::BTreeSet;
 
-use cg_graph::{DataValue, GraphStore, GraphView, NodeIndex, Positions};
-use cg_interact::{
+use compograph_graph::{DataValue, GraphStore, GraphView, NodeIndex, Positions};
+use compograph_interact::{
     NODE_HALF_EXTENT, SelectionState, edges_in_rect, expand_neighborhood, neighborhood_edges,
     nodes_in_rect,
 };
-use cg_render::{DetailLevel, EdgeStylePatch, NODE_SIDE, NodeStylePatch, label_envelope};
-use cg_types::{Point2, Rect};
+use compograph_render::{DetailLevel, EdgeStylePatch, NODE_SIDE, NodeStylePatch, label_envelope};
+use compograph_types::{Point2, Rect};
 use gpui::{App, Context};
 
 use crate::app_state::{GraphWindow, TAP_THRESHOLD};
@@ -176,20 +176,20 @@ impl GraphWindow {
                     node,
                     Some(label.as_str()),
                     view.degree(node),
-                    cg_render::NodeDataTables {
+                    compograph_render::NodeDataTables {
                         attrs: &attrs,
                         classes: &classes,
                     },
                 );
                 let screen = camera.world_to_viewport(viewport, *center);
-                let side = (cg_render::NODE_SIDE * style.scale).max(4.0);
-                let origin = Point2::new(screen.x, screen.y + side / 2.0 + cg_render::LABEL_GAP);
+                let side = (compograph_render::NODE_SIDE * style.scale).max(4.0);
+                let origin = Point2::new(screen.x, screen.y + side / 2.0 + compograph_render::LABEL_GAP);
                 let envelope = label_envelope(
                     origin,
                     &label,
                     style.label_size,
                     0.0,
-                    cg_render::LabelBackground::None,
+                    compograph_render::LabelBackground::None,
                 );
                 if envelope.intersects(viewport_rect) && !nodes.contains(&node) {
                     nodes.push(node);
@@ -222,10 +222,10 @@ impl GraphWindow {
                 let end = camera.world_to_viewport(viewport, *b);
                 let anchor = Point2::new(
                     (start.x + end.x) / 2.0,
-                    (start.y + end.y) / 2.0 + cg_render::EDGE_LABEL_GAP,
+                    (start.y + end.y) / 2.0 + compograph_render::EDGE_LABEL_GAP,
                 );
                 let envelope =
-                    label_envelope(anchor, &text, size, 0.0, cg_render::LabelBackground::None);
+                    label_envelope(anchor, &text, size, 0.0, compograph_render::LabelBackground::None);
                 if envelope.intersects(viewport_rect) && !edges.contains(&(source, target)) {
                     edges.push((source, target));
                 }
@@ -263,7 +263,7 @@ impl GraphWindow {
             .map(|data| data.label.clone())
     }
 
-    pub(crate) fn node_shape(&self, cx: &App, node: NodeIndex) -> cg_render::NodeShape {
+    pub(crate) fn node_shape(&self, cx: &App, node: NodeIndex) -> compograph_render::NodeShape {
         let store = self.store.read(cx);
         let label = store
             .node_data(node)
@@ -279,7 +279,7 @@ impl GraphWindow {
                 node,
                 Some(label.as_str()),
                 view.degree(node),
-                cg_render::NodeDataTables {
+                compograph_render::NodeDataTables {
                     attrs: &attrs,
                     classes: &classes,
                 },

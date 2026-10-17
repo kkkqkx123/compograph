@@ -1,7 +1,7 @@
 //! Label geometry: anchors, block estimates and selection envelopes.
 
-use cg_geometry::{cubic_bezier, quadratic_bezier};
-use cg_types::{Point2, Rect, Vec2};
+use compograph_geometry::{cubic_bezier, quadratic_bezier};
+use compograph_types::{Point2, Rect, Vec2};
 
 use crate::label_style::{
     DEFAULT_LABEL_SIZE, LabelAlign, LabelBackground, LabelStyle,
@@ -188,7 +188,7 @@ mod tests {
     use super::*;
     use crate::label_plan::paint_edge_labels_for;
     use crate::lod::DetailLevel;
-    use cg_graph::NodeIndex;
+    use compograph_graph::NodeIndex;
 
     #[test]
     fn straight_and_curved_edges_anchor_at_their_midpoints() {

@@ -4,11 +4,11 @@
 //! and parallel Bezier curves through these helpers, so visual decisions stay
 //! in one place while culling and traversal remain with the callers.
 
-use cg_geometry::{
+use compograph_geometry::{
     OrthoDirection, bezier_control_for_edge, haystack_endpoints, manhattan_route, parallel_offsets,
 };
-use cg_graph::NodeIndex;
-use cg_types::Point2;
+use compograph_graph::NodeIndex;
+use compograph_types::Point2;
 
 use crate::style::{EdgeCurve, EdgeStyle};
 
@@ -20,7 +20,7 @@ pub(crate) fn should_use_haystack(options: EdgePaintOptions, bundle_len: usize) 
         return false;
     }
     if options.force_haystack {
-        cg_geometry::use_haystack(bundle_len, true)
+        compograph_geometry::use_haystack(bundle_len, true)
     } else {
         bundle_len >= options.aggregate_threshold.max(1)
     }
@@ -179,7 +179,7 @@ pub(crate) fn loop_edge(
     loop_stack: usize,
     style: EdgeStyle,
 ) -> PaintedEdge {
-    let ctrls = cg_geometry::self_loop_controls(screen, NODE_SIDE, loop_stack);
+    let ctrls = compograph_geometry::self_loop_controls(screen, NODE_SIDE, loop_stack);
     PaintedEdge {
         source,
         target,
@@ -282,7 +282,7 @@ pub(crate) fn clean_waypoints(start: Point2, raw: &[Point2], end: Point2) -> Vec
         .copied()
         .filter(|point| *point != start && *point != end)
         .collect();
-    let line = cg_geometry::segmented_polyline(start, &filtered, end);
+    let line = compograph_geometry::segmented_polyline(start, &filtered, end);
     if line.len() <= 2 {
         return Vec::new();
     }
@@ -319,7 +319,7 @@ pub(crate) fn curved_edge(
 mod tests {
     use super::*;
     use crate::lod::DetailLevel;
-    use cg_geometry::OrthoDirection;
+    use compograph_geometry::OrthoDirection;
 
     fn options() -> EdgePaintOptions {
         EdgePaintOptions::default()

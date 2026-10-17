@@ -3,9 +3,9 @@
 //! This module builds the upper bar only. Each button delegates to an action
 //! module; the bar itself holds no graph logic.
 
-use cg_graph::GraphView;
-use cg_interact::SelectMode;
-use cg_render::{DetailLevel, ExportScope};
+use compograph_graph::GraphView;
+use compograph_interact::SelectMode;
+use compograph_render::{DetailLevel, ExportScope};
 use gpui::{
     ClickEvent, Context, InteractiveElement, IntoElement, ParentElement,
     StatefulInteractiveElement, Styled, div, prelude::FluentBuilder,

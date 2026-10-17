@@ -6,7 +6,7 @@
 //! final frame. Callers pull frames and write them back through the bypass
 //! store on their own repaint cadence; nothing here owns a frame loop.
 
-use cg_layout::{Easing, apply_easing, tween_scalar};
+use compograph_layout::{Easing, apply_easing, tween_scalar};
 
 use crate::style::{EdgeStyle, LabelStyle, NodeFill, NodeStyle, lerp_rgb};
 

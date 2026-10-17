@@ -113,7 +113,7 @@ impl Default for LayoutRegistry {
 mod tests {
     use std::collections::HashMap;
 
-    use cg_graph::Positions;
+    use compograph_graph::Positions;
 
     use super::*;
     use crate::engine::LayoutEngine;
@@ -124,9 +124,9 @@ mod tests {
     impl LayoutEngine for Fixed {
         fn layout(
             &self,
-            _graph: &dyn cg_graph::GraphView,
+            _graph: &dyn compograph_graph::GraphView,
             _previous: &Positions,
-            _fixed: &cg_graph::FixedNodes,
+            _fixed: &compograph_graph::FixedNodes,
         ) -> Positions {
             HashMap::new()
         }

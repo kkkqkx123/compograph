@@ -4,8 +4,8 @@
 //! cached. Hit order prefers deep children over their containers, and hidden
 //! descendants never hit.
 
-use cg_graph::{GraphStore, NodeIndex, Positions};
-use cg_types::{Point2, Rect, Vec2};
+use compograph_graph::{GraphStore, NodeIndex, Positions};
+use compograph_types::{Point2, Rect, Vec2};
 
 /// Padding added around the child extent, in model units.
 pub const COMPOUND_PADDING: f32 = 16.0;

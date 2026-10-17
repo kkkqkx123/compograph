@@ -2,6 +2,8 @@
 name = "compograph"
 version = "0.1.0"
 edition.workspace = true
+license.workspace = true
+description = "Desktop graph visualization application"
 publish.workspace = true
 
 [lints]
@@ -12,11 +14,11 @@ name = "compograph"
 path = "src/main.rs"
 
 [dependencies]
-cg-graph.workspace = true
-cg-interact.workspace = true
-cg-layout.workspace = true
-cg-render.workspace = true
-cg-types.workspace = true
+compograph-graph.workspace = true
+compograph-interact.workspace = true
+compograph-layout.workspace = true
+compograph-render.workspace = true
+compograph-types.workspace = true
 gpui.workspace = true
 gpui_platform.workspace = true
 

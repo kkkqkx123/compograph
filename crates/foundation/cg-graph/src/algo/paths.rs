@@ -437,7 +437,7 @@ mod tests {
     fn heuristic_path_matches_the_optimal_route() {
         use std::collections::HashMap;
 
-        use cg_types::Point2;
+        use compograph_types::Point2;
 
         let (graph, a, _, _, d) = diamond();
         let positions: Positions = [(a, Point2::new(0.0, 0.0)), (d, Point2::new(3.0, 0.0))]

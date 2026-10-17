@@ -4,7 +4,7 @@
 //! Vertex tables are screen pixel polygons starting with the tip, so drawing
 //! and export consume the same points the plan stores.
 
-use cg_types::Point2;
+use compograph_types::Point2;
 
 /// Head shape of a directed edge.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]

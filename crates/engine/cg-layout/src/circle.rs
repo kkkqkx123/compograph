@@ -6,8 +6,8 @@
 
 use std::collections::HashMap;
 
-use cg_graph::{FixedNodes, GraphView, Positions};
-use cg_types::Point2;
+use compograph_graph::{FixedNodes, GraphView, Positions};
+use compograph_types::Point2;
 
 use crate::engine::{CommonOptions, LayoutEngine};
 
@@ -176,7 +176,7 @@ fn circle_radius(
 
 #[cfg(test)]
 mod tests {
-    use cg_graph::{FixedNodes, MockGraph, NodeIndex};
+    use compograph_graph::{FixedNodes, MockGraph, NodeIndex};
 
     use super::*;
 

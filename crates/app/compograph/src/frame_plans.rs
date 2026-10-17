@@ -7,9 +7,9 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use cg_graph::{GraphView, NodeIndex, Positions};
-use cg_interact::NODE_HALF_EXTENT;
-use cg_render::{
+use compograph_graph::{GraphView, NodeIndex, Positions};
+use compograph_interact::NODE_HALF_EXTENT;
+use compograph_render::{
     CacheVersions, DetailLevel, EdgePaintOptions, FrameSample, NodeDataTables, NodeShape,
     PaintedArrow, PaintedContainer, PaintedEdge, PaintedEdgeLabel, PaintedLabel, PaintedNode,
     PaintedRubberBand, PlanCounts, RefreshInput, StoredPlans, all_compound_bounds,
@@ -17,7 +17,7 @@ use cg_render::{
     paint_edges_for_with_waypoints, paint_labels_for, paint_nodes_for_level, visible_node_ids,
     world_viewport_rect,
 };
-use cg_types::{Point2, Rect, Vec2};
+use compograph_types::{Point2, Rect, Vec2};
 use gpui::{Context, Window};
 
 use crate::app_state::GraphWindow;
@@ -195,7 +195,7 @@ impl GraphWindow {
         let lod = self.lod;
         let edge_options = EdgePaintOptions {
             level: lod,
-            aggregate_threshold: cg_render::EDGE_AGGREGATION_THRESHOLD,
+            aggregate_threshold: compograph_render::EDGE_AGGREGATION_THRESHOLD,
             force_haystack: self.aggregate,
             ortho: None,
             taxi: None,

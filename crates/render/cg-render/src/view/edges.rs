@@ -6,9 +6,9 @@
 
 use std::collections::HashMap;
 
-use cg_geometry::segmented_polyline;
-use cg_graph::{GraphView, NodeIndex, Positions};
-use cg_types::Vec2;
+use compograph_geometry::segmented_polyline;
+use compograph_graph::{GraphView, NodeIndex, Positions};
+use compograph_types::Vec2;
 
 use crate::camera::Camera;
 use crate::style::EdgeStyle;
@@ -27,7 +27,7 @@ use super::routing::{
     should_use_manhattan, waypoint_edge,
 };
 use crate::waypoints::WaypointStore;
-use cg_types::Point2;
+use compograph_types::Point2;
 
 /// Self-loop plan for one anchor, or nothing when it is culled.
 fn loop_plan(
@@ -262,7 +262,7 @@ pub fn paint_edges_for_with_waypoints(
         if !raw.is_empty() {
             let start = camera.world_to_viewport(viewport, *a);
             let end = camera.world_to_viewport(viewport, *b);
-            let screen_raw: Vec<cg_types::Point2> = raw
+            let screen_raw: Vec<compograph_types::Point2> = raw
                 .iter()
                 .map(|point| camera.world_to_viewport(viewport, *point))
                 .collect();
@@ -399,7 +399,7 @@ pub fn paint_single_edge_with_waypoints(
     if !raw.is_empty() {
         let start = camera.world_to_viewport(viewport, a);
         let end = camera.world_to_viewport(viewport, b);
-        let screen_raw: Vec<cg_types::Point2> = raw
+        let screen_raw: Vec<compograph_types::Point2> = raw
             .iter()
             .map(|point| camera.world_to_viewport(viewport, *point))
             .collect();

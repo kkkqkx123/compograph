@@ -4,7 +4,7 @@
 //! over an owned node and edge snapshot instead. This view replays the
 //! snapshot through the read-only graph contract.
 
-use cg_graph::{GraphView, NodeIndex};
+use compograph_graph::{GraphView, NodeIndex};
 
 use crate::force::ForceSnapshot;
 
@@ -83,7 +83,7 @@ fn collect_neighbors(
 #[cfg(test)]
 mod tests {
     use super::collect_neighbors;
-    use cg_graph::NodeIndex;
+    use compograph_graph::NodeIndex;
 
     #[test]
     fn neighbor_directions_stay_directed() {

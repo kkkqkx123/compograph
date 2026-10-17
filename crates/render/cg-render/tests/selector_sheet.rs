@@ -4,8 +4,8 @@
 //! matching runs through the selector sheet; both must agree so a rule
 //! highlights exactly the elements the same string selects.
 
-use cg_graph::{DataValue, GraphStore, GraphView, NodeIndex, parse_selector};
-use cg_render::{EdgeStyle, EdgeStylePatch, NodeStyle, NodeStylePatch, SelectorSheet};
+use compograph_graph::{DataValue, GraphStore, GraphView, NodeIndex, parse_selector};
+use compograph_render::{EdgeStyle, EdgeStylePatch, NodeStyle, NodeStylePatch, SelectorSheet};
 use gpui::{App, AppContext, Entity, TestAppContext};
 
 fn setup(cx: &mut TestAppContext) -> Entity<GraphStore> {

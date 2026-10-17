@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use cg_graph::{DataValue, NodeIndex};
+use compograph_graph::{DataValue, NodeIndex};
 
 use crate::appearance::{EdgeStyle, EdgeStylePatch};
 use crate::mapping::{EdgeColorMap, linear_map};
@@ -182,7 +182,7 @@ mod tests {
     use super::*;
     use crate::appearance::{DEFAULT_EDGE_TINT, HIGHLIGHT_EDGE_TINT, StyleSheet};
     use crate::bypass::BypassStore;
-    use cg_graph::NodeIndex;
+    use compograph_graph::NodeIndex;
 
     #[test]
     fn later_edge_mapping_rules_win_over_earlier_ones() {

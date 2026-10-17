@@ -7,8 +7,8 @@
 
 use std::collections::HashMap;
 
-use cg_graph::NodeIndex;
-use cg_types::Point2;
+use compograph_graph::NodeIndex;
+use compograph_types::Point2;
 
 /// Ordered user waypoints in world coordinates.
 #[derive(Clone, Debug, Default)]

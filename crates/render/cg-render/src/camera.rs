@@ -1,6 +1,6 @@
 //! Viewport mapping between model coordinates and screen pixels.
 
-use cg_types::{Point2, Rect, Vec2};
+use compograph_types::{Point2, Rect, Vec2};
 
 /// Pan and zoom state of the graph canvas.
 #[derive(Clone, Copy, Debug)]

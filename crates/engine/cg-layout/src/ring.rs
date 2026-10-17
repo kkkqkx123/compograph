@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use cg_graph::{GraphView, NodeIndex};
+use compograph_graph::{GraphView, NodeIndex};
 
 /// Score per node from an optional caller table with a degree fallback.
 ///
@@ -130,7 +130,7 @@ mod tests {
 
     #[test]
     fn explicit_width_wins_over_largest_value() {
-        let ids = vec![cg_graph::NodeIndex::new(0), cg_graph::NodeIndex::new(1)];
+        let ids = vec![compograph_graph::NodeIndex::new(0), compograph_graph::NodeIndex::new(1)];
         let mut values = HashMap::new();
         values.insert(ids[0], 100.0);
         values.insert(ids[1], 0.0);
@@ -147,9 +147,9 @@ mod tests {
     #[test]
     fn equidistant_radii_share_one_gap() {
         let levels = vec![
-            vec![cg_graph::NodeIndex::new(0)],
-            vec![cg_graph::NodeIndex::new(1), cg_graph::NodeIndex::new(2)],
-            vec![cg_graph::NodeIndex::new(3)],
+            vec![compograph_graph::NodeIndex::new(0)],
+            vec![compograph_graph::NodeIndex::new(1), compograph_graph::NodeIndex::new(2)],
+            vec![compograph_graph::NodeIndex::new(3)],
         ];
         let radii = ring_radii(&levels, None, 34.0, false, true);
         assert_eq!(radii.len(), 3);

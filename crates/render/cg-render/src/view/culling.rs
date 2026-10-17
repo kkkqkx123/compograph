@@ -4,8 +4,8 @@
 //! screen tests use a fixed margin, and hit testing elsewhere consumes the
 //! same flattened paths the painters store.
 
-use cg_graph::NodeIndex;
-use cg_types::{Point2, Rect, Vec2};
+use compograph_graph::NodeIndex;
+use compograph_types::{Point2, Rect, Vec2};
 
 use crate::camera::Camera;
 

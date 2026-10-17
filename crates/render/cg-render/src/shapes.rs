@@ -6,10 +6,10 @@
 //! and its hit test doubles as the conservative outer envelope for the other
 //! shapes.
 
-use cg_geometry::{
+use compograph_geometry::{
     distance_to_segment, point_hits_node, point_in_polygon, polygon_intersects_rect,
 };
-use cg_types::{Point2, Rect, Vec2};
+use compograph_types::{Point2, Rect, Vec2};
 
 /// Body shape of a node.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]

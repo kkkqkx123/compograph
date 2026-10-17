@@ -2,8 +2,8 @@
 
 use std::collections::BTreeSet;
 
-use cg_graph::NodeIndex;
-use cg_types::{Point2, Rect, Vec2};
+use compograph_graph::NodeIndex;
+use compograph_types::{Point2, Rect, Vec2};
 
 use super::handlers::normalize_drag;
 
@@ -227,7 +227,7 @@ impl SelectionState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cg_types::Vec2;
+    use compograph_types::Vec2;
 
     #[test]
     fn drag_state_round_trips() {

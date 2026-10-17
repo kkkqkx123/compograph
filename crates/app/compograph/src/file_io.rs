@@ -9,7 +9,7 @@
 
 use std::path::Path;
 
-use cg_graph::GraphDocument;
+use compograph_graph::GraphDocument;
 
 /// Scratch JSON file carrying structure, labels, weights, and positions.
 pub const JSON_PATH: &str = "/tmp/compograph-graph.json";
@@ -44,7 +44,7 @@ pub fn write_bytes_file(content: &[u8], path: &str) -> Result<(), String> {
 
 /// Writes a document as JSON to a dialog-chosen path.
 pub fn export_json_to_path(document: &GraphDocument, path: &Path) -> Result<String, String> {
-    let encoded = cg_graph::export_json(document).map_err(|error| error.message().to_string())?;
+    let encoded = compograph_graph::export_json(document).map_err(|error| error.message().to_string())?;
     std::fs::write(path, encoded)
         .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
     Ok(format!(
@@ -58,14 +58,14 @@ pub fn export_json_to_path(document: &GraphDocument, path: &Path) -> Result<Stri
 pub fn import_json_from_path(path: &Path) -> Result<GraphDocument, String> {
     let encoded = std::fs::read_to_string(path)
         .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
-    cg_graph::import_json(&encoded).map_err(|error| error.message().to_string())
+    compograph_graph::import_json(&encoded).map_err(|error| error.message().to_string())
 }
 
 /// Reads and parses a DOT file from a dialog-chosen path.
 pub fn import_dot_from_path(path: &Path) -> Result<GraphDocument, String> {
     let encoded = std::fs::read_to_string(path)
         .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
-    cg_graph::import_dot(&encoded).map_err(|error| error.message().to_string())
+    compograph_graph::import_dot(&encoded).map_err(|error| error.message().to_string())
 }
 
 /// Writes caller-rendered text such as DOT output to a dialog-chosen path.
@@ -83,7 +83,7 @@ pub fn write_bytes_to_path(content: &[u8], path: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cg_graph::{EdgeEntry, NodeEntry};
+    use compograph_graph::{EdgeEntry, NodeEntry};
 
     fn sample() -> GraphDocument {
         GraphDocument {

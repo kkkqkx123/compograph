@@ -9,8 +9,8 @@
 
 use std::collections::HashMap;
 
-use cg_graph::{FixedNodes, GraphView, NodeIndex, Positions};
-use cg_types::{Point2, Vec2};
+use compograph_graph::{FixedNodes, GraphView, NodeIndex, Positions};
+use compograph_types::{Point2, Vec2};
 
 use crate::engine::LayoutEngine;
 
@@ -462,7 +462,7 @@ pub fn has_overlaps(positions: &Positions, size: f32) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use cg_graph::MockGraph;
+    use compograph_graph::MockGraph;
 
     use super::*;
 

@@ -8,8 +8,8 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use cg_graph::GraphStore;
-use cg_render::subscribe_repaint;
+use compograph_graph::GraphStore;
+use compograph_render::subscribe_repaint;
 use gpui::{App, AppContext, Context, Entity, Subscription, TestAppContext};
 
 /// Stand-in for a painter view. It subscribes to the store the same way the

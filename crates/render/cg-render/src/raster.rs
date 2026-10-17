@@ -4,10 +4,10 @@
 //! samplers so the export matches the canvas. This is the software fallback
 //! behind both export scopes and needs no image dependency.
 
-use cg_geometry::{
+use compograph_geometry::{
     BEZIER_HIT_SAMPLES, point_in_polygon, sample_cubic_bezier, sample_quadratic_bezier,
 };
-use cg_types::Point2;
+use compograph_types::Point2;
 
 use super::view::{PaintedArrow, PaintedEdge, PaintedNode};
 use crate::glyph::{
@@ -549,7 +549,7 @@ impl Image {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cg_graph::NodeIndex;
+    use compograph_graph::NodeIndex;
 
     #[test]
     fn translucent_edges_blend_with_the_background() {
@@ -580,7 +580,7 @@ mod tests {
     fn raster_places_nodes_over_edges() {
         use crate::shapes::NodeShape;
         use crate::view::{PaintedArrow, PaintedEdge, PaintedNode};
-        use cg_graph::NodeIndex;
+        use compograph_graph::NodeIndex;
 
         let nodes = vec![PaintedNode {
             id: NodeIndex::new(0),
