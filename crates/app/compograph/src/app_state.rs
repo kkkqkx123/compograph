@@ -22,6 +22,7 @@ use compograph_types::{Point2, Vec2};
 use gpui::{AppContext, Context, Entity, FocusHandle, Subscription, Task};
 
 use crate::algo_panel::EdgePair;
+use crate::frame_plans::StructureCache;
 
 /// Node count of the built-in smoke scene.
 pub(crate) const DEMO_NODE_COUNT: usize = 12;
@@ -165,6 +166,8 @@ pub(crate) struct GraphWindow {
     pub(crate) aggregate: bool,
     pub(crate) retained: RetainedCache,
     pub(crate) structure_version: u64,
+    /// Structure-derived data reused until the structure changes.
+    pub(crate) structure_cache: Option<StructureCache>,
     pub(crate) style_version: u64,
     pub(crate) spatial_version: Option<u64>,
     pub(crate) metrics: FrameMetrics,
@@ -273,6 +276,7 @@ impl GraphWindow {
             aggregate: false,
             retained: RetainedCache::new(false),
             structure_version: 0,
+            structure_cache: None,
             style_version: 0,
             spatial_version: None,
             metrics: FrameMetrics::new(30),
@@ -300,7 +304,13 @@ impl GraphWindow {
         };
         let store = self.store.clone();
         self.layout.update(cx, |driver, cx| {
-            driver.set_engine_animated(&store, engine, 24, compograph_layout::Easing::CubicInOut, cx);
+            driver.set_engine_animated(
+                &store,
+                engine,
+                24,
+                compograph_layout::Easing::CubicInOut,
+                cx,
+            );
         });
         self.fit_on_settle = true;
         self.menu_open = false;

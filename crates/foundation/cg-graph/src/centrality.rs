@@ -18,15 +18,15 @@ use petgraph::Directed;
 use petgraph::algo::page_rank;
 use petgraph::stable_graph::{NodeIndex, StableGraph};
 
+use crate::adjacency::AdjacencySnapshot;
 use crate::store::{EdgeData, NodeData};
-use crate::view::GraphView;
 
 /// Node identifiers in the order the centrality vectors follow.
 ///
 /// Sorted by index for determinism; every trio function aligns its output
 /// with this order so callers can zip scores back to nodes.
-pub fn node_order(graph: &dyn GraphView) -> Vec<NodeIndex> {
-    let mut ids = graph.node_ids();
+pub fn node_order(snapshot: &AdjacencySnapshot) -> Vec<NodeIndex> {
+    let mut ids = snapshot.nodes().to_vec();
     ids.sort_unstable_by_key(|node| node.index());
     ids
 }
@@ -36,8 +36,8 @@ pub fn node_order(graph: &dyn GraphView) -> Vec<NodeIndex> {
 /// Neighbours collapse parallel edges and ignore self loops, so the hub of a
 /// star scores exactly one while leaves share `1 / (n - 1)`. Isolated nodes
 /// score zero, and graphs with fewer than two nodes yield only zeros.
-pub fn degree_centrality(graph: &dyn GraphView) -> Vec<f32> {
-    let order = node_order(graph);
+pub fn degree_centrality(snapshot: &AdjacencySnapshot) -> Vec<f32> {
+    let order = node_order(snapshot);
     let count = order.len();
     if count < 2 {
         return vec![0.0; count];
@@ -46,10 +46,10 @@ pub fn degree_centrality(graph: &dyn GraphView) -> Vec<f32> {
     order
         .iter()
         .map(|node| {
-            graph
+            snapshot
                 .neighbors(*node)
-                .into_iter()
-                .filter(|neighbour| *neighbour != *node)
+                .iter()
+                .filter(|neighbour| **neighbour != *node)
                 .count() as f32
                 / scale
         })
@@ -62,13 +62,13 @@ pub fn degree_centrality(graph: &dyn GraphView) -> Vec<f32> {
 /// `reachable / (n - 1)` times `reachable / distance_sum`, so disconnected
 /// graphs degrade gracefully instead of dividing by zero. Unreachable nodes
 /// simply do not contribute, and nodes reaching nothing score zero.
-pub fn closeness_centrality(graph: &dyn GraphView) -> Vec<f32> {
-    let order = node_order(graph);
+pub fn closeness_centrality(snapshot: &AdjacencySnapshot) -> Vec<f32> {
+    let order = node_order(snapshot);
     let count = order.len();
     if count < 2 {
         return vec![0.0; count];
     }
-    let adjacency = undirected_index_adjacency(graph, &order);
+    let adjacency = undirected_index_adjacency(snapshot, &order);
     let scale = (count - 1) as f32;
     order
         .iter()
@@ -100,13 +100,13 @@ pub fn closeness_centrality(graph: &dyn GraphView) -> Vec<f32> {
 /// `(n - 1) * (n - 2)` folds both the double counting and the `[0, 1]`
 /// normalization into one step. Graphs with fewer than three nodes yield
 /// only zeros.
-pub fn betweenness_centrality(graph: &dyn GraphView) -> Vec<f32> {
-    let order = node_order(graph);
+pub fn betweenness_centrality(snapshot: &AdjacencySnapshot) -> Vec<f32> {
+    let order = node_order(snapshot);
     let count = order.len();
     if count < 3 {
         return vec![0.0; count];
     }
-    let adjacency = undirected_index_adjacency(graph, &order);
+    let adjacency = undirected_index_adjacency(snapshot, &order);
     let mut raw = vec![0.0f64; count];
     for source in 0..count {
         let mut stack = Vec::new();
@@ -236,7 +236,10 @@ pub fn weighted_degree_centrality(
 ///
 /// Neighbours collapse parallel edges through [`GraphView::neighbors`], and
 /// self loops are dropped because they never shorten a path.
-fn undirected_index_adjacency(graph: &dyn GraphView, order: &[NodeIndex]) -> Vec<Vec<usize>> {
+fn undirected_index_adjacency(
+    snapshot: &AdjacencySnapshot,
+    order: &[NodeIndex],
+) -> Vec<Vec<usize>> {
     let position: HashMap<NodeIndex, usize> = order
         .iter()
         .enumerate()
@@ -245,15 +248,15 @@ fn undirected_index_adjacency(graph: &dyn GraphView, order: &[NodeIndex]) -> Vec
     order
         .iter()
         .map(|node| {
-            let mut neighbours: Vec<usize> = graph
+            // The snapshot hands out neighbours already sorted and distinct,
+            // and the order is sorted by index too, so the ordinals come out
+            // ascending without another sort.
+            snapshot
                 .neighbors(*node)
-                .into_iter()
-                .filter(|neighbour| *neighbour != *node)
-                .filter_map(|neighbour| position.get(&neighbour).copied())
-                .collect();
-            neighbours.sort_unstable();
-            neighbours.dedup();
-            neighbours
+                .iter()
+                .filter(|neighbour| **neighbour != *node)
+                .filter_map(|neighbour| position.get(neighbour).copied())
+                .collect()
         })
         .collect()
 }
@@ -303,28 +306,30 @@ mod tests {
     #[test]
     fn hub_outranks_leaves_on_every_measure() {
         let graph = star();
+        let snapshot = AdjacencySnapshot::capture(&graph);
         for scores in [
-            degree_centrality(&graph),
-            closeness_centrality(&graph),
-            betweenness_centrality(&graph),
+            degree_centrality(&snapshot),
+            closeness_centrality(&snapshot),
+            betweenness_centrality(&snapshot),
         ] {
             assert_eq!(scores.len(), 5);
             assert!(scores.iter().all(|score| score.is_finite()));
             assert!(scores[0] > scores[1]);
             assert!(scores[1..].iter().all(|score| *score == scores[1]));
         }
-        assert_eq!(degree_centrality(&graph)[0], 1.0);
-        assert_eq!(betweenness_centrality(&graph)[0], 1.0);
+        assert_eq!(degree_centrality(&snapshot)[0], 1.0);
+        assert_eq!(betweenness_centrality(&snapshot)[0], 1.0);
     }
 
     #[test]
     fn chain_middle_outranks_endpoints_on_every_measure() {
         let graph = chain5();
+        let snapshot = AdjacencySnapshot::capture(&graph);
         let middle = 2;
         for scores in [
-            degree_centrality(&graph),
-            closeness_centrality(&graph),
-            betweenness_centrality(&graph),
+            degree_centrality(&snapshot),
+            closeness_centrality(&snapshot),
+            betweenness_centrality(&snapshot),
         ] {
             assert_eq!(scores.len(), 5);
             assert!(scores[middle] > scores[0]);
@@ -336,15 +341,18 @@ mod tests {
     #[test]
     fn empty_and_lonely_graphs_score_zero_without_failing() {
         let empty = MockGraph::empty();
-        assert!(degree_centrality(&empty).is_empty());
-        assert!(closeness_centrality(&empty).is_empty());
-        assert!(betweenness_centrality(&empty).is_empty());
+        let empty_snapshot = AdjacencySnapshot::capture(&empty);
+        assert!(degree_centrality(&empty_snapshot).is_empty());
+        assert!(closeness_centrality(&empty_snapshot).is_empty());
+        assert!(betweenness_centrality(&empty_snapshot).is_empty());
         let lonely = MockGraph::isolated(1);
-        assert_eq!(degree_centrality(&lonely), vec![0.0]);
-        assert_eq!(closeness_centrality(&lonely), vec![0.0]);
-        assert_eq!(betweenness_centrality(&lonely), vec![0.0]);
+        let lonely_snapshot = AdjacencySnapshot::capture(&lonely);
+        assert_eq!(degree_centrality(&lonely_snapshot), vec![0.0]);
+        assert_eq!(closeness_centrality(&lonely_snapshot), vec![0.0]);
+        assert_eq!(betweenness_centrality(&lonely_snapshot), vec![0.0]);
         let pair = MockGraph::isolated(2);
-        assert_eq!(betweenness_centrality(&pair), vec![0.0, 0.0]);
+        let pair_snapshot = AdjacencySnapshot::capture(&pair);
+        assert_eq!(betweenness_centrality(&pair_snapshot), vec![0.0, 0.0]);
     }
 
     #[test]
@@ -352,18 +360,20 @@ mod tests {
         let mut graph = MockGraph::isolated(4);
         graph.push_edge(0, 1);
         graph.push_edge(1, 0);
-        let closeness = closeness_centrality(&graph);
+        let snapshot = AdjacencySnapshot::capture(&graph);
+        let closeness = closeness_centrality(&snapshot);
         assert!(closeness.iter().all(|score| score.is_finite()));
         assert!(closeness[0] > closeness[2]);
         assert_eq!(closeness[2], 0.0);
-        let betweenness = betweenness_centrality(&graph);
+        let betweenness = betweenness_centrality(&snapshot);
         assert!(betweenness.iter().all(|score| score.is_finite()));
     }
 
     #[test]
     fn node_order_sorts_by_index() {
         let graph = chain5();
-        let order = node_order(&graph);
+        let snapshot = AdjacencySnapshot::capture(&graph);
+        let order = node_order(&snapshot);
         assert_eq!(
             order,
             vec![

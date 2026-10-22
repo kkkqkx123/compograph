@@ -8,15 +8,15 @@
 use std::time::Instant;
 
 use compograph_graph::{
-    GraphView, NodeIndex, Positions, affinity_clusters, all_pairs_shortest_paths,
-    articulation_points, bellman_ford_paths, betweenness_centrality, bidirectional_path_cost,
-    biconnected_components, breadth_first_order, bridges, closeness_centrality, condensation_groups, degree_centrality,
-    depth_first_order, dsatur_groups, eulerian_path_directed, eulerian_path_undirected,
-    feedback_arc_edges, fuzzy_cmeans_groups, global_min_cut, greedy_matching_pairs,
-    has_directed_path, heuristic_shortest_path, hierarchical_clusters,
-    hierarchical_clusters_with_linkage, immediate_dominators, is_bipartite_graph,
-    is_cyclic_directed_graph, is_cyclic_undirected_graph, johnson_paths, kmeans_clusters,
-    kmedoids_clusters, kosaraju_components, kth_shortest_costs, markov_clusters,
+    AdjacencySnapshot, GraphView, NodeIndex, Positions, affinity_clusters,
+    all_pairs_shortest_paths, articulation_points, bellman_ford_paths, betweenness_centrality,
+    biconnected_components, bidirectional_path_cost, breadth_first_order, bridges,
+    closeness_centrality, condensation_groups, degree_centrality, depth_first_order, dsatur_groups,
+    eulerian_path_directed, eulerian_path_undirected, feedback_arc_edges, fuzzy_cmeans_groups,
+    global_min_cut, greedy_matching_pairs, has_directed_path, heuristic_shortest_path,
+    hierarchical_clusters, hierarchical_clusters_with_linkage, immediate_dominators,
+    is_bipartite_graph, is_cyclic_directed_graph, is_cyclic_undirected_graph, johnson_paths,
+    kmeans_clusters, kmedoids_clusters, kosaraju_components, kth_shortest_costs, markov_clusters,
     maximal_clique_groups, maximum_flow_value, maximum_matching_pairs, metric_clusters,
     minimum_spanning_forest, minimum_spanning_tree_single, negative_cycle_path, node_order,
     post_order, rank_nodes, shortest_path, simple_paths_limited, spfa_paths,
@@ -284,7 +284,8 @@ impl GraphWindow {
     }
 
     pub(crate) fn run_degree(&mut self, cx: &mut Context<Self>) {
-        let snapshot = self.store.read(cx).graph().clone();
+        let graph = self.store.read(cx).graph().clone();
+        let snapshot = AdjacencySnapshot::capture(&graph);
         let generation = self.begin_algo_run();
         self.spawn_algo_task(cx, generation, move || {
             let started = Instant::now();
@@ -296,7 +297,8 @@ impl GraphWindow {
     }
 
     pub(crate) fn run_closeness(&mut self, cx: &mut Context<Self>) {
-        let snapshot = self.store.read(cx).graph().clone();
+        let graph = self.store.read(cx).graph().clone();
+        let snapshot = AdjacencySnapshot::capture(&graph);
         let generation = self.begin_algo_run();
         self.spawn_algo_task(cx, generation, move || {
             let started = Instant::now();
@@ -308,7 +310,8 @@ impl GraphWindow {
     }
 
     pub(crate) fn run_betweenness(&mut self, cx: &mut Context<Self>) {
-        let snapshot = self.store.read(cx).graph().clone();
+        let graph = self.store.read(cx).graph().clone();
+        let snapshot = AdjacencySnapshot::capture(&graph);
         let generation = self.begin_algo_run();
         self.spawn_algo_task(cx, generation, move || {
             let started = Instant::now();
@@ -569,7 +572,9 @@ impl GraphWindow {
             let cost = bidirectional_path_cost(&snapshot, start, goal);
             let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
             match cost {
-                Some(value) => algo_panel::path_outcome(&[start, goal], value, elapsed_ms, "bidirectional"),
+                Some(value) => {
+                    algo_panel::path_outcome(&[start, goal], value, elapsed_ms, "bidirectional")
+                }
                 None => algo_panel::path_outcome(&[], 0.0, elapsed_ms, "bidirectional"),
             }
         });
@@ -593,8 +598,10 @@ impl GraphWindow {
                         return algo_panel::path_outcome(&[], 0.0, elapsed(), "spfa");
                     }
                     let mut path = vec![goal];
-                    while let Some(parent) =
-                        predecessors.get(&path.last().copied().unwrap_or(goal)).copied().flatten()
+                    while let Some(parent) = predecessors
+                        .get(&path.last().copied().unwrap_or(goal))
+                        .copied()
+                        .flatten()
                     {
                         path.push(parent);
                         if parent == start || path.len() > snapshot.node_count() + 1 {
@@ -830,14 +837,15 @@ impl GraphWindow {
     }
 
     pub(crate) fn run_weighted_degree(&mut self, cx: &mut Context<Self>) {
-        let snapshot = self.store.read(cx).graph().clone();
+        let graph = self.store.read(cx).graph().clone();
+        let snapshot = AdjacencySnapshot::capture(&graph);
         let alpha = self.weighted_alpha;
         let directed = self.weighted_directed;
         let generation = self.begin_algo_run();
         self.spawn_algo_task(cx, generation, move || {
             let started = Instant::now();
             let order = node_order(&snapshot);
-            let scores = weighted_degree_centrality(&snapshot, alpha, directed);
+            let scores = weighted_degree_centrality(&graph, alpha, directed);
             let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
             let label = if directed {
                 format!("weighted degree a={alpha:.2} directed")

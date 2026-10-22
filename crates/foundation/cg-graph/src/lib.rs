@@ -1,5 +1,6 @@
 //! Editable graph model with change notifications.
 
+pub mod adjacency;
 pub mod affinity;
 pub mod algo;
 pub mod attrs;
@@ -23,6 +24,7 @@ pub mod store;
 pub mod sync;
 pub mod view;
 
+pub use adjacency::AdjacencySnapshot;
 pub use affinity::affinity_clusters;
 pub use algo::{
     all_pairs_shortest_paths, articulation_points, bellman_ford_paths, biconnected_components,

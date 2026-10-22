@@ -2,7 +2,7 @@
 
 use std::cmp::Ordering;
 
-use compograph_graph::{FixedNodes, GraphView, NodeIndex, Positions};
+use compograph_graph::{AdjacencySnapshot, FixedNodes, NodeIndex, Positions};
 use compograph_types::Point2;
 
 use crate::force::ForceOptions;
@@ -67,7 +67,7 @@ impl CommonOptions {
     }
 
     /// Orders `ids` for placement without touching engine scoring.
-    pub fn sort_ids(&self, ids: &mut [NodeIndex], graph: &dyn GraphView) {
+    pub fn sort_ids(&self, ids: &mut [NodeIndex], graph: &AdjacencySnapshot) {
         match self.sort {
             SortKey::Stable => {}
             SortKey::IndexAsc => {
@@ -128,10 +128,17 @@ impl CommonOptions {
 /// Nodes in `fixed` keep their previous coordinates; engines still let them
 /// attract their neighbours so the surroundings settle around them.
 ///
-/// Dynamic dispatch is used because layouts are chosen at runtime from user
-/// input, and the set of engines is open to future additions.
+/// The graph arrives as a materialized adjacency snapshot: the caller builds
+/// it once per run, and every query an engine makes reads it without
+/// allocating. Engines are chosen at runtime from user input, so the trait
+/// stays open to future additions.
 pub trait LayoutEngine {
-    fn layout(&self, graph: &dyn GraphView, previous: &Positions, fixed: &FixedNodes) -> Positions;
+    fn layout(
+        &self,
+        graph: &AdjacencySnapshot,
+        previous: &Positions,
+        fixed: &FixedNodes,
+    ) -> Positions;
 
     /// Identifier used by the layout registry and user-facing pickers.
     fn name(&self) -> &'static str;
@@ -187,35 +194,37 @@ mod tests {
     #[test]
     fn sort_keys_order_by_index_and_degree() {
         let graph = MockGraph::chain(3);
-        let mut ids = graph.node_ids();
-        CommonOptions::default().sort_ids(&mut ids, &graph);
+        let snapshot = AdjacencySnapshot::capture(&graph);
+        let mut ids = snapshot.nodes().to_vec();
+        CommonOptions::default().sort_ids(&mut ids, &snapshot);
         assert_eq!(ids.len(), 3);
-        let mut by_degree = graph.node_ids();
+        let mut by_degree = snapshot.nodes().to_vec();
         CommonOptions {
             sort: SortKey::DegreeDesc,
             ..CommonOptions::default()
         }
-        .sort_ids(&mut by_degree, &graph);
+        .sort_ids(&mut by_degree, &snapshot);
         assert_eq!(by_degree[0].index(), 1);
-        let mut ascending = graph.node_ids();
+        let mut ascending = snapshot.nodes().to_vec();
         CommonOptions {
             sort: SortKey::DegreeAsc,
             ..CommonOptions::default()
         }
-        .sort_ids(&mut ascending, &graph);
+        .sort_ids(&mut ascending, &snapshot);
         assert_eq!(ascending.last().map(|node| node.index()), Some(1));
     }
 
     #[test]
     fn full_run_scaling_centers_on_the_centroid() {
         let graph = MockGraph::isolated(2);
-        let mut positions: Positions = graph
-            .node_ids()
-            .into_iter()
+        let snapshot = AdjacencySnapshot::capture(&graph);
+        let mut positions: Positions = snapshot
+            .nodes()
+            .iter()
             .enumerate()
             .map(|(ordinal, node)| {
                 (
-                    node,
+                    *node,
                     Point2::new(ordinal as f32 * 10.0, ordinal as f32 * 10.0),
                 )
             })
@@ -226,11 +235,7 @@ mod tests {
         }
         .scale_full_run(&mut positions);
         let mut points: Vec<Point2> = positions.values().copied().collect();
-        points.sort_by(|left, right| {
-            left.x
-                .partial_cmp(&right.x)
-                .unwrap_or(Ordering::Equal)
-        });
+        points.sort_by(|left, right| left.x.partial_cmp(&right.x).unwrap_or(Ordering::Equal));
         assert_eq!(
             points,
             vec![Point2::new(-5.0, -5.0), Point2::new(15.0, 15.0)]

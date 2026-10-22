@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use compograph_graph::{FixedNodes, GraphView, Positions};
+use compograph_graph::{AdjacencySnapshot, FixedNodes, Positions};
 use compograph_types::Point2;
 
 use crate::engine::{CommonOptions, LayoutEngine};
@@ -92,8 +92,13 @@ impl CircleLayout {
 }
 
 impl LayoutEngine for CircleLayout {
-    fn layout(&self, graph: &dyn GraphView, previous: &Positions, fixed: &FixedNodes) -> Positions {
-        let mut ids = graph.node_ids();
+    fn layout(
+        &self,
+        graph: &AdjacencySnapshot,
+        previous: &Positions,
+        fixed: &FixedNodes,
+    ) -> Positions {
+        let mut ids = graph.nodes().to_vec();
         self.common.sort_ids(&mut ids, graph);
         let mut result: Positions = HashMap::new();
         if ids.is_empty() {
@@ -184,7 +189,8 @@ mod tests {
     fn empty_graph_places_nothing() {
         let graph = MockGraph::empty();
         let engine = CircleLayout::new(Point2::ZERO, 400.0, 400.0);
-        let positions = engine.layout(&graph, &Positions::new(), &FixedNodes::default());
+        let snapshot = AdjacencySnapshot::capture(&graph);
+        let positions = engine.layout(&snapshot, &Positions::new(), &FixedNodes::default());
         assert!(positions.is_empty());
     }
 
@@ -192,7 +198,8 @@ mod tests {
     fn lone_node_sits_at_the_center() {
         let graph = MockGraph::isolated(1);
         let engine = CircleLayout::new(Point2::new(5.0, 7.0), 400.0, 400.0);
-        let positions = engine.layout(&graph, &Positions::new(), &FixedNodes::default());
+        let snapshot = AdjacencySnapshot::capture(&graph);
+        let positions = engine.layout(&snapshot, &Positions::new(), &FixedNodes::default());
         assert_eq!(
             positions.get(&NodeIndex::new(0)),
             Some(&Point2::new(5.0, 7.0))
@@ -206,7 +213,8 @@ mod tests {
             avoid_overlap: false,
             ..CircleOptions::default()
         });
-        let positions = engine.layout(&graph, &Positions::new(), &FixedNodes::default());
+        let snapshot = AdjacencySnapshot::capture(&graph);
+        let positions = engine.layout(&snapshot, &Positions::new(), &FixedNodes::default());
         assert_eq!(positions.len(), 4);
         let expected_radius = 480.0f32.min(640.0) / 2.0 - 24.0;
         for position in positions.values() {
@@ -223,7 +231,8 @@ mod tests {
             avoid_overlap: false,
             ..CircleOptions::default()
         });
-        let positions = engine.layout(&graph, &Positions::new(), &FixedNodes::default());
+        let snapshot = AdjacencySnapshot::capture(&graph);
+        let positions = engine.layout(&snapshot, &Positions::new(), &FixedNodes::default());
         for position in positions.values() {
             let distance = (position.x.powi(2) + position.y.powi(2)).sqrt();
             assert!((distance - 50.0).abs() < 1e-3);
@@ -242,8 +251,9 @@ mod tests {
             avoid_overlap: false,
             ..CircleOptions::default()
         });
-        let ahead = clockwise.layout(&graph, &Positions::new(), &FixedNodes::default());
-        let behind = counter.layout(&graph, &Positions::new(), &FixedNodes::default());
+        let snapshot = AdjacencySnapshot::capture(&graph);
+        let ahead = clockwise.layout(&snapshot, &Positions::new(), &FixedNodes::default());
+        let behind = counter.layout(&snapshot, &Positions::new(), &FixedNodes::default());
         for index in 0..4 {
             let node = NodeIndex::new(index);
             assert!((ahead[&node].x + behind[&node].x).abs() < 1e-3);

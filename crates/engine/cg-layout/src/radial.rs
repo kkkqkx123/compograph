@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 
-use compograph_graph::{FixedNodes, GraphView, NodeIndex, Positions};
+use compograph_graph::{AdjacencySnapshot, FixedNodes, NodeIndex, Positions};
 use compograph_types::Point2;
 
 use crate::engine::{CommonOptions, LayoutEngine};
@@ -109,8 +109,13 @@ impl RadialLayout {
 }
 
 impl LayoutEngine for RadialLayout {
-    fn layout(&self, graph: &dyn GraphView, previous: &Positions, fixed: &FixedNodes) -> Positions {
-        let mut ids = graph.node_ids();
+    fn layout(
+        &self,
+        graph: &AdjacencySnapshot,
+        previous: &Positions,
+        fixed: &FixedNodes,
+    ) -> Positions {
+        let mut ids = graph.nodes().to_vec();
         self.common.sort_ids(&mut ids, graph);
         let mut result: Positions = HashMap::new();
         if ids.is_empty() {
@@ -164,7 +169,7 @@ impl LayoutEngine for RadialLayout {
 
 /// Score per node: caller-supplied table entries win, the rest use degree.
 fn node_values(
-    graph: &dyn GraphView,
+    graph: &AdjacencySnapshot,
     ids: &[NodeIndex],
     scoring: &RadialScoring,
 ) -> HashMap<NodeIndex, f32> {
@@ -180,7 +185,7 @@ fn node_values(
 /// tier they landed in and share one ring past every connected node. Rings
 /// left empty by the move are dropped; when every node is isolated the group
 /// stays on the innermost ring so a lone node rests at the center.
-fn push_isolated_outermost(graph: &dyn GraphView, levels: &mut Vec<Vec<NodeIndex>>) {
+fn push_isolated_outermost(graph: &AdjacencySnapshot, levels: &mut Vec<Vec<NodeIndex>>) {
     let mut isolated = Vec::new();
     for level in levels.iter_mut() {
         level.retain(|node| {
@@ -210,7 +215,8 @@ mod tests {
     fn empty_graph_places_nothing() {
         let graph = MockGraph::empty();
         let engine = RadialLayout::new(Point2::ZERO);
-        let positions = engine.layout(&graph, &Positions::new(), &FixedNodes::default());
+        let snapshot = AdjacencySnapshot::capture(&graph);
+        let positions = engine.layout(&snapshot, &Positions::new(), &FixedNodes::default());
         assert!(positions.is_empty());
     }
 
@@ -218,7 +224,8 @@ mod tests {
     fn lone_node_sits_at_the_center() {
         let graph = MockGraph::isolated(1);
         let engine = RadialLayout::new(Point2::new(3.0, 4.0));
-        let positions = engine.layout(&graph, &Positions::new(), &FixedNodes::default());
+        let snapshot = AdjacencySnapshot::capture(&graph);
+        let positions = engine.layout(&snapshot, &Positions::new(), &FixedNodes::default());
         assert_eq!(
             positions.get(&NodeIndex::new(0)),
             Some(&Point2::new(3.0, 4.0))
@@ -233,7 +240,8 @@ mod tests {
             graph.push_edge(leaf, 0);
         }
         let engine = RadialLayout::new(Point2::ZERO);
-        let positions = engine.layout(&graph, &Positions::new(), &FixedNodes::default());
+        let snapshot = AdjacencySnapshot::capture(&graph);
+        let positions = engine.layout(&snapshot, &Positions::new(), &FixedNodes::default());
         let hub = positions[&NodeIndex::new(0)];
         let hub_gap = (hub.x.powi(2) + hub.y.powi(2)).sqrt();
         for leaf in 1..5 {
@@ -251,7 +259,8 @@ mod tests {
         graph.push_edge(1, 2);
         graph.push_edge(2, 1);
         let engine = RadialLayout::new(Point2::ZERO);
-        let positions = engine.layout(&graph, &Positions::new(), &FixedNodes::default());
+        let snapshot = AdjacencySnapshot::capture(&graph);
+        let positions = engine.layout(&snapshot, &Positions::new(), &FixedNodes::default());
         let gap = |node: usize| {
             let point = positions[&NodeIndex::new(node)];
             (point.x.powi(2) + point.y.powi(2)).sqrt()
@@ -271,7 +280,8 @@ mod tests {
             scoring: RadialScoring::Scores(values),
             ..RadialOptions::default()
         });
-        let positions = engine.layout(&graph, &Positions::new(), &FixedNodes::default());
+        let snapshot = AdjacencySnapshot::capture(&graph);
+        let positions = engine.layout(&snapshot, &Positions::new(), &FixedNodes::default());
         let inner = positions[&NodeIndex::new(2)];
         let outer = positions[&NodeIndex::new(0)];
         let inner_gap = (inner.x.powi(2) + inner.y.powi(2)).sqrt();
@@ -287,7 +297,8 @@ mod tests {
         let mut fixed = FixedNodes::default();
         fixed.insert(NodeIndex::new(1));
         let engine = RadialLayout::new(Point2::ZERO);
-        let positions = engine.layout(&graph, &previous, &fixed);
+        let snapshot = AdjacencySnapshot::capture(&graph);
+        let positions = engine.layout(&snapshot, &previous, &fixed);
         assert_eq!(
             positions.get(&NodeIndex::new(1)),
             Some(&Point2::new(50.0, 60.0))

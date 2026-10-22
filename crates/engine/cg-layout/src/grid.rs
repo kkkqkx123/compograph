@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 
-use compograph_graph::{FixedNodes, GraphView, Positions};
+use compograph_graph::{AdjacencySnapshot, FixedNodes, Positions};
 use compograph_types::Point2;
 
 use crate::engine::{CommonOptions, LayoutEngine};
@@ -90,8 +90,13 @@ impl GridLayout {
 }
 
 impl LayoutEngine for GridLayout {
-    fn layout(&self, graph: &dyn GraphView, previous: &Positions, fixed: &FixedNodes) -> Positions {
-        let mut ids = graph.node_ids();
+    fn layout(
+        &self,
+        graph: &AdjacencySnapshot,
+        previous: &Positions,
+        fixed: &FixedNodes,
+    ) -> Positions {
+        let mut ids = graph.nodes().to_vec();
         self.common.sort_ids(&mut ids, graph);
         let mut result: Positions = HashMap::new();
         if ids.is_empty() {
@@ -244,14 +249,16 @@ mod tests {
             avoid_overlap: false,
             ..GridOptions::default()
         });
-        engine.layout(&graph, &Positions::new(), &FixedNodes::default())
+        let snapshot = AdjacencySnapshot::capture(&graph);
+        engine.layout(&snapshot, &Positions::new(), &FixedNodes::default())
     }
 
     #[test]
     fn empty_graph_places_nothing() {
         let graph = MockGraph::empty();
         let engine = GridLayout::new(Point2::ZERO, 200.0, 200.0);
-        let positions = engine.layout(&graph, &Positions::new(), &FixedNodes::default());
+        let snapshot = AdjacencySnapshot::capture(&graph);
+        let positions = engine.layout(&snapshot, &Positions::new(), &FixedNodes::default());
         assert!(positions.is_empty());
     }
 
@@ -285,7 +292,8 @@ mod tests {
             avoid_overlap: false,
             ..GridOptions::default()
         });
-        let positions = engine.layout(&graph, &Positions::new(), &FixedNodes::default());
+        let snapshot = AdjacencySnapshot::capture(&graph);
+        let positions = engine.layout(&snapshot, &Positions::new(), &FixedNodes::default());
         assert_eq!(positions.len(), 5);
     }
 
@@ -293,7 +301,8 @@ mod tests {
     fn degenerate_boxes_collapse_to_the_center() {
         let graph = MockGraph::isolated(3);
         let engine = GridLayout::new(Point2::new(7.0, 9.0), 0.0, 100.0);
-        let positions = engine.layout(&graph, &Positions::new(), &FixedNodes::default());
+        let snapshot = AdjacencySnapshot::capture(&graph);
+        let positions = engine.layout(&snapshot, &Positions::new(), &FixedNodes::default());
         assert!(
             positions
                 .values()
@@ -313,7 +322,8 @@ mod tests {
             avoid_overlap: false,
             ..GridOptions::default()
         });
-        let base = plain.layout(&graph, &Positions::new(), &FixedNodes::default());
+        let snapshot = AdjacencySnapshot::capture(&graph);
+        let base = plain.layout(&snapshot, &Positions::new(), &FixedNodes::default());
         let sorted = GridLayout::with_options(GridOptions {
             center: Point2::ZERO,
             width: 300.0,
@@ -325,11 +335,8 @@ mod tests {
             sort: SortKey::DegreeDesc,
             ..CommonOptions::default()
         })
-        .layout(&graph, &Positions::new(), &FixedNodes::default());
-        assert_ne!(
-            base.get(&NodeIndex::new(1)),
-            sorted.get(&NodeIndex::new(1))
-        );
+        .layout(&snapshot, &Positions::new(), &FixedNodes::default());
+        assert_ne!(base.get(&NodeIndex::new(1)), sorted.get(&NodeIndex::new(1)));
         assert_eq!(sorted.get(&NodeIndex::new(1)), base.get(&NodeIndex::new(0)));
     }
 
@@ -338,6 +345,7 @@ mod tests {
         use crate::engine::CommonOptions;
 
         let graph = MockGraph::isolated(2);
+        let snapshot = AdjacencySnapshot::capture(&graph);
         let plain = GridLayout::with_options(GridOptions {
             center: Point2::ZERO,
             width: 200.0,
@@ -345,7 +353,7 @@ mod tests {
             avoid_overlap: false,
             ..GridOptions::default()
         })
-        .layout(&graph, &Positions::new(), &FixedNodes::default());
+        .layout(&snapshot, &Positions::new(), &FixedNodes::default());
         let wide = GridLayout::with_options(GridOptions {
             center: Point2::ZERO,
             width: 200.0,
@@ -357,13 +365,13 @@ mod tests {
             spacing_factor: 2.0,
             ..CommonOptions::default()
         })
-        .layout(&graph, &Positions::new(), &FixedNodes::default());
-        let plain_gap =
-            (plain.get(&NodeIndex::new(1)).unwrap().x - plain.get(&NodeIndex::new(0)).unwrap().x)
-                .abs();
-        let wide_gap =
-            (wide.get(&NodeIndex::new(1)).unwrap().x - wide.get(&NodeIndex::new(0)).unwrap().x)
-                .abs();
+        .layout(&snapshot, &Positions::new(), &FixedNodes::default());
+        let plain_gap = (plain.get(&NodeIndex::new(1)).unwrap().x
+            - plain.get(&NodeIndex::new(0)).unwrap().x)
+            .abs();
+        let wide_gap = (wide.get(&NodeIndex::new(1)).unwrap().x
+            - wide.get(&NodeIndex::new(0)).unwrap().x)
+            .abs();
         assert!((wide_gap - plain_gap * 2.0).abs() < 1e-3);
     }
 
@@ -375,7 +383,8 @@ mod tests {
         let mut fixed = FixedNodes::default();
         fixed.insert(NodeIndex::new(1));
         let engine = GridLayout::new(Point2::ZERO, 200.0, 200.0);
-        let positions = engine.layout(&graph, &previous, &fixed);
+        let snapshot = AdjacencySnapshot::capture(&graph);
+        let positions = engine.layout(&snapshot, &previous, &fixed);
         assert_eq!(
             positions.get(&NodeIndex::new(1)),
             Some(&Point2::new(500.0, 500.0))

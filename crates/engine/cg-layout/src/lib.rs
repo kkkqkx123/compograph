@@ -17,7 +17,6 @@ pub mod random;
 pub mod reaction;
 pub mod registry;
 pub mod ring;
-pub mod static_view;
 
 pub use anim::{
     Easing, PositionTransition, apply_easing, blend_positions, lerp_point, tween_scalar,
@@ -31,13 +30,10 @@ pub use compound::{
 pub use concentric::{ConcentricLayout, ConcentricOptions, ConcentricScoring};
 pub use driver::{LayoutDriver, LayoutProgress, SYNC_LAYOUT_NODE_LIMIT};
 pub use engine::{CommonOptions, LayoutEngine, SortKey};
-pub use lifecycle::LayoutEvent;
-pub use force::{
-    ForceLayout, ForceOptions, ForceSimulation, ForceSnapshot, boxes_overlap, has_overlaps,
-    snapshot_of,
-};
+pub use force::{ForceLayout, ForceOptions, ForceSimulation, boxes_overlap, has_overlaps};
 pub use grid::{GridLayout, GridOptions};
 pub use hierarchical::{HierarchicalLayout, HierarchicalOptions};
+pub use lifecycle::LayoutEvent;
 pub use preset::PresetLayout;
 pub use radial::{RadialLayout, RadialOptions, RadialScoring};
 pub use random::RandomLayout;

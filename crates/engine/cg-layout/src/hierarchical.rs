@@ -9,7 +9,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use compograph_graph::{FixedNodes, GraphView, NodeIndex, Positions};
+use compograph_graph::{AdjacencySnapshot, FixedNodes, NodeIndex, Positions};
 use compograph_types::Point2;
 
 use crate::breadthfirst::BfsDirection;
@@ -75,7 +75,12 @@ impl HierarchicalLayout {
 }
 
 impl LayoutEngine for HierarchicalLayout {
-    fn layout(&self, graph: &dyn GraphView, previous: &Positions, fixed: &FixedNodes) -> Positions {
+    fn layout(
+        &self,
+        graph: &AdjacencySnapshot,
+        previous: &Positions,
+        fixed: &FixedNodes,
+    ) -> Positions {
         let layers = compute_layers(graph);
         let mut result: Positions = HashMap::new();
         if layers.is_empty() {
@@ -101,8 +106,8 @@ impl LayoutEngine for HierarchicalLayout {
 }
 
 /// Rank layers from the outermost (sourceless) inward, ordered to reduce crossings.
-fn compute_layers(graph: &dyn GraphView) -> Vec<Vec<NodeIndex>> {
-    let mut ids = graph.node_ids();
+fn compute_layers(graph: &AdjacencySnapshot) -> Vec<Vec<NodeIndex>> {
+    let mut ids = graph.nodes().to_vec();
     ids.sort_unstable_by_key(|node| node.index());
     if ids.is_empty() {
         return Vec::new();
@@ -118,83 +123,63 @@ fn compute_layers(graph: &dyn GraphView) -> Vec<Vec<NodeIndex>> {
     layers
 }
 
-/// Rank per node from strongly connected groups peeled by longest path.
+/// Rank per node from strongly connected groups ranked by longest path.
 ///
-/// Sourceless groups peel first; every member of one group shares its rank, so
+/// Sourceless groups rank first; every member of one group shares its rank, so
 /// cyclic members land on a single layer while acyclic graphs still receive
-/// exact longest-path ranks.
-fn component_ranks(graph: &dyn GraphView, ids: &[NodeIndex]) -> HashMap<NodeIndex, usize> {
-    let present: HashSet<NodeIndex> = ids.iter().copied().collect();
-    let groups = strongly_connected_groups(graph, ids, &present);
+/// exact longest-path ranks. The rank relaxes along the group graph in one
+/// pass over its edges, so the whole ranking costs time linear in the graph
+/// size instead of one sweep per group.
+fn component_ranks(graph: &AdjacencySnapshot, ids: &[NodeIndex]) -> HashMap<NodeIndex, usize> {
+    let groups = strongly_connected_groups(graph, ids);
     let mut member_of: HashMap<NodeIndex, usize> = HashMap::new();
     for (group, members) in groups.iter().enumerate() {
         for node in members {
             member_of.insert(*node, group);
         }
     }
-    let mut pending: Vec<HashSet<usize>> = vec![HashSet::new(); groups.len()];
+    // Group graph: which groups feed which, and how many feed each group.
+    let mut followers: Vec<Vec<usize>> = vec![Vec::new(); groups.len()];
+    let mut incoming = vec![0usize; groups.len()];
+    let mut linked: HashSet<(usize, usize)> = HashSet::new();
     for node in ids {
         let group = member_of[node];
-        for source in graph.predecessors(*node) {
-            if !present.contains(&source) {
+        for &target in graph.successors(*node) {
+            let other = member_of[&target];
+            if other == group || !linked.insert((group, other)) {
                 continue;
             }
-            let other = member_of[&source];
-            if other != group {
-                pending[group].insert(other);
-            }
+            followers[group].push(other);
+            incoming[other] += 1;
         }
     }
-    let mut group_rank: HashMap<usize, usize> = HashMap::new();
-    let mut placed: HashSet<usize> = HashSet::new();
-    let mut current = 0usize;
-    while placed.len() < groups.len() {
-        let mut ready: Vec<usize> = (0..groups.len())
-            .filter(|group| {
-                !placed.contains(group)
-                    && pending[*group].iter().all(|other| placed.contains(other))
-            })
-            .collect();
-        ready.sort_unstable_by_key(|group| {
-            groups[*group]
-                .iter()
-                .map(|node| node.index())
-                .min()
-                .unwrap_or(usize::MAX)
-        });
-        for group in ready {
-            placed.insert(group);
-            group_rank.insert(group, current);
+    // Longest path over the group graph: a group ranks one step behind its
+    // deepest predecessor.
+    let mut group_rank = vec![0usize; groups.len()];
+    let mut ready: Vec<usize> = (0..groups.len())
+        .filter(|group| incoming[*group] == 0)
+        .collect();
+    while let Some(group) = ready.pop() {
+        for &other in &followers[group] {
+            group_rank[other] = group_rank[other].max(group_rank[group] + 1);
+            incoming[other] -= 1;
+            if incoming[other] == 0 {
+                ready.push(other);
+            }
         }
-        current += 1;
     }
     let mut rank = HashMap::new();
     for node in ids {
-        rank.insert(*node, group_rank[&member_of[node]]);
+        rank.insert(*node, group_rank[member_of[node]]);
     }
     rank
 }
 
 /// Strongly connected groups in deterministic order via iterative Tarjan.
 ///
-/// Successor edges leaving the given node set are ignored. Each group is
-/// sorted by node index, and groups are ordered by their smallest member, so
-/// repeated runs agree.
-fn strongly_connected_groups(
-    graph: &dyn GraphView,
-    ids: &[NodeIndex],
-    present: &HashSet<NodeIndex>,
-) -> Vec<Vec<NodeIndex>> {
-    let mut followers: HashMap<NodeIndex, Vec<NodeIndex>> = HashMap::new();
-    for node in ids {
-        let mut outgoing: Vec<NodeIndex> = graph
-            .successors(*node)
-            .into_iter()
-            .filter(|target| present.contains(target))
-            .collect();
-        outgoing.sort_unstable_by_key(|target| target.index());
-        followers.insert(*node, outgoing);
-    }
+/// Each group is sorted by node index, and groups are ordered by their
+/// smallest member, so repeated runs agree.
+fn strongly_connected_groups(graph: &AdjacencySnapshot, ids: &[NodeIndex]) -> Vec<Vec<NodeIndex>> {
     let mut marker: HashMap<NodeIndex, usize> = HashMap::new();
     let mut low: HashMap<NodeIndex, usize> = HashMap::new();
     let mut stacked: HashSet<NodeIndex> = HashSet::new();
@@ -214,7 +199,7 @@ fn strongly_connected_groups(
                 trail.push(node);
                 stacked.insert(node);
             }
-            let outgoing = followers.get(&node).cloned().unwrap_or_default();
+            let outgoing = graph.successors(node);
             if next < outgoing.len() {
                 let target = outgoing[next];
                 frames.push((node, parent, next + 1));
@@ -256,13 +241,13 @@ fn strongly_connected_groups(
 
 /// Reorders layers by barycenter sweeps: one pass downward using predecessor
 /// positions, one pass upward using successor positions.
-fn order_by_barycenter(graph: &dyn GraphView, layers: &mut [Vec<NodeIndex>]) {
+fn order_by_barycenter(graph: &AdjacencySnapshot, layers: &mut [Vec<NodeIndex>]) {
     downward_pass(graph, layers);
     upward_pass(graph, layers);
 }
 
 /// Sorts each layer by the mean order position of its predecessors.
-fn downward_pass(graph: &dyn GraphView, layers: &mut [Vec<NodeIndex>]) {
+fn downward_pass(graph: &AdjacencySnapshot, layers: &mut [Vec<NodeIndex>]) {
     let mut order: HashMap<NodeIndex, f32> = HashMap::new();
     for (rank, layer) in layers.iter_mut().enumerate() {
         if rank == 0 {
@@ -276,7 +261,7 @@ fn downward_pass(graph: &dyn GraphView, layers: &mut [Vec<NodeIndex>]) {
         for node in &current {
             let mut total = 0.0f32;
             let mut samples = 0usize;
-            for source in graph.predecessors(*node) {
+            for &source in graph.predecessors(*node) {
                 if let Some(position) = order.get(&source) {
                     total += *position;
                     samples += 1;
@@ -305,7 +290,7 @@ fn downward_pass(graph: &dyn GraphView, layers: &mut [Vec<NodeIndex>]) {
 }
 
 /// Sorts each layer by the mean order position of its successors.
-fn upward_pass(graph: &dyn GraphView, layers: &mut [Vec<NodeIndex>]) {
+fn upward_pass(graph: &AdjacencySnapshot, layers: &mut [Vec<NodeIndex>]) {
     if layers.is_empty() {
         return;
     }
@@ -323,7 +308,7 @@ fn upward_pass(graph: &dyn GraphView, layers: &mut [Vec<NodeIndex>]) {
         for node in &current {
             let mut total = 0.0f32;
             let mut samples = 0usize;
-            for outgoing in graph.successors(*node) {
+            for &outgoing in graph.successors(*node) {
                 if let Some(position) = order.get(&outgoing) {
                     total += *position;
                     samples += 1;
@@ -407,7 +392,8 @@ mod tests {
     fn empty_graph_places_nothing() {
         let graph = MockGraph::empty();
         let engine = HierarchicalLayout::with_options(plain_options());
-        let positions = engine.layout(&graph, &Positions::new(), &FixedNodes::default());
+        let snapshot = AdjacencySnapshot::capture(&graph);
+        let positions = engine.layout(&snapshot, &Positions::new(), &FixedNodes::default());
         assert!(positions.is_empty());
     }
 
@@ -415,7 +401,8 @@ mod tests {
     fn chain_ranks_grow_downward() {
         let graph = MockGraph::chain(4);
         let engine = HierarchicalLayout::with_options(plain_options());
-        let positions = engine.layout(&graph, &Positions::new(), &FixedNodes::default());
+        let snapshot = AdjacencySnapshot::capture(&graph);
+        let positions = engine.layout(&snapshot, &Positions::new(), &FixedNodes::default());
         assert_eq!(positions.len(), 4);
         for index in 0..3 {
             let upper = positions[&NodeIndex::new(index)].y;
@@ -432,7 +419,8 @@ mod tests {
         graph.push_edge(1, 3);
         graph.push_edge(2, 3);
         let engine = HierarchicalLayout::with_options(plain_options());
-        let positions = engine.layout(&graph, &Positions::new(), &FixedNodes::default());
+        let snapshot = AdjacencySnapshot::capture(&graph);
+        let positions = engine.layout(&snapshot, &Positions::new(), &FixedNodes::default());
         assert_eq!(positions.len(), 4);
         assert!(positions[&NodeIndex::new(0)].y < positions[&NodeIndex::new(1)].y);
         assert!(positions[&NodeIndex::new(0)].y < positions[&NodeIndex::new(2)].y);
@@ -445,7 +433,8 @@ mod tests {
         let mut graph = MockGraph::chain(2);
         graph.push_edge(1, 0);
         let engine = HierarchicalLayout::with_options(plain_options());
-        let positions = engine.layout(&graph, &Positions::new(), &FixedNodes::default());
+        let snapshot = AdjacencySnapshot::capture(&graph);
+        let positions = engine.layout(&snapshot, &Positions::new(), &FixedNodes::default());
         assert_eq!(positions.len(), 2);
     }
 
@@ -454,7 +443,8 @@ mod tests {
         let mut graph = MockGraph::chain(2);
         graph.push_edge(1, 0);
         let engine = HierarchicalLayout::with_options(plain_options());
-        let positions = engine.layout(&graph, &Positions::new(), &FixedNodes::default());
+        let snapshot = AdjacencySnapshot::capture(&graph);
+        let positions = engine.layout(&snapshot, &Positions::new(), &FixedNodes::default());
         let first = positions[&NodeIndex::new(0)].y;
         let second = positions[&NodeIndex::new(1)].y;
         assert!((first - second).abs() < 1e-6);
@@ -467,11 +457,28 @@ mod tests {
         graph.push_edge(1, 2);
         graph.push_edge(2, 1);
         let engine = HierarchicalLayout::with_options(plain_options());
-        let positions = engine.layout(&graph, &Positions::new(), &FixedNodes::default());
+        let snapshot = AdjacencySnapshot::capture(&graph);
+        let positions = engine.layout(&snapshot, &Positions::new(), &FixedNodes::default());
         assert_eq!(positions.len(), 3);
         assert!(positions[&NodeIndex::new(0)].y < positions[&NodeIndex::new(1)].y);
         let cyclic = positions[&NodeIndex::new(1)].y - positions[&NodeIndex::new(2)].y;
         assert!(cyclic.abs() < 1e-6);
+    }
+
+    #[test]
+    fn deep_paths_rank_below_short_edges() {
+        let mut graph = MockGraph::empty();
+        graph.push_edge(0, 1);
+        graph.push_edge(1, 2);
+        graph.push_edge(2, 3);
+        graph.push_edge(0, 3);
+        let engine = HierarchicalLayout::with_options(plain_options());
+        let snapshot = AdjacencySnapshot::capture(&graph);
+        let positions = engine.layout(&snapshot, &Positions::new(), &FixedNodes::default());
+        let depth = |index: usize| positions[&NodeIndex::new(index)].y;
+        // The rank follows the longest path, so the short edge from the
+        // source does not pull the last node up.
+        assert!(depth(0) < depth(1) && depth(1) < depth(2) && depth(2) < depth(3));
     }
 
     #[test]
@@ -482,8 +489,9 @@ mod tests {
             direction: BfsDirection::Upward,
             ..plain_options()
         });
-        let below = down.layout(&graph, &Positions::new(), &FixedNodes::default());
-        let above = up.layout(&graph, &Positions::new(), &FixedNodes::default());
+        let snapshot = AdjacencySnapshot::capture(&graph);
+        let below = down.layout(&snapshot, &Positions::new(), &FixedNodes::default());
+        let above = up.layout(&snapshot, &Positions::new(), &FixedNodes::default());
         for index in 0..3 {
             let node = NodeIndex::new(index);
             assert!((below[&node].x - above[&node].x).abs() < 1e-3);

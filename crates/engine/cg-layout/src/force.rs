@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 
-use compograph_graph::{FixedNodes, GraphView, NodeIndex, Positions};
+use compograph_graph::{AdjacencySnapshot, FixedNodes, NodeIndex, Positions};
 use compograph_types::{Point2, Vec2};
 
 use crate::engine::LayoutEngine;
@@ -91,11 +91,15 @@ impl Default for ForceLayout {
 }
 
 impl LayoutEngine for ForceLayout {
-    fn layout(&self, graph: &dyn GraphView, previous: &Positions, fixed: &FixedNodes) -> Positions {
+    fn layout(
+        &self,
+        graph: &AdjacencySnapshot,
+        previous: &Positions,
+        fixed: &FixedNodes,
+    ) -> Positions {
         let mut positions = seed_positions(graph, previous, self.options.ideal_length);
         let mut simulation = ForceSimulation::new(self.options.clone());
-        let snapshot = snapshot_of(graph);
-        simulation.advance(&snapshot, &mut positions, fixed, self.options.iterations);
+        simulation.advance(graph, &mut positions, fixed, self.options.iterations);
         positions
     }
 
@@ -106,24 +110,6 @@ impl LayoutEngine for ForceLayout {
     fn force_options(&self) -> Option<ForceOptions> {
         Some(self.options.clone())
     }
-}
-
-/// Owned structural input a background task can refine without borrowing live state.
-#[derive(Clone, Debug)]
-pub struct ForceSnapshot {
-    /// Nodes in deterministic index order.
-    pub nodes: Vec<NodeIndex>,
-    /// Directed edges as (source, target) pairs.
-    pub edges: Vec<(NodeIndex, NodeIndex)>,
-}
-
-/// Captures the node and edge lists of a graph view in deterministic order.
-pub fn snapshot_of(graph: &dyn GraphView) -> ForceSnapshot {
-    let mut nodes = graph.node_ids();
-    nodes.sort_unstable_by_key(|node| node.index());
-    let mut edges = graph.edges();
-    edges.sort_unstable_by_key(|(source, target)| (source.index(), target.index()));
-    ForceSnapshot { nodes, edges }
 }
 
 /// Resumable simulation carrying the cooling temperature across chunks.
@@ -152,7 +138,7 @@ impl ForceSimulation {
     /// Runs up to `iterations` steps, stopping early below the minimum temperature.
     pub fn advance(
         &mut self,
-        snapshot: &ForceSnapshot,
+        snapshot: &AdjacencySnapshot,
         positions: &mut Positions,
         fixed: &FixedNodes,
         iterations: usize,
@@ -170,20 +156,21 @@ impl ForceSimulation {
 /// Places unseen nodes on a ring around the previous centroid.
 ///
 /// Deterministic angles from the node index keep repeated runs identical.
-fn seed_positions(graph: &dyn GraphView, previous: &Positions, ideal_length: f32) -> Positions {
+fn seed_positions(graph: &AdjacencySnapshot, previous: &Positions, ideal_length: f32) -> Positions {
     let mut seeded: Positions = HashMap::new();
     let mut known: Vec<Point2> = Vec::new();
-    for node in graph.node_ids() {
-        if let Some(position) = previous.get(&node) {
-            seeded.insert(node, *position);
+    for node in graph.nodes() {
+        if let Some(position) = previous.get(node) {
+            seeded.insert(*node, *position);
             known.push(*position);
         }
     }
     let centroid = centroid_of(&known);
     let mut missing: Vec<NodeIndex> = graph
-        .node_ids()
-        .into_iter()
+        .nodes()
+        .iter()
         .filter(|node| !seeded.contains_key(node))
+        .copied()
         .collect();
     missing.sort_unstable_by_key(|node| node.index());
     for (ordinal, node) in missing.into_iter().enumerate() {
@@ -224,19 +211,19 @@ fn deterministic_angle(node: NodeIndex, ordinal: usize) -> f32 {
 }
 
 fn simulation_step(
-    snapshot: &ForceSnapshot,
+    snapshot: &AdjacencySnapshot,
     positions: &mut Positions,
     fixed: &FixedNodes,
     options: &ForceOptions,
     temperature: f32,
 ) {
-    let order = &snapshot.nodes;
+    let order = snapshot.nodes();
     let mut offsets: HashMap<NodeIndex, Vec2> = HashMap::new();
     for node in order {
         offsets.insert(*node, Vec2::ZERO);
     }
     apply_repulsion(order, positions, &mut offsets, options);
-    apply_edge_forces(&snapshot.edges, positions, &mut offsets, options);
+    apply_edge_forces(snapshot.edges(), positions, &mut offsets, options);
     apply_gravity(order, positions, &mut offsets, options);
     move_nodes(order, positions, fixed, &offsets, temperature);
 }
@@ -475,11 +462,11 @@ mod tests {
         }
     }
 
-    fn spread_start(graph: &dyn GraphView) -> Positions {
+    fn spread_start(snapshot: &AdjacencySnapshot) -> Positions {
         let mut start = Positions::new();
-        for (ordinal, node) in graph.node_ids().into_iter().enumerate() {
+        for (ordinal, node) in snapshot.nodes().iter().enumerate() {
             let side = if ordinal % 2 == 0 { -160.0 } else { 160.0 };
-            start.insert(node, Point2::new(side, ordinal as f32 * 10.0));
+            start.insert(*node, Point2::new(side, ordinal as f32 * 10.0));
         }
         start
     }
@@ -488,8 +475,9 @@ mod tests {
     fn connected_pair_settles_without_collapsing() {
         let mut graph = MockGraph::empty();
         graph.push_edge(0, 1);
+        let snapshot = AdjacencySnapshot::capture(&graph);
         let layout = ForceLayout::with_options(quiet_options());
-        let result = layout.layout(&graph, &spread_start(&graph), &FixedNodes::default());
+        let result = layout.layout(&snapshot, &spread_start(&snapshot), &FixedNodes::default());
         let a = result
             .get(&NodeIndex::new(0))
             .copied()
@@ -505,6 +493,7 @@ mod tests {
     #[test]
     fn disconnected_nodes_drift_apart() {
         let graph = MockGraph::isolated(2);
+        let snapshot = AdjacencySnapshot::capture(&graph);
         let layout = ForceLayout::with_options(quiet_options());
         let mut start = Positions::new();
         start.insert(NodeIndex::new(0), Point2::new(-5.0, 0.0));
@@ -518,7 +507,7 @@ mod tests {
                 .copied()
                 .unwrap_or(Point2::ZERO))
         .length();
-        let result = layout.layout(&graph, &start, &FixedNodes::default());
+        let result = layout.layout(&snapshot, &start, &FixedNodes::default());
         let after = (result
             .get(&NodeIndex::new(1))
             .copied()
@@ -535,15 +524,16 @@ mod tests {
     #[test]
     fn pinned_nodes_hold_their_ground() {
         let graph = MockGraph::chain(3);
+        let snapshot = AdjacencySnapshot::capture(&graph);
         let layout = ForceLayout::with_options(quiet_options());
-        let start = spread_start(&graph);
+        let start = spread_start(&snapshot);
         let anchor = start
             .get(&NodeIndex::new(0))
             .copied()
             .unwrap_or(Point2::ZERO);
         let mut fixed = FixedNodes::default();
         fixed.insert(NodeIndex::new(0));
-        let result = layout.layout(&graph, &start, &fixed);
+        let result = layout.layout(&snapshot, &start, &fixed);
         assert_eq!(result.get(&NodeIndex::new(0)), Some(&anchor));
         assert_eq!(result.len(), 3);
     }
@@ -551,18 +541,20 @@ mod tests {
     #[test]
     fn repeated_runs_agree_exactly() {
         let graph = MockGraph::clique(5);
+        let snapshot = AdjacencySnapshot::capture(&graph);
         let layout = ForceLayout::with_options(quiet_options());
-        let start = spread_start(&graph);
-        let first = layout.layout(&graph, &start, &FixedNodes::default());
-        let second = layout.layout(&graph, &start, &FixedNodes::default());
+        let start = spread_start(&snapshot);
+        let first = layout.layout(&snapshot, &start, &FixedNodes::default());
+        let second = layout.layout(&snapshot, &start, &FixedNodes::default());
         assert_eq!(first, second);
     }
 
     #[test]
     fn empty_graph_yields_no_positions() {
         let graph = MockGraph::empty();
+        let snapshot = AdjacencySnapshot::capture(&graph);
         let layout = ForceLayout::with_options(quiet_options());
-        let result = layout.layout(&graph, &Positions::new(), &FixedNodes::default());
+        let result = layout.layout(&snapshot, &Positions::new(), &FixedNodes::default());
         assert!(result.is_empty());
     }
 
@@ -592,13 +584,14 @@ mod tests {
     #[test]
     fn small_graph_converges_without_overlaps() {
         let graph = MockGraph::chain(4);
+        let snapshot = AdjacencySnapshot::capture(&graph);
         let layout = ForceLayout::with_options(ForceOptions {
             iterations: 400,
             initial_temp: 32.0,
             cooling: 0.98,
             ..ForceOptions::default()
         });
-        let result = layout.layout(&graph, &spread_start(&graph), &FixedNodes::default());
+        let result = layout.layout(&snapshot, &spread_start(&snapshot), &FixedNodes::default());
         assert_eq!(result.len(), 4);
         assert!(!has_overlaps(&result, ForceOptions::default().node_size));
         for point in result.values() {

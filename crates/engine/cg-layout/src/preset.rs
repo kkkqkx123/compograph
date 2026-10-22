@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use compograph_graph::{FixedNodes, GraphView, Positions};
+use compograph_graph::{AdjacencySnapshot, FixedNodes, Positions};
 use compograph_types::Point2;
 
 use crate::engine::LayoutEngine;
@@ -23,20 +23,20 @@ impl PresetLayout {
 impl LayoutEngine for PresetLayout {
     fn layout(
         &self,
-        graph: &dyn GraphView,
+        graph: &AdjacencySnapshot,
         previous: &Positions,
         _fixed: &FixedNodes,
     ) -> Positions {
         let node_count = graph.node_count().max(1) as f32;
         let mut result: Positions = HashMap::new();
         let mut ordinal = 0.0f32;
-        for node in graph.node_ids() {
-            if let Some(position) = previous.get(&node) {
-                result.insert(node, *position);
+        for node in graph.nodes() {
+            if let Some(position) = previous.get(node) {
+                result.insert(*node, *position);
             } else {
                 let angle = ordinal / node_count * std::f32::consts::TAU;
                 result.insert(
-                    node,
+                    *node,
                     Point2::new(
                         self.fallback_radius * angle.cos(),
                         self.fallback_radius * angle.sin(),

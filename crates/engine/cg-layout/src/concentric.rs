@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 
-use compograph_graph::{FixedNodes, GraphView, NodeIndex, Positions};
+use compograph_graph::{AdjacencySnapshot, FixedNodes, NodeIndex, Positions};
 use compograph_types::Point2;
 
 use crate::engine::{CommonOptions, LayoutEngine};
@@ -109,8 +109,13 @@ impl ConcentricLayout {
 }
 
 impl LayoutEngine for ConcentricLayout {
-    fn layout(&self, graph: &dyn GraphView, previous: &Positions, fixed: &FixedNodes) -> Positions {
-        let mut ids = graph.node_ids();
+    fn layout(
+        &self,
+        graph: &AdjacencySnapshot,
+        previous: &Positions,
+        fixed: &FixedNodes,
+    ) -> Positions {
+        let mut ids = graph.nodes().to_vec();
         self.common.sort_ids(&mut ids, graph);
         let mut result: Positions = HashMap::new();
         if ids.is_empty() {
@@ -163,7 +168,7 @@ impl LayoutEngine for ConcentricLayout {
 
 /// Score per node: caller-supplied table entries win, the rest use degree.
 fn node_values(
-    graph: &dyn GraphView,
+    graph: &AdjacencySnapshot,
     ids: &[NodeIndex],
     scoring: &ConcentricScoring,
 ) -> HashMap<NodeIndex, f32> {
@@ -183,7 +188,8 @@ mod tests {
     fn empty_graph_places_nothing() {
         let graph = MockGraph::empty();
         let engine = ConcentricLayout::new(Point2::ZERO);
-        let positions = engine.layout(&graph, &Positions::new(), &FixedNodes::default());
+        let snapshot = AdjacencySnapshot::capture(&graph);
+        let positions = engine.layout(&snapshot, &Positions::new(), &FixedNodes::default());
         assert!(positions.is_empty());
     }
 
@@ -191,7 +197,8 @@ mod tests {
     fn lone_node_sits_at_the_center() {
         let graph = MockGraph::isolated(1);
         let engine = ConcentricLayout::new(Point2::new(3.0, 4.0));
-        let positions = engine.layout(&graph, &Positions::new(), &FixedNodes::default());
+        let snapshot = AdjacencySnapshot::capture(&graph);
+        let positions = engine.layout(&snapshot, &Positions::new(), &FixedNodes::default());
         assert_eq!(
             positions.get(&NodeIndex::new(0)),
             Some(&Point2::new(3.0, 4.0))
@@ -206,7 +213,8 @@ mod tests {
             graph.push_edge(leaf, 0);
         }
         let engine = ConcentricLayout::new(Point2::ZERO);
-        let positions = engine.layout(&graph, &Positions::new(), &FixedNodes::default());
+        let snapshot = AdjacencySnapshot::capture(&graph);
+        let positions = engine.layout(&snapshot, &Positions::new(), &FixedNodes::default());
         let hub = positions[&NodeIndex::new(0)];
         let hub_gap = (hub.x.powi(2) + hub.y.powi(2)).sqrt();
         for leaf in 1..5 {
@@ -225,7 +233,8 @@ mod tests {
             scoring: ConcentricScoring::Scores(values),
             ..ConcentricOptions::default()
         });
-        let positions = engine.layout(&graph, &Positions::new(), &FixedNodes::default());
+        let snapshot = AdjacencySnapshot::capture(&graph);
+        let positions = engine.layout(&snapshot, &Positions::new(), &FixedNodes::default());
         let inner = positions[&NodeIndex::new(2)];
         let outer = positions[&NodeIndex::new(0)];
         let inner_gap = (inner.x.powi(2) + inner.y.powi(2)).sqrt();
@@ -241,7 +250,8 @@ mod tests {
             avoid_overlap: false,
             ..ConcentricOptions::default()
         });
-        let positions = engine.layout(&graph, &Positions::new(), &FixedNodes::default());
+        let snapshot = AdjacencySnapshot::capture(&graph);
+        let positions = engine.layout(&snapshot, &Positions::new(), &FixedNodes::default());
         let mut gaps: Vec<f32> = (0..6)
             .map(|index| {
                 let point = positions[&NodeIndex::new(index)];

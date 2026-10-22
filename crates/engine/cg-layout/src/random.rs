@@ -1,6 +1,6 @@
 //! Layout that scatters nodes on a sunflower spiral inside a circle.
 
-use compograph_graph::{FixedNodes, GraphView, Positions};
+use compograph_graph::{AdjacencySnapshot, FixedNodes, Positions};
 use compograph_types::Point2;
 
 use crate::engine::LayoutEngine;
@@ -23,18 +23,18 @@ impl RandomLayout {
 impl LayoutEngine for RandomLayout {
     fn layout(
         &self,
-        graph: &dyn GraphView,
+        graph: &AdjacencySnapshot,
         _previous: &Positions,
         _fixed: &FixedNodes,
     ) -> Positions {
         let node_count = graph.node_count().max(1) as f32;
         let mut result: Positions = Positions::new();
-        for (ordinal, node) in graph.node_ids().into_iter().enumerate() {
+        for (ordinal, node) in graph.nodes().iter().enumerate() {
             let ordinal = ordinal as f32;
             let angle = ordinal * GOLDEN_ANGLE;
             let radius = self.radius * (ordinal / node_count).sqrt();
             result.insert(
-                node,
+                *node,
                 Point2::new(radius * angle.cos(), radius * angle.sin()),
             );
         }
@@ -56,7 +56,8 @@ mod tests {
     fn scatter_runs_against_the_view_without_a_store() {
         let graph = MockGraph::chain(4);
         let layout = RandomLayout::new(100.0);
-        let positions = layout.layout(&graph, &Positions::new(), &FixedNodes::default());
+        let snapshot = AdjacencySnapshot::capture(&graph);
+        let positions = layout.layout(&snapshot, &Positions::new(), &FixedNodes::default());
         assert_eq!(positions.len(), 4);
     }
 }

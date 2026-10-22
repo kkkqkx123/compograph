@@ -6,14 +6,14 @@
 
 use std::collections::HashMap;
 
-use compograph_graph::{GraphView, NodeIndex};
+use compograph_graph::{AdjacencySnapshot, NodeIndex};
 
 /// Score per node from an optional caller table with a degree fallback.
 ///
 /// A missing table means every node scores by degree; entries present in the
 /// table win and the rest still fall back to degree.
 pub(crate) fn scores_with_table(
-    graph: &dyn GraphView,
+    graph: &AdjacencySnapshot,
     ids: &[NodeIndex],
     table: Option<&HashMap<NodeIndex, f32>>,
 ) -> HashMap<NodeIndex, f32> {
@@ -130,7 +130,10 @@ mod tests {
 
     #[test]
     fn explicit_width_wins_over_largest_value() {
-        let ids = vec![compograph_graph::NodeIndex::new(0), compograph_graph::NodeIndex::new(1)];
+        let ids = vec![
+            compograph_graph::NodeIndex::new(0),
+            compograph_graph::NodeIndex::new(1),
+        ];
         let mut values = HashMap::new();
         values.insert(ids[0], 100.0);
         values.insert(ids[1], 0.0);
@@ -148,7 +151,10 @@ mod tests {
     fn equidistant_radii_share_one_gap() {
         let levels = vec![
             vec![compograph_graph::NodeIndex::new(0)],
-            vec![compograph_graph::NodeIndex::new(1), compograph_graph::NodeIndex::new(2)],
+            vec![
+                compograph_graph::NodeIndex::new(1),
+                compograph_graph::NodeIndex::new(2),
+            ],
             vec![compograph_graph::NodeIndex::new(3)],
         ];
         let radii = ring_radii(&levels, None, 34.0, false, true);

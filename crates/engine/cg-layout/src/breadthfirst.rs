@@ -10,7 +10,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use compograph_graph::{FixedNodes, GraphView, NodeIndex, Positions};
+use compograph_graph::{AdjacencySnapshot, FixedNodes, NodeIndex, Positions};
 use compograph_types::Point2;
 
 use crate::engine::{CommonOptions, LayoutEngine};
@@ -117,7 +117,12 @@ impl BreadthFirstLayout {
 }
 
 impl LayoutEngine for BreadthFirstLayout {
-    fn layout(&self, graph: &dyn GraphView, previous: &Positions, fixed: &FixedNodes) -> Positions {
+    fn layout(
+        &self,
+        graph: &AdjacencySnapshot,
+        previous: &Positions,
+        fixed: &FixedNodes,
+    ) -> Positions {
         let layers = compute_layers(graph, &self.options, &self.common);
         let mut result: Positions = HashMap::new();
         if layers.is_empty() {
@@ -153,11 +158,11 @@ impl LayoutEngine for BreadthFirstLayout {
 
 /// Layers of node identifiers from the outermost (roots) inward.
 fn compute_layers(
-    graph: &dyn GraphView,
+    graph: &AdjacencySnapshot,
     options: &BreadthFirstOptions,
     common: &CommonOptions,
 ) -> Vec<Vec<NodeIndex>> {
-    let mut ids = graph.node_ids();
+    let mut ids = graph.nodes().to_vec();
     common.sort_ids(&mut ids, graph);
     if ids.is_empty() {
         return Vec::new();
@@ -175,13 +180,14 @@ fn compute_layers(
     }
     while let Some(node) = queue.pop_front() {
         let next = depth[&node] + 1;
-        let mut outgoers = if options.directed {
+        // The snapshot hands out neighbours in index order already, so the
+        // traversal keeps that order without sorting a copy.
+        let outgoers = if options.directed {
             graph.successors(node)
         } else {
             graph.neighbors(node)
         };
-        outgoers.sort_unstable_by_key(|node| node.index());
-        for next_node in outgoers {
+        for &next_node in outgoers {
             if !present.contains(&next_node) || depth.contains_key(&next_node) {
                 continue;
             }
@@ -234,7 +240,7 @@ fn compute_layers(
 /// Default roots: sourceless nodes for directed traversal, otherwise the
 /// highest-degree node of each connected component.
 fn pick_roots(
-    graph: &dyn GraphView,
+    graph: &AdjacencySnapshot,
     ids: &[NodeIndex],
     options: &BreadthFirstOptions,
     present: &HashSet<NodeIndex>,
@@ -267,7 +273,7 @@ fn pick_roots(
         visited.insert(*seed);
         while let Some(node) = queue.pop_front() {
             component.push(node);
-            for neighbour in graph.neighbors(node) {
+            for &neighbour in graph.neighbors(node) {
                 if present.contains(&neighbour) && visited.insert(neighbour) {
                     queue.push_back(neighbour);
                 }
@@ -295,7 +301,7 @@ fn pick_roots(
 /// A repeated shift proves the graph is cyclic, in which case the adjustment
 /// stops and keeps the breadth-first depths computed so far.
 fn maximal_adjustment(
-    graph: &dyn GraphView,
+    graph: &AdjacencySnapshot,
     ids: &[NodeIndex],
     depth: &mut HashMap<NodeIndex, usize>,
 ) {
@@ -304,8 +310,8 @@ fn maximal_adjustment(
     while let Some(node) = queue.pop_front() {
         let deepest = graph
             .predecessors(node)
-            .into_iter()
-            .filter_map(|incoming| depth.get(&incoming).copied())
+            .iter()
+            .filter_map(|incoming| depth.get(incoming).copied())
             .max()
             .unwrap_or(0);
         let current = depth.get(&node).copied().unwrap_or(0);
@@ -319,7 +325,7 @@ fn maximal_adjustment(
                 return;
             }
             depth.insert(node, deepest + 1);
-            for outgoing in graph.successors(node) {
+            for &outgoing in graph.successors(node) {
                 queue.push_back(outgoing);
             }
         }
@@ -333,7 +339,7 @@ fn maximal_adjustment(
 /// (index within their layer divided by that layer's length); nodes without
 /// upper neighbours score zero and settle at the front.
 fn sort_layer_by_connectivity(
-    graph: &dyn GraphView,
+    graph: &AdjacencySnapshot,
     layer: &mut [NodeIndex],
     slot: &HashMap<NodeIndex, (usize, usize, usize)>,
 ) {
@@ -342,7 +348,7 @@ fn sort_layer_by_connectivity(
         let node_depth = slot.get(node).map(|entry| entry.0).unwrap_or(0);
         let mut total = 0.0f32;
         let mut samples = 0usize;
-        for neighbour in graph.neighbors(*node) {
+        for &neighbour in graph.neighbors(*node) {
             let Some((near_depth, near_len, near_index)) = slot.get(&neighbour).copied() else {
                 continue;
             };
@@ -442,7 +448,8 @@ mod tests {
     fn empty_graph_has_no_layers() {
         let graph = MockGraph::empty();
         let engine = BreadthFirstLayout::with_options(chain_options());
-        let positions = engine.layout(&graph, &Positions::new(), &FixedNodes::default());
+        let snapshot = AdjacencySnapshot::capture(&graph);
+        let positions = engine.layout(&snapshot, &Positions::new(), &FixedNodes::default());
         assert!(positions.is_empty());
     }
 
@@ -453,7 +460,8 @@ mod tests {
             directed: true,
             ..chain_options()
         });
-        let positions = engine.layout(&graph, &Positions::new(), &FixedNodes::default());
+        let snapshot = AdjacencySnapshot::capture(&graph);
+        let positions = engine.layout(&snapshot, &Positions::new(), &FixedNodes::default());
         assert_eq!(positions.len(), 4);
         let depths: Vec<f32> = (0..4)
             .map(|index| positions[&NodeIndex::new(index)].y)
@@ -469,7 +477,8 @@ mod tests {
             directed: true,
             ..chain_options()
         };
-        let layers = compute_layers(&graph, &options, &CommonOptions::default());
+        let snapshot = AdjacencySnapshot::capture(&graph);
+        let layers = compute_layers(&snapshot, &options, &CommonOptions::default());
         assert_eq!(layers.len(), 2);
         assert_eq!(layers[0], vec![NodeIndex::new(0)]);
         assert_eq!(layers[1].len(), 2);
@@ -483,7 +492,8 @@ mod tests {
             directed: true,
             ..chain_options()
         };
-        let layers = compute_layers(&graph, &options, &CommonOptions::default());
+        let snapshot = AdjacencySnapshot::capture(&graph);
+        let layers = compute_layers(&snapshot, &options, &CommonOptions::default());
         assert_eq!(layers[0], vec![NodeIndex::new(2)]);
         assert!(layers.iter().flatten().count() == 3);
     }
@@ -497,7 +507,8 @@ mod tests {
             maximal: true,
             ..chain_options()
         };
-        let layers = compute_layers(&graph, &options, &CommonOptions::default());
+        let snapshot = AdjacencySnapshot::capture(&graph);
+        let layers = compute_layers(&snapshot, &options, &CommonOptions::default());
         assert!(!layers.is_empty());
         assert!(layers.iter().flatten().count() == 2);
     }
@@ -510,8 +521,9 @@ mod tests {
             direction: BfsDirection::Upward,
             ..chain_options()
         });
-        let below = down.layout(&graph, &Positions::new(), &FixedNodes::default());
-        let above = up.layout(&graph, &Positions::new(), &FixedNodes::default());
+        let snapshot = AdjacencySnapshot::capture(&graph);
+        let below = down.layout(&snapshot, &Positions::new(), &FixedNodes::default());
+        let above = up.layout(&snapshot, &Positions::new(), &FixedNodes::default());
         for index in 0..3 {
             let node = NodeIndex::new(index);
             assert!((below[&node].x - above[&node].x).abs() < 1e-3);

@@ -4,17 +4,17 @@ use std::collections::{HashSet, VecDeque};
 use std::time::Instant;
 
 use compograph_graph::{
-    FixedNodes, GraphChangeEvent, GraphStore, GraphView, NodeIndex, Positions, subscribe_graph,
+    AdjacencySnapshot, FixedNodes, GraphChangeEvent, GraphStore, NodeIndex, Positions,
+    subscribe_graph,
 };
 use gpui::{App, Context, Entity, Subscription, Task};
 
 use crate::anim::{Easing, PositionTransition};
 use crate::compound::{CompoundSnapshot, apply_compound_postprocess};
 use crate::engine::{CommonOptions, LayoutEngine};
-use crate::force::{ForceSimulation, snapshot_of};
+use crate::force::ForceSimulation;
 use crate::lifecycle::LayoutEvent;
 use crate::reaction::{LAYOUT_FILTER, LayoutWork, work_for};
-use crate::static_view::StaticView;
 
 /// Half extent of a node body used for compound group separation.
 const COMPOUND_HALF_EXTENT: f32 = 12.0;
@@ -91,9 +91,9 @@ impl LayoutDriver {
         engine: Box<dyn LayoutEngine>,
     ) -> Self {
         let store_snapshot = store.read(cx);
-        let view: &dyn GraphView = store_snapshot;
+        let snapshot = AdjacencySnapshot::capture(store_snapshot);
         let started = Instant::now();
-        let mut positions = engine.layout(view, &Positions::new(), &FixedNodes::default());
+        let mut positions = engine.layout(&snapshot, &Positions::new(), &FixedNodes::default());
         polish_compound(store_snapshot, &mut positions);
         let last_refine_ms = started.elapsed().as_secs_f64() * 1000.0;
         let subscription = subscribe_graph(cx, store, LAYOUT_FILTER, {
@@ -318,8 +318,8 @@ impl LayoutDriver {
         let name = engine.name();
         self.record(LayoutEvent::Started { engine: name });
         let store_snapshot = store.read(cx);
-        let view: &dyn GraphView = store_snapshot;
-        let mut positions = engine.layout(view, &self.positions, &self.pinned);
+        let snapshot = AdjacencySnapshot::capture(store_snapshot);
+        let mut positions = engine.layout(&snapshot, &self.positions, &self.pinned);
         polish_compound(store_snapshot, &mut positions);
         self.positions = positions;
         self.engine = engine;
@@ -348,8 +348,8 @@ impl LayoutDriver {
         engine.set_common(self.common);
         let name = engine.name();
         let store_snapshot = store.read(cx);
-        let view: &dyn GraphView = store_snapshot;
-        let mut target = engine.layout(view, &self.positions, &self.pinned);
+        let snapshot = AdjacencySnapshot::capture(store_snapshot);
+        let mut target = engine.layout(&snapshot, &self.positions, &self.pinned);
         polish_compound(store_snapshot, &mut target);
         self.engine = engine;
         self.placements_since_full_run = 0;
@@ -425,10 +425,10 @@ impl LayoutDriver {
                 let name = self.engine.name();
                 self.record(LayoutEvent::Started { engine: name });
                 let store_snapshot = store.read(cx);
-                let view: &dyn GraphView = store_snapshot;
+                let snapshot = AdjacencySnapshot::capture(store_snapshot);
                 let previous = std::mem::take(&mut self.positions);
                 let started = Instant::now();
-                let mut positions = self.engine.layout(view, &previous, &self.pinned);
+                let mut positions = self.engine.layout(&snapshot, &previous, &self.pinned);
                 polish_compound(store_snapshot, &mut positions);
                 self.positions = positions;
                 self.last_refine_ms = started.elapsed().as_secs_f64() * 1000.0;
@@ -448,14 +448,16 @@ impl LayoutDriver {
         self.chunks_written = 0;
         let generation = self.generation;
         let engine_name = self.engine.name();
-        self.record(LayoutEvent::Started { engine: engine_name });
+        self.record(LayoutEvent::Started {
+            engine: engine_name,
+        });
         let store_snapshot = store.read(cx);
         let compound = CompoundSnapshot::capture(store_snapshot);
-        let snapshot = snapshot_of(store_snapshot as &dyn GraphView);
-        let live: HashSet<NodeIndex> = snapshot.nodes.iter().copied().collect();
+        let mut snapshot = AdjacencySnapshot::capture(store_snapshot);
+        let live: HashSet<NodeIndex> = snapshot.nodes().iter().copied().collect();
         let mut working = self.positions.clone();
         working.retain(|node, _| live.contains(node));
-        for node in snapshot.nodes.iter() {
+        for node in snapshot.nodes().iter() {
             if !working.contains_key(node) {
                 working.insert(*node, compograph_types::Point2::ZERO);
             }
@@ -468,23 +470,23 @@ impl LayoutDriver {
                 let mut working = working;
                 loop {
                     let pinned_chunk = pinned.clone();
-                    let snapshot_chunk = snapshot.clone();
                     let outcome = cx
                         .background_executor()
                         .spawn(async move {
                             simulation.advance(
-                                &snapshot_chunk,
+                                &snapshot,
                                 &mut working,
                                 &pinned_chunk,
                                 BACKGROUND_CHUNK_ITERATIONS,
                             );
                             let settled = simulation.is_settled();
-                            (simulation, working, settled)
+                            (simulation, working, snapshot, settled)
                         })
                         .await;
-                    let (simulation_back, working_back, settled) = outcome;
+                    let (simulation_back, working_back, snapshot_back, settled) = outcome;
                     simulation = simulation_back;
                     working = working_back;
+                    snapshot = snapshot_back;
                     let stale = weak
                         .update(&mut *cx, |this: &mut Self, cx| {
                             if this.generation != generation {
@@ -545,8 +547,8 @@ impl LayoutDriver {
                     self.record(LayoutEvent::Started { engine: name });
                     let previous = std::mem::take(&mut self.positions);
                     let store_snapshot = store.read(cx);
-                    let view: &dyn GraphView = store_snapshot;
-                    let mut positions = self.engine.layout(view, &previous, &self.pinned);
+                    let snapshot = AdjacencySnapshot::capture(store_snapshot);
+                    let mut positions = self.engine.layout(&snapshot, &previous, &self.pinned);
                     polish_compound(store_snapshot, &mut positions);
                     self.positions = positions;
                     self.positions_version += 1;
@@ -568,8 +570,10 @@ impl LayoutDriver {
         let name = self.engine.name();
         self.record(LayoutEvent::Started { engine: name });
         let store_snapshot = store.read(cx);
-        let view: &dyn GraphView = store_snapshot;
-        let mut positions = self.engine.layout(view, &Positions::new(), &self.pinned);
+        let snapshot = AdjacencySnapshot::capture(store_snapshot);
+        let mut positions = self
+            .engine
+            .layout(&snapshot, &Positions::new(), &self.pinned);
         polish_compound(store_snapshot, &mut positions);
         self.positions = positions;
         self.positions_version += 1;
@@ -592,10 +596,12 @@ impl LayoutDriver {
         self.chunks_written = 0;
         let generation = self.generation;
         let engine_name = self.engine.name();
-        self.record(LayoutEvent::Started { engine: engine_name });
+        self.record(LayoutEvent::Started {
+            engine: engine_name,
+        });
         let live = store.read(cx);
         let compound = CompoundSnapshot::capture(live);
-        let snapshot = snapshot_of(live as &dyn GraphView);
+        let snapshot = AdjacencySnapshot::capture(live);
         let previous = self.positions.clone();
         let pinned = self.pinned.clone();
         let engine_name = self.engine.name();
@@ -607,8 +613,8 @@ impl LayoutDriver {
                     .spawn(async move {
                         let engine = crate::registry::LayoutRegistry::engine_for(engine_name)?;
                         let mut seeded = previous;
-                        seeded.retain(|node, _| snapshot.nodes.contains(node));
-                        Some(engine.layout(&StaticView::new(snapshot.clone()), &seeded, &pinned))
+                        seeded.retain(|node, _| snapshot.contains(*node));
+                        Some(engine.layout(&snapshot, &seeded, &pinned))
                     })
                     .await;
                 weak.update(&mut *cx, |this: &mut Self, cx| {
