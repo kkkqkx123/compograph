@@ -5,7 +5,7 @@
 //! live in separate updates so the queue drains in between.
 
 use compograph_graph::{
-    ChangeFilter, GraphDocument, GraphStore, Positions, subscribe_graph, sync_document,
+    ChangeFilter, GraphDocument, GraphStore, GraphView, Positions, subscribe_graph, sync_document,
 };
 use gpui::{App, AppContext, Context, Entity, Subscription, TestAppContext};
 
@@ -298,6 +298,67 @@ fn sync_updates_in_place_and_replaces_on_reshape(cx: &mut TestAppContext) {
             };
             assert!(sync_document(graph, cx, &bad, &mut positions).is_err());
             assert_eq!(graph.node_count(), 2);
+        });
+    });
+}
+
+#[gpui::test]
+fn compound_adjacency_follows_structure_changes(cx: &mut TestAppContext) {
+    let (store, _) = setup(cx);
+    let (a, b, c) = cx.update(|cx| {
+        store.update(cx, |graph, cx| {
+            let a = graph.add_node(cx, "a");
+            let b = graph.add_node(cx, "b");
+            let c = graph.add_node(cx, "c");
+            graph.add_edge(cx, a, b, 1.0);
+            graph.add_edge(cx, b, c, 1.0);
+            (a, b, c)
+        })
+    });
+    cx.update(|cx| {
+        store.update(cx, |graph, cx| {
+            {
+                let view: &dyn GraphView = graph;
+                assert_eq!(view.neighbors(b), vec![a, c]);
+                assert_eq!(view.degree(b), 2);
+            }
+
+            graph.set_parent(cx, c, Some(b)).expect("parent mounts");
+            {
+                let view: &dyn GraphView = graph;
+                assert_eq!(view.neighbors(b), vec![a, c]);
+            }
+
+            assert!(graph.set_collapsed(cx, b, true));
+            {
+                let view: &dyn GraphView = graph;
+                assert_eq!(view.neighbors(b), vec![a, b]);
+                assert_eq!(view.successors(b), vec![b]);
+                assert_eq!(view.predecessors(b), vec![a, b]);
+                assert_eq!(view.degree(b), 2);
+                assert_eq!(view.node_ids(), vec![a, b]);
+            }
+
+            assert!(graph.undo(cx));
+            {
+                let view: &dyn GraphView = graph;
+                assert_eq!(view.neighbors(b), vec![a, c]);
+                assert_eq!(view.degree(b), 2);
+            }
+
+            let d = graph.add_node(cx, "d");
+            let edge = graph.add_edge(cx, b, d, 1.0);
+            {
+                let view: &dyn GraphView = graph;
+                assert_eq!(view.neighbors(b), vec![a, c, d]);
+            }
+            assert!(graph.remove_edge(cx, edge).is_some());
+            {
+                let view: &dyn GraphView = graph;
+                assert_eq!(view.neighbors(b), vec![a, c]);
+                assert_eq!(view.successors(b), vec![c]);
+                assert_eq!(view.predecessors(b), vec![a]);
+            }
         });
     });
 }

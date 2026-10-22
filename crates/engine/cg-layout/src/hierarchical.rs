@@ -86,8 +86,8 @@ impl LayoutEngine for HierarchicalLayout {
         if layers.is_empty() {
             return result;
         }
-        for (rank, layer) in layers.iter().enumerate() {
-            for (index, node) in layer.iter().enumerate() {
+        for rank in 0..layers.len() {
+            for (index, node) in layers.run(rank).iter().enumerate() {
                 if fixed.contains(node)
                     && let Some(held) = previous.get(node)
                 {
@@ -105,21 +105,82 @@ impl LayoutEngine for HierarchicalLayout {
     }
 }
 
+/// Node identifiers grouped into contiguous runs.
+///
+/// Rankings and strongly connected groups both produce one run per layer or
+/// group. A flat run array keeps a chain-shaped graph from allocating one
+/// vector per node.
+struct NodeRuns {
+    /// Start offset of every run; one extra entry closes the last run.
+    start: Vec<usize>,
+    /// Members grouped by run.
+    members: Vec<NodeIndex>,
+}
+
+impl NodeRuns {
+    fn empty() -> Self {
+        Self {
+            start: vec![0],
+            members: Vec::new(),
+        }
+    }
+
+    /// Members of one run.
+    fn run(&self, index: usize) -> &[NodeIndex] {
+        &self.members[self.start[index]..self.start[index + 1]]
+    }
+
+    /// Mutable members of one run.
+    fn run_mut(&mut self, index: usize) -> &mut [NodeIndex] {
+        let from = self.start[index];
+        let to = self.start[index + 1];
+        &mut self.members[from..to]
+    }
+
+    fn len(&self) -> usize {
+        self.start.len() - 1
+    }
+
+    fn is_empty(&self) -> bool {
+        self.members.is_empty()
+    }
+
+    /// Groups nodes into one run per rank.
+    fn from_ranks(ids: &[NodeIndex], ranks: &[usize]) -> Self {
+        let rank_count = ranks.iter().copied().max().map(|max| max + 1).unwrap_or(0);
+        let mut start = vec![0usize; rank_count + 1];
+        for &rank in ranks {
+            start[rank + 1] += 1;
+        }
+        for index in 1..start.len() {
+            start[index] += start[index - 1];
+        }
+        let mut members = vec![NodeIndex::new(0); ids.len()];
+        let mut cursor = start.clone();
+        for (index, node) in ids.iter().enumerate() {
+            let rank = ranks[index];
+            let slot = cursor[rank];
+            members[slot] = *node;
+            cursor[rank] += 1;
+        }
+        Self { start, members }
+    }
+}
+
 /// Rank layers from the outermost (sourceless) inward, ordered to reduce crossings.
-fn compute_layers(graph: &AdjacencySnapshot) -> Vec<Vec<NodeIndex>> {
+fn compute_layers(graph: &AdjacencySnapshot) -> NodeRuns {
     let mut ids = graph.nodes().to_vec();
     ids.sort_unstable_by_key(|node| node.index());
     if ids.is_empty() {
-        return Vec::new();
+        return NodeRuns::empty();
     }
-    let rank = component_ranks(graph, &ids);
-    let max_rank = rank.values().copied().max().unwrap_or(0);
-    let mut layers: Vec<Vec<NodeIndex>> = vec![Vec::new(); max_rank + 1];
-    for node in &ids {
-        layers[rank[node]].push(*node);
+    let mut position = HashMap::with_capacity(ids.len());
+    for (index, node) in ids.iter().enumerate() {
+        position.insert(*node, index);
     }
-    order_by_barycenter(graph, &mut layers);
-    layers.retain(|layer| !layer.is_empty());
+    let ranks = component_ranks(graph, &ids, &position);
+    let mut layers = NodeRuns::from_ranks(&ids, &ranks);
+    order_by_barycenter(graph, &position, &mut layers);
     layers
 }
 
@@ -130,28 +191,46 @@ fn compute_layers(graph: &AdjacencySnapshot) -> Vec<Vec<NodeIndex>> {
 /// exact longest-path ranks. The rank relaxes along the group graph in one
 /// pass over its edges, so the whole ranking costs time linear in the graph
 /// size instead of one sweep per group.
-fn component_ranks(graph: &AdjacencySnapshot, ids: &[NodeIndex]) -> HashMap<NodeIndex, usize> {
+fn component_ranks(
+    graph: &AdjacencySnapshot,
+    ids: &[NodeIndex],
+    position: &HashMap<NodeIndex, usize>,
+) -> Vec<usize> {
     let groups = strongly_connected_groups(graph, ids);
-    let mut member_of: HashMap<NodeIndex, usize> = HashMap::new();
-    for (group, members) in groups.iter().enumerate() {
-        for node in members {
-            member_of.insert(*node, group);
+    let mut member_of = vec![0usize; ids.len()];
+    for group in 0..groups.len() {
+        for node in groups.run(group) {
+            member_of[position[node]] = group;
         }
     }
-    // Group graph: which groups feed which, and how many feed each group.
-    let mut followers: Vec<Vec<usize>> = vec![Vec::new(); groups.len()];
-    let mut incoming = vec![0usize; groups.len()];
-    let mut linked: HashSet<(usize, usize)> = HashSet::new();
-    for node in ids {
-        let group = member_of[node];
+    // Group graph edges, deduplicated, then stored in one flat run per group.
+    let mut links: Vec<(usize, usize)> = Vec::new();
+    for (index, node) in ids.iter().enumerate() {
+        let group = member_of[index];
         for &target in graph.successors(*node) {
-            let other = member_of[&target];
-            if other == group || !linked.insert((group, other)) {
-                continue;
+            let other = member_of[position[&target]];
+            if other != group {
+                links.push((group, other));
             }
-            followers[group].push(other);
-            incoming[other] += 1;
         }
+    }
+    links.sort_unstable();
+    links.dedup();
+    let mut starts = vec![0usize; groups.len() + 1];
+    for &(group, _) in &links {
+        starts[group + 1] += 1;
+    }
+    for index in 1..starts.len() {
+        starts[index] += starts[index - 1];
+    }
+    let mut targets = vec![0usize; links.len()];
+    let mut incoming = vec![0usize; groups.len()];
+    let mut cursor = starts.clone();
+    for &(group, other) in &links {
+        let slot = cursor[group];
+        targets[slot] = other;
+        cursor[group] += 1;
+        incoming[other] += 1;
     }
     // Longest path over the group graph: a group ranks one step behind its
     // deepest predecessor.
@@ -160,7 +239,7 @@ fn component_ranks(graph: &AdjacencySnapshot, ids: &[NodeIndex]) -> HashMap<Node
         .filter(|group| incoming[*group] == 0)
         .collect();
     while let Some(group) = ready.pop() {
-        for &other in &followers[group] {
+        for &other in &targets[starts[group]..starts[group + 1]] {
             group_rank[other] = group_rank[other].max(group_rank[group] + 1);
             incoming[other] -= 1;
             if incoming[other] == 0 {
@@ -168,9 +247,9 @@ fn component_ranks(graph: &AdjacencySnapshot, ids: &[NodeIndex]) -> HashMap<Node
             }
         }
     }
-    let mut rank = HashMap::new();
-    for node in ids {
-        rank.insert(*node, group_rank[member_of[node]]);
+    let mut rank = vec![0usize; ids.len()];
+    for index in 0..ids.len() {
+        rank[index] = group_rank[member_of[index]];
     }
     rank
 }
@@ -179,12 +258,13 @@ fn component_ranks(graph: &AdjacencySnapshot, ids: &[NodeIndex]) -> HashMap<Node
 ///
 /// Each group is sorted by node index, and groups are ordered by their
 /// smallest member, so repeated runs agree.
-fn strongly_connected_groups(graph: &AdjacencySnapshot, ids: &[NodeIndex]) -> Vec<Vec<NodeIndex>> {
+fn strongly_connected_groups(graph: &AdjacencySnapshot, ids: &[NodeIndex]) -> NodeRuns {
     let mut marker: HashMap<NodeIndex, usize> = HashMap::new();
     let mut low: HashMap<NodeIndex, usize> = HashMap::new();
     let mut stacked: HashSet<NodeIndex> = HashSet::new();
     let mut trail: Vec<NodeIndex> = Vec::new();
-    let mut groups: Vec<Vec<NodeIndex>> = Vec::new();
+    let mut groups = NodeRuns::empty();
+    let mut group: Vec<NodeIndex> = Vec::new();
     let mut order = 0usize;
     for root in ids {
         if marker.contains_key(root) {
@@ -216,7 +296,7 @@ fn strongly_connected_groups(graph: &AdjacencySnapshot, ids: &[NodeIndex]) -> Ve
                 low.insert(source, considering);
             }
             if low[&node] == marker[&node] {
-                let mut group = Vec::new();
+                group.clear();
                 while let Some(member) = trail.pop() {
                     stacked.remove(&member);
                     group.push(member);
@@ -225,52 +305,76 @@ fn strongly_connected_groups(graph: &AdjacencySnapshot, ids: &[NodeIndex]) -> Ve
                     }
                 }
                 group.sort_unstable_by_key(|member| member.index());
-                groups.push(group);
+                groups.members.extend_from_slice(&group);
+                groups.start.push(groups.members.len());
             }
         }
     }
-    groups.sort_unstable_by_key(|group| {
-        group
-            .iter()
+    let mut order: Vec<usize> = (0..groups.len()).collect();
+    order.sort_unstable_by_key(|group| {
+        groups
+            .run(*group)
+            .first()
             .map(|node| node.index())
-            .min()
             .unwrap_or(usize::MAX)
     });
-    groups
+    let mut sorted = NodeRuns::empty();
+    let mut members = Vec::with_capacity(groups.members.len());
+    for group in order {
+        members.extend_from_slice(groups.run(group));
+        sorted.start.push(members.len());
+    }
+    sorted.members = members;
+    sorted
 }
 
 /// Reorders layers by barycenter sweeps: one pass downward using predecessor
 /// positions, one pass upward using successor positions.
-fn order_by_barycenter(graph: &AdjacencySnapshot, layers: &mut [Vec<NodeIndex>]) {
-    downward_pass(graph, layers);
-    upward_pass(graph, layers);
+fn order_by_barycenter(
+    graph: &AdjacencySnapshot,
+    position: &HashMap<NodeIndex, usize>,
+    layers: &mut NodeRuns,
+) {
+    let mut order = vec![f32::NAN; layers.members.len()];
+    let mut scored: Vec<(NodeIndex, f32)> = Vec::new();
+    downward_pass(graph, position, layers, &mut order, &mut scored);
+    upward_pass(graph, position, layers, &mut order, &mut scored);
 }
 
 /// Sorts each layer by the mean order position of its predecessors.
-fn downward_pass(graph: &AdjacencySnapshot, layers: &mut [Vec<NodeIndex>]) {
-    let mut order: HashMap<NodeIndex, f32> = HashMap::new();
-    for (rank, layer) in layers.iter_mut().enumerate() {
+fn downward_pass(
+    graph: &AdjacencySnapshot,
+    position: &HashMap<NodeIndex, usize>,
+    layers: &mut NodeRuns,
+    order: &mut [f32],
+    scored: &mut Vec<(NodeIndex, f32)>,
+) {
+    order.fill(f32::NAN);
+    let mut placed = 0usize;
+    for rank in 0..layers.len() {
+        let layer = layers.run_mut(rank);
         if rank == 0 {
             for (index, node) in layer.iter().enumerate() {
-                order.insert(*node, index as f32);
+                order[position[node]] = index as f32;
             }
+            placed += layer.len();
             continue;
         }
-        let current = std::mem::take(layer);
-        let mut scored: Vec<(NodeIndex, f32)> = Vec::with_capacity(current.len());
-        for node in &current {
+        scored.clear();
+        for node in layer.iter() {
             let mut total = 0.0f32;
             let mut samples = 0usize;
             for &source in graph.predecessors(*node) {
-                if let Some(position) = order.get(&source) {
-                    total += *position;
+                let score = order[position[&source]];
+                if score.is_finite() {
+                    total += score;
                     samples += 1;
                 }
             }
             scored.push((
                 *node,
                 if samples == 0 {
-                    order.len() as f32
+                    placed as f32
                 } else {
                     total / samples as f32
                 },
@@ -281,43 +385,52 @@ fn downward_pass(graph: &AdjacencySnapshot, layers: &mut [Vec<NodeIndex>]) {
                 .unwrap_or(std::cmp::Ordering::Equal)
                 .then_with(|| a.0.index().cmp(&b.0.index()))
         });
-        let reordered: Vec<NodeIndex> = scored.into_iter().map(|(node, _)| node).collect();
-        for (index, node) in reordered.iter().enumerate() {
-            order.insert(*node, index as f32);
+        for (index, (node, _)) in scored.iter().enumerate() {
+            layer[index] = *node;
+            order[position[node]] = index as f32;
         }
-        *layer = reordered;
+        placed += layer.len();
     }
 }
 
 /// Sorts each layer by the mean order position of its successors.
-fn upward_pass(graph: &AdjacencySnapshot, layers: &mut [Vec<NodeIndex>]) {
+fn upward_pass(
+    graph: &AdjacencySnapshot,
+    position: &HashMap<NodeIndex, usize>,
+    layers: &mut NodeRuns,
+    order: &mut [f32],
+    scored: &mut Vec<(NodeIndex, f32)>,
+) {
     if layers.is_empty() {
         return;
     }
-    let mut order: HashMap<NodeIndex, f32> = HashMap::new();
+    order.fill(f32::NAN);
+    let mut placed = 0usize;
     let last = layers.len() - 1;
-    for (rank, layer) in layers.iter_mut().enumerate().rev() {
+    for rank in (0..layers.len()).rev() {
+        let layer = layers.run_mut(rank);
         if rank == last {
             for (index, node) in layer.iter().enumerate() {
-                order.insert(*node, index as f32);
+                order[position[node]] = index as f32;
             }
+            placed += layer.len();
             continue;
         }
-        let current = std::mem::take(layer);
-        let mut scored: Vec<(NodeIndex, f32)> = Vec::with_capacity(current.len());
-        for node in &current {
+        scored.clear();
+        for node in layer.iter() {
             let mut total = 0.0f32;
             let mut samples = 0usize;
             for &outgoing in graph.successors(*node) {
-                if let Some(position) = order.get(&outgoing) {
-                    total += *position;
+                let score = order[position[&outgoing]];
+                if score.is_finite() {
+                    total += score;
                     samples += 1;
                 }
             }
             scored.push((
                 *node,
                 if samples == 0 {
-                    order.len() as f32
+                    placed as f32
                 } else {
                     total / samples as f32
                 },
@@ -328,22 +441,22 @@ fn upward_pass(graph: &AdjacencySnapshot, layers: &mut [Vec<NodeIndex>]) {
                 .unwrap_or(std::cmp::Ordering::Equal)
                 .then_with(|| a.0.index().cmp(&b.0.index()))
         });
-        let reordered: Vec<NodeIndex> = scored.into_iter().map(|(node, _)| node).collect();
-        for (index, node) in reordered.iter().enumerate() {
-            order.insert(*node, index as f32);
+        for (index, (node, _)) in scored.iter().enumerate() {
+            layer[index] = *node;
+            order[position[node]] = index as f32;
         }
-        *layer = reordered;
+        placed += layer.len();
     }
 }
 
 /// Coordinates of one node from its rank, index and the layout direction.
 fn rank_position(
     options: &HierarchicalOptions,
-    layers: &[Vec<NodeIndex>],
+    layers: &NodeRuns,
     rank: usize,
     index: usize,
 ) -> Point2 {
-    let layer_size = layers[rank].len().max(1);
+    let layer_size = layers.run(rank).len().max(1);
     let rank_count = layers.len().max(1);
     let min_gap = if options.avoid_overlap {
         options.node_size

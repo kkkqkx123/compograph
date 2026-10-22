@@ -119,6 +119,7 @@ impl LayoutEngine for ForceLayout {
 pub struct ForceSimulation {
     options: ForceOptions,
     temperature: f32,
+    workspace: ForceWorkspace,
 }
 
 impl ForceSimulation {
@@ -127,6 +128,7 @@ impl ForceSimulation {
         Self {
             options,
             temperature,
+            workspace: ForceWorkspace::new(),
         }
     }
 
@@ -136,6 +138,10 @@ impl ForceSimulation {
     }
 
     /// Runs up to `iterations` steps, stopping early below the minimum temperature.
+    ///
+    /// `positions` must cover every node of `snapshot`; the caller seeds new
+    /// nodes before advancing, so the simulation can address nodes by their
+    /// snapshot position instead of hashing every pair.
     pub fn advance(
         &mut self,
         snapshot: &AdjacencySnapshot,
@@ -143,13 +149,79 @@ impl ForceSimulation {
         fixed: &FixedNodes,
         iterations: usize,
     ) {
+        self.workspace.load(snapshot, positions);
         for _ in 0..iterations {
             if self.temperature < self.options.min_temp {
                 break;
             }
-            simulation_step(snapshot, positions, fixed, &self.options, self.temperature);
+            self.workspace
+                .step(snapshot, fixed, &self.options, self.temperature);
             self.temperature *= self.options.cooling;
         }
+        self.workspace.store(snapshot, positions);
+    }
+}
+
+/// Flat coordinate and offset buffers reused across simulation steps.
+///
+/// Addressing nodes by their snapshot position keeps the pairwise repulsion
+/// loop free of hash lookups; only a snapshot edge whose endpoint is missing
+/// from the node list falls back to `index_of`.
+struct ForceWorkspace {
+    coordinates: Vec<Point2>,
+    offsets: Vec<Vec2>,
+}
+
+impl ForceWorkspace {
+    fn new() -> Self {
+        Self {
+            coordinates: Vec::new(),
+            offsets: Vec::new(),
+        }
+    }
+
+    fn load(&mut self, snapshot: &AdjacencySnapshot, positions: &Positions) {
+        self.coordinates.clear();
+        self.coordinates
+            .extend(snapshot.nodes().iter().map(|node| positions[node]));
+        self.offsets.clear();
+        self.offsets.resize(snapshot.node_count(), Vec2::ZERO);
+    }
+
+    fn store(&self, snapshot: &AdjacencySnapshot, positions: &mut Positions) {
+        for (node, point) in snapshot.nodes().iter().zip(&self.coordinates) {
+            positions.insert(*node, *point);
+        }
+    }
+
+    fn step(
+        &mut self,
+        snapshot: &AdjacencySnapshot,
+        fixed: &FixedNodes,
+        options: &ForceOptions,
+        temperature: f32,
+    ) {
+        self.offsets.fill(Vec2::ZERO);
+        apply_repulsion(
+            snapshot.nodes(),
+            &self.coordinates,
+            &mut self.offsets,
+            options,
+        );
+        apply_edge_forces(
+            snapshot,
+            &self.coordinates,
+            &mut self.offsets,
+            options,
+        );
+        apply_gravity(&self.coordinates, &mut self.offsets, options);
+        move_nodes(
+            snapshot.nodes(),
+            &mut self.coordinates,
+            fixed,
+            &self.offsets,
+            temperature,
+        );
     }
 }
 
@@ -210,58 +282,36 @@ fn deterministic_angle(node: NodeIndex, ordinal: usize) -> f32 {
     unit * std::f32::consts::TAU
 }
 
-fn simulation_step(
-    snapshot: &AdjacencySnapshot,
-    positions: &mut Positions,
-    fixed: &FixedNodes,
-    options: &ForceOptions,
-    temperature: f32,
-) {
-    let order = snapshot.nodes();
-    let mut offsets: HashMap<NodeIndex, Vec2> = HashMap::new();
-    for node in order {
-        offsets.insert(*node, Vec2::ZERO);
-    }
-    apply_repulsion(order, positions, &mut offsets, options);
-    apply_edge_forces(snapshot.edges(), positions, &mut offsets, options);
-    apply_gravity(order, positions, &mut offsets, options);
-    move_nodes(order, positions, fixed, &offsets, temperature);
-}
-
 /// Pairwise repulsion with an overlap fast path for touching boxes.
 fn apply_repulsion(
     order: &[NodeIndex],
-    positions: &Positions,
-    offsets: &mut HashMap<NodeIndex, Vec2>,
+    coordinates: &[Point2],
+    offsets: &mut [Vec2],
     options: &ForceOptions,
 ) {
-    for (left, node_a) in order.iter().enumerate() {
-        let Some(a) = positions.get(node_a) else {
-            continue;
-        };
-        for node_b in order.iter().skip(left + 1) {
-            let Some(b) = positions.get(node_b) else {
-                continue;
-            };
+    for left in 0..order.len() {
+        let a = coordinates[left];
+        for right in (left + 1)..order.len() {
+            let b = coordinates[right];
             let mut dx = b.x - a.x;
             let mut dy = b.y - a.y;
             if dx == 0.0 && dy == 0.0 {
-                let angle = deterministic_angle(*node_b, left);
+                let angle = deterministic_angle(order[right], left);
                 dx = angle.cos();
                 dy = angle.sin();
             }
-            let overlap = overlap_amount(*a, *b, dx, dy, options.node_size);
+            let overlap = overlap_amount(a, b, dx, dy, options.node_size);
             let distance = (dx * dx + dy * dy).sqrt().max(0.5);
             let (force_x, force_y) = if overlap > 0.0 {
                 let force = options.overlap * overlap;
                 (force * dx / distance, force * dy / distance)
             } else {
-                let clipped = clipped_distance(*a, *b, dx, dy, options.node_size).max(1.0);
+                let clipped = clipped_distance(a, b, dx, dy, options.node_size).max(1.0);
                 let force = 2.0 * options.repulsion / (clipped * clipped);
                 (force * dx / distance, force * dy / distance)
             };
-            add_offset(offsets, *node_a, Vec2::new(-force_x, -force_y));
-            add_offset(offsets, *node_b, Vec2::new(force_x, force_y));
+            add_offset(offsets, left, Vec2::new(-force_x, -force_y));
+            add_offset(offsets, right, Vec2::new(force_x, force_y));
         }
     }
 }
@@ -320,22 +370,25 @@ fn clipping_point(node: Point2, dx: f32, dy: f32, size: f32) -> Point2 {
 
 /// Spring forces pulling edge endpoints towards the rest length.
 fn apply_edge_forces(
-    edges: &[(NodeIndex, NodeIndex)],
-    positions: &Positions,
-    offsets: &mut HashMap<NodeIndex, Vec2>,
+    snapshot: &AdjacencySnapshot,
+    coordinates: &[Point2],
+    offsets: &mut [Vec2],
     options: &ForceOptions,
 ) {
-    for (source, target) in edges {
-        let (Some(a), Some(b)) = (positions.get(source), positions.get(target)) else {
+    for (source, target) in snapshot.edges() {
+        let (Some(source), Some(target)) = (snapshot.index_of(*source), snapshot.index_of(*target))
+        else {
             continue;
         };
+        let a = coordinates[source];
+        let b = coordinates[target];
         let dx = b.x - a.x;
         let dy = b.y - a.y;
         if dx == 0.0 && dy == 0.0 {
             continue;
         }
-        let first = clipping_point(*a, dx, dy, options.node_size);
-        let second = clipping_point(*b, -dx, -dy, options.node_size);
+        let first = clipping_point(a, dx, dy, options.node_size);
+        let second = clipping_point(b, -dx, -dy, options.node_size);
         let gap_x = second.x - first.x;
         let gap_y = second.y - first.y;
         let length = (gap_x * gap_x + gap_y * gap_y).sqrt();
@@ -346,37 +399,25 @@ fn apply_edge_forces(
         let force = stretch * stretch / options.elasticity;
         let force_x = force * gap_x / length;
         let force_y = force * gap_y / length;
-        add_offset(offsets, *source, Vec2::new(force_x, force_y));
-        add_offset(offsets, *target, Vec2::new(-force_x, -force_y));
+        add_offset(offsets, source, Vec2::new(force_x, force_y));
+        add_offset(offsets, target, Vec2::new(-force_x, -force_y));
     }
 }
 
 /// Weak pull of every free node towards the centroid.
-fn apply_gravity(
-    order: &[NodeIndex],
-    positions: &Positions,
-    offsets: &mut HashMap<NodeIndex, Vec2>,
-    options: &ForceOptions,
-) {
+fn apply_gravity(coordinates: &[Point2], offsets: &mut [Vec2], options: &ForceOptions) {
     if options.gravity == 0.0 {
         return;
     }
-    let points: Vec<Point2> = order
-        .iter()
-        .filter_map(|node| positions.get(node).copied())
-        .collect();
-    let center = centroid_of(&points);
-    for node in order {
-        let Some(position) = positions.get(node) else {
-            continue;
-        };
+    let center = centroid_of(coordinates);
+    for (index, position) in coordinates.iter().enumerate() {
         let dx = center.x - position.x;
         let dy = center.y - position.y;
         let distance = (dx * dx + dy * dy).sqrt();
         if distance > 1.0 {
             add_offset(
                 offsets,
-                *node,
+                index,
                 Vec2::new(
                     options.gravity * dx / distance,
                     options.gravity * dy / distance,
@@ -386,30 +427,24 @@ fn apply_gravity(
     }
 }
 
-fn add_offset(offsets: &mut HashMap<NodeIndex, Vec2>, node: NodeIndex, delta: Vec2) {
-    if let Some(offset) = offsets.get_mut(&node) {
-        *offset = Vec2::new(offset.x + delta.x, offset.y + delta.y);
-    }
+fn add_offset(offsets: &mut [Vec2], index: usize, delta: Vec2) {
+    let offset = &mut offsets[index];
+    *offset = Vec2::new(offset.x + delta.x, offset.y + delta.y);
 }
 
 /// Moves free nodes by their temperature-clamped offsets.
 fn move_nodes(
     order: &[NodeIndex],
-    positions: &mut Positions,
+    coordinates: &mut [Point2],
     fixed: &FixedNodes,
-    offsets: &HashMap<NodeIndex, Vec2>,
+    offsets: &[Vec2],
     temperature: f32,
 ) {
-    for node in order {
+    for (index, node) in order.iter().enumerate() {
         if fixed.contains(node) {
             continue;
         }
-        let (Some(position), Some(offset)) = (positions.get(node).copied(), offsets.get(node))
-        else {
-            continue;
-        };
-        let clamped = clamp_offset(*offset, temperature);
-        positions.insert(*node, position + clamped);
+        coordinates[index] = coordinates[index] + clamp_offset(offsets[index], temperature);
     }
 }
 
@@ -547,6 +582,21 @@ mod tests {
         let first = layout.layout(&snapshot, &start, &FixedNodes::default());
         let second = layout.layout(&snapshot, &start, &FixedNodes::default());
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn chunked_advance_matches_one_run() {
+        let graph = MockGraph::clique(5);
+        let snapshot = AdjacencySnapshot::capture(&graph);
+        let start = spread_start(&snapshot);
+        let mut single = start.clone();
+        let mut one = ForceSimulation::new(quiet_options());
+        one.advance(&snapshot, &mut single, &FixedNodes::default(), 40);
+        let mut chunked = start;
+        let mut two = ForceSimulation::new(quiet_options());
+        two.advance(&snapshot, &mut chunked, &FixedNodes::default(), 20);
+        two.advance(&snapshot, &mut chunked, &FixedNodes::default(), 20);
+        assert_eq!(single, chunked);
     }
 
     #[test]

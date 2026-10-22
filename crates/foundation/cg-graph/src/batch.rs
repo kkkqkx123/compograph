@@ -61,6 +61,7 @@ impl GraphStore {
         self.children = snapshot.children;
         self.collapsed = snapshot.collapsed;
         self.graph.shrink_to_fit();
+        self.invalidate_structure();
     }
 
     /// Records the pre-mutation state for undo.

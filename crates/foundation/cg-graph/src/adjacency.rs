@@ -57,8 +57,15 @@ impl AdjacencySnapshot {
     /// runs, so a view that reports an edge to an unknown node still yields
     /// a consistent index.
     pub fn capture(view: &dyn GraphView) -> Self {
-        let nodes = view.node_ids();
-        let mut edges = view.edges();
+        Self::from_parts(view.node_ids(), view.edges())
+    }
+
+    /// Builds an index from an already materialized node and edge list.
+    ///
+    /// Callers that keep their own visible structure pass the same lists they
+    /// publish, so the index and the structure agree without a second pass
+    /// through the live view.
+    pub fn from_parts(nodes: Vec<NodeIndex>, mut edges: Vec<(NodeIndex, NodeIndex)>) -> Self {
         edges.sort_unstable_by_key(|(source, target)| (source.index(), target.index()));
 
         let mut position = HashMap::with_capacity(nodes.len());
@@ -147,6 +154,11 @@ impl AdjacencySnapshot {
     /// True when `node` belongs to the captured structure.
     pub fn contains(&self, node: NodeIndex) -> bool {
         self.position.contains_key(&node)
+    }
+
+    /// Position of `node` inside the captured node list.
+    pub fn index_of(&self, node: NodeIndex) -> Option<usize> {
+        self.position.get(&node).map(|position| *position as usize)
     }
 
     /// Neighbours of `node` inside one run, empty for unknown nodes.

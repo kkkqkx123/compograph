@@ -1,8 +1,10 @@
 //! Editable graph storage built on petgraph's stable index graph.
 
+use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
+use std::rc::Rc;
 
 use petgraph::stable_graph::{EdgeIndex, NodeIndex, StableGraph};
 use petgraph::visit::{EdgeRef, IntoEdgeReferences, IntoNodeIdentifiers};
@@ -10,6 +12,7 @@ use petgraph::{Directed, Direction};
 
 use gpui::Context;
 
+use crate::adjacency::AdjacencySnapshot;
 use crate::attrs::DataValue;
 use crate::batch::StoreSnapshot;
 use crate::events::GraphChangeEvent;
@@ -67,6 +70,8 @@ pub struct GraphStore {
     pub(crate) history: Vec<StoreSnapshot>,
     pub(crate) future: Vec<StoreSnapshot>,
     pub(crate) batch_snapshot: Option<StoreSnapshot>,
+    /// Visible adjacency captured on demand and dropped by structural edits.
+    pub(crate) structure_index: RefCell<Option<Rc<AdjacencySnapshot>>>,
 }
 
 impl GraphStore {
@@ -85,6 +90,7 @@ impl GraphStore {
             history: Vec::new(),
             future: Vec::new(),
             batch_snapshot: None,
+            structure_index: RefCell::new(None),
         }
     }
 
@@ -181,6 +187,7 @@ impl GraphStore {
         let node = self.graph.add_node(NodeData {
             label: label.into(),
         });
+        self.invalidate_structure();
         self.announce(cx, GraphChangeEvent::NodeAdded(node));
         node
     }
@@ -215,6 +222,7 @@ impl GraphStore {
             self.drop_node_attrs(node);
             self.drop_node_classes(node);
             self.detach_compound(node);
+            self.invalidate_structure();
             for edge in incident {
                 self.announce(cx, GraphChangeEvent::EdgeRemoved(edge));
             }
@@ -232,6 +240,7 @@ impl GraphStore {
     ) -> EdgeIndex {
         self.before_mutation();
         let edge = self.graph.add_edge(source, target, EdgeData { weight });
+        self.invalidate_structure();
         self.announce(cx, GraphChangeEvent::EdgeAdded(edge));
         edge
     }
@@ -243,6 +252,7 @@ impl GraphStore {
         if removed.is_some() {
             self.drop_edge_attrs(edge);
             self.drop_edge_classes(edge);
+            self.invalidate_structure();
             self.announce(cx, GraphChangeEvent::EdgeRemoved(edge));
         }
         removed
@@ -287,6 +297,7 @@ impl GraphStore {
         if !classes.is_empty() {
             self.edge_class_table.insert(fresh, classes);
         }
+        self.invalidate_structure();
         self.announce(cx, GraphChangeEvent::EdgeEndpointsChanged(fresh));
         Some(fresh)
     }
@@ -349,6 +360,7 @@ impl GraphStore {
         self.clear_attr_tables();
         self.clear_class_tables();
         self.clear_compound();
+        self.invalidate_structure();
         self.announce(cx, GraphChangeEvent::StructureReset);
     }
 }
@@ -358,21 +370,21 @@ impl GraphView for GraphStore {
         if self.parents.is_empty() && self.collapsed.is_empty() {
             return self.graph.node_identifiers().collect();
         }
-        self.visible_node_ids()
+        self.visible_index().nodes().to_vec()
     }
 
     fn node_count(&self) -> usize {
         if self.parents.is_empty() && self.collapsed.is_empty() {
             return self.graph.node_count();
         }
-        self.visible_node_ids().len()
+        self.visible_index().node_count()
     }
 
     fn edge_count(&self) -> usize {
         if self.parents.is_empty() && self.collapsed.is_empty() {
             return self.graph.edge_count();
         }
-        self.visible_edges().len()
+        self.visible_index().edge_count()
     }
 
     fn edges(&self) -> Vec<(NodeIndex, NodeIndex)> {
@@ -383,13 +395,10 @@ impl GraphView for GraphStore {
                 .map(|edge| (edge.source(), edge.target()))
                 .collect();
         }
-        self.visible_edges()
+        self.visible_index().edges().to_vec()
     }
 
     fn degree(&self, node: NodeIndex) -> usize {
-        if !self.is_visible(node) {
-            return 0;
-        }
         if self.parents.is_empty() && self.collapsed.is_empty() {
             let outgoing = self.graph.edges(node).count();
             let incoming = self.graph.edges_directed(node, Direction::Incoming).count();
@@ -400,20 +409,10 @@ impl GraphView for GraphStore {
                 .count();
             return outgoing + incoming - loops;
         }
-        let visible = self.visible_edges();
-        let mut count = 0usize;
-        for (source, target) in &visible {
-            if *source == node || *target == node {
-                count += 1;
-            }
-        }
-        count
+        self.visible_index().degree(node)
     }
 
     fn neighbors(&self, node: NodeIndex) -> Vec<NodeIndex> {
-        if !self.is_visible(node) {
-            return Vec::new();
-        }
         if self.parents.is_empty() && self.collapsed.is_empty() {
             let mut result: Vec<NodeIndex> = self
                 .graph
@@ -429,59 +428,27 @@ impl GraphView for GraphStore {
             result.dedup_by_key(|neighbour| neighbour.index());
             return result;
         }
-        let mut result = Vec::new();
-        for (source, target) in self.visible_edges() {
-            if source == node && self.is_visible(target) {
-                result.push(target);
-            } else if target == node && self.is_visible(source) {
-                result.push(source);
-            }
-        }
-        result.sort_unstable_by_key(|neighbour| neighbour.index());
-        result.dedup_by_key(|neighbour| neighbour.index());
-        result
+        self.visible_index().neighbors(node).to_vec()
     }
 
     fn successors(&self, node: NodeIndex) -> Vec<NodeIndex> {
-        if !self.is_visible(node) {
-            return Vec::new();
-        }
         if self.parents.is_empty() && self.collapsed.is_empty() {
             return GraphStore::successors(self, node)
                 .into_iter()
                 .map(|(neighbour, _)| neighbour)
                 .collect();
         }
-        let mut result: Vec<NodeIndex> = self
-            .visible_edges()
-            .into_iter()
-            .filter(|(source, _)| *source == node)
-            .map(|(_, target)| target)
-            .collect();
-        result.sort_unstable_by_key(|neighbour| neighbour.index());
-        result.dedup_by_key(|neighbour| neighbour.index());
-        result
+        self.visible_index().successors(node).to_vec()
     }
 
     fn predecessors(&self, node: NodeIndex) -> Vec<NodeIndex> {
-        if !self.is_visible(node) {
-            return Vec::new();
-        }
         if self.parents.is_empty() && self.collapsed.is_empty() {
             return GraphStore::predecessors(self, node)
                 .into_iter()
                 .map(|(neighbour, _)| neighbour)
                 .collect();
         }
-        let mut result: Vec<NodeIndex> = self
-            .visible_edges()
-            .into_iter()
-            .filter(|(_, target)| *target == node)
-            .map(|(source, _)| source)
-            .collect();
-        result.sort_unstable_by_key(|neighbour| neighbour.index());
-        result.dedup_by_key(|neighbour| neighbour.index());
-        result
+        self.visible_index().predecessors(node).to_vec()
     }
 }
 

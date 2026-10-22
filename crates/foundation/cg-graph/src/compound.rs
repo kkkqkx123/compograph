@@ -4,9 +4,11 @@
 //! through the queries here and the folding-aware view implementation.
 
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use petgraph::stable_graph::NodeIndex;
 
+use crate::adjacency::AdjacencySnapshot;
 use crate::events::GraphChangeEvent;
 use crate::store::GraphStore;
 
@@ -142,6 +144,32 @@ impl GraphStore {
 
     /// Visible nodes in index order; hidden descendants are skipped.
     pub fn visible_node_ids(&self) -> Vec<NodeIndex> {
+        self.visible_index().nodes().to_vec()
+    }
+
+    /// Visible structure captured on first use after a structural change.
+    ///
+    /// Adjacency questions that carry containers read this index instead of
+    /// rebuilding the proxied edge table per query. Structural edits drop the
+    /// cached value, so the next question captures the current structure.
+    pub(crate) fn visible_index(&self) -> Rc<AdjacencySnapshot> {
+        if let Some(snapshot) = self.structure_index.borrow().as_ref() {
+            return Rc::clone(snapshot);
+        }
+        let nodes = self.build_visible_node_ids();
+        let edges = self.build_visible_edges();
+        let snapshot = Rc::new(AdjacencySnapshot::from_parts(nodes, edges));
+        *self.structure_index.borrow_mut() = Some(Rc::clone(&snapshot));
+        snapshot
+    }
+
+    /// Drops the cached visible structure after an edit.
+    pub(crate) fn invalidate_structure(&self) {
+        self.structure_index.borrow_mut().take();
+    }
+
+    /// Visible nodes computed from the hierarchy tables.
+    fn build_visible_node_ids(&self) -> Vec<NodeIndex> {
         let mut ids: Vec<NodeIndex> = self
             .node_ids()
             .filter(|node| self.is_visible(*node))
@@ -169,6 +197,11 @@ impl GraphStore {
     /// collapse boundary reappear with the hidden endpoint replaced by its
     /// nearest visible ancestor. Parallel edges stay parallel.
     pub fn visible_edges(&self) -> Vec<(NodeIndex, NodeIndex)> {
+        self.visible_index().edges().to_vec()
+    }
+
+    /// Visible edges computed from the hierarchy tables.
+    fn build_visible_edges(&self) -> Vec<(NodeIndex, NodeIndex)> {
         let mut proxied = Vec::new();
         for edge in self.graph.edge_indices() {
             let Some((source, target)) = self.graph.edge_endpoints(edge) else {
@@ -282,6 +315,7 @@ impl GraphStore {
             self.parents.insert(child, next);
             self.children.entry(next).or_default().insert(child);
         }
+        self.invalidate_structure();
         self.announce(cx, GraphChangeEvent::ParentChanged(child));
         Ok(())
     }
@@ -306,6 +340,7 @@ impl GraphStore {
         } else {
             self.collapsed.remove(&node);
         }
+        self.invalidate_structure();
         self.announce(cx, GraphChangeEvent::CollapsedChanged(node));
         true
     }
