@@ -38,8 +38,8 @@ compograph-layout = { path = "crates/engine/cg-layout", version = "0.1.0" }
 compograph-render = { path = "crates/render/cg-render", version = "0.1.0" }
 compograph-types = { path = "crates/foundation/cg-types", version = "0.1.0" }
 
-gpui = { package = "gpui-pre", version = "=0.3.8" }
-gpui_platform = { package = "gpui-pre-platform", version = "=0.3.8", features = [
+gpui = { package = "gpui-pre", version = "=0.3.10" }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.10", features = [
     "font-kit",
     "x11",
     "wayland",
