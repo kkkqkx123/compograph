@@ -12,7 +12,7 @@ compograph is a pure Rust desktop graph visualization application: the graph mod
 
 ## Code Architecture
 
-The top level contains `crates/`, `docs/`, `Cargo.toml`, `rust-toolchain.toml`, and `AGENTS.md`.
+The top level contains `crates/`, `docs/`, `Cargo.toml`, and `AGENTS.md`.
 
 `crates/` holds the self-built layers; gpui itself is a registry dependency, not source in the tree:
 
@@ -66,7 +66,7 @@ crates/<name>/src/
 
 ## Build and Run
 
-Prerequisites: `rust-toolchain.toml` pins the toolchain (currently 1.98.1). In restricted network environments, cargo needs to be configured with a crates.io mirror (such as rsproxy).
+Prerequisites: the default stable toolchain (no `rust-toolchain.toml` pin). In restricted network environments, cargo needs to be configured with a crates.io mirror (such as rsproxy).
 
 ```shell
 cargo clippy --all-targets --all-features   # full compilation check
