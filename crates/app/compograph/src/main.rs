@@ -1,4 +1,7 @@
 //! compograph desktop application entry point.
+//!
+//! `--smoke-frames N` renders N frames, prints the frame timing summary and
+//! quits — the smoke entry for scripted/platform verification.
 
 mod algo_panel;
 mod algo_params;
@@ -13,6 +16,10 @@ mod view_sidebar;
 mod view_status;
 mod view_toolbar;
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::OnceLock;
+use std::time::Instant;
+
 use app_state::GraphWindow;
 use gpui::{
     App, AppContext, Bounds, Context, IntoElement, ParentElement, Render, Styled, Window,
@@ -20,9 +27,31 @@ use gpui::{
 };
 use gpui_platform::application;
 
+/// Smoke-run configuration, set in `main` when `--smoke-frames` is passed.
+struct SmokeRun {
+    frames: usize,
+    start: Instant,
+}
+static SMOKE: OnceLock<SmokeRun> = OnceLock::new();
+static SMOKE_FRAMES_DONE: AtomicUsize = AtomicUsize::new(0);
+
 impl Render for GraphWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let frame = self.prepare_frame(window, cx);
+        // One full frame pipeline has run; count it in smoke mode.
+        if let Some(smoke) = SMOKE.get() {
+            let done = SMOKE_FRAMES_DONE.fetch_add(1, Ordering::SeqCst) + 1;
+            if done == smoke.frames {
+                let elapsed = smoke.start.elapsed();
+                println!(
+                    "smoke: {} frames in {:.2?} (avg {:.2?}/frame)",
+                    smoke.frames,
+                    elapsed,
+                    elapsed / smoke.frames as u32
+                );
+                cx.quit();
+            }
+        }
         div()
             .size_full()
             .flex()
@@ -41,6 +70,30 @@ impl Render for GraphWindow {
 }
 
 fn main() {
+    let mut args = std::env::args().skip(1);
+    let mut smoke_frames: Option<usize> = None;
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--smoke-frames" => match args.next().and_then(|v| v.parse().ok()) {
+                Some(n) if n > 0 => smoke_frames = Some(n),
+                _ => {
+                    eprintln!("--smoke-frames requires a positive number");
+                    std::process::exit(2);
+                }
+            },
+            other => {
+                eprintln!("unknown argument {other:?}; usage: compograph [--smoke-frames N]");
+                std::process::exit(2);
+            }
+        }
+    }
+    if let Some(frames) = smoke_frames {
+        let _ = SMOKE.set(SmokeRun {
+            frames,
+            start: Instant::now(),
+        });
+    }
+
     application().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(1024.0), px(768.0)), cx);
         let opened = cx.open_window(
