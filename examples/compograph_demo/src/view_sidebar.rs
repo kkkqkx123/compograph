@@ -4,7 +4,7 @@
 //! algorithm dispatch or a parameter adjustment; the column itself holds no
 //! graph logic.
 
-use gpui::{
+use gpui_kit::{
     ClickEvent, Context, InteractiveElement, IntoElement, ParentElement,
     StatefulInteractiveElement, Styled, div, px,
 };

@@ -13,7 +13,7 @@ use compograph_interact::{
 };
 use compograph_render::{DetailLevel, EdgeStylePatch, NODE_SIDE, NodeStylePatch, label_envelope};
 use compograph_types::{Point2, Rect};
-use gpui::{App, Context};
+use gpui_kit::{App, Context};
 
 use crate::app_state::{GraphWindow, TAP_THRESHOLD};
 

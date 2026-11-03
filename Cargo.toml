@@ -1,11 +1,8 @@
 [workspace]
 resolver = "2"
 members = [
-    # compograph crates, grouped by layer.
-    "crates/foundation/*",
-    "crates/engine/*",
-    "crates/render/*",
-    "crates/app/*",
+    "crates/*",
+    "examples/*",
 ]
 
 [workspace.package]
@@ -31,12 +28,12 @@ disallowed_methods = "deny"
 # with the gpui-kit workspace pin. `gpui_platform` enables the desktop
 # backends and macOS font/shader features exactly like gpui-kit does.
 [workspace.dependencies]
-compograph-geometry = { path = "crates/foundation/cg-geometry", version = "0.1.0" }
-compograph-graph = { path = "crates/foundation/cg-graph", version = "0.1.0" }
-compograph-interact = { path = "crates/render/cg-interact", version = "0.1.0" }
-compograph-layout = { path = "crates/engine/cg-layout", version = "0.1.0" }
-compograph-render = { path = "crates/render/cg-render", version = "0.1.0" }
-compograph-types = { path = "crates/foundation/cg-types", version = "0.1.0" }
+compograph-geometry = { path = "crates/cg-geometry", version = "0.1.0" }
+compograph-graph = { path = "crates/cg-graph", version = "0.1.0" }
+compograph-interact = { path = "crates/cg-interact", version = "0.1.0" }
+compograph-layout = { path = "crates/cg-layout", version = "0.1.0" }
+compograph-render = { path = "crates/cg-render", version = "0.1.0" }
+compograph-types = { path = "crates/cg-types", version = "0.1.0" }
 
 gpui = { package = "gpui-pre", version = "=0.3.10" }
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.10", features = [

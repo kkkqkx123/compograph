@@ -6,7 +6,7 @@
 use compograph_graph::GraphView;
 use compograph_interact::SelectMode;
 use compograph_render::{DetailLevel, ExportScope};
-use gpui::{
+use gpui_kit::{
     ClickEvent, Context, InteractiveElement, IntoElement, ParentElement,
     StatefulInteractiveElement, Styled, div, prelude::FluentBuilder,
 };

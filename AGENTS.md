@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-compograph is a pure Rust desktop graph visualization application: the graph model and algorithm core are based on petgraph, the UI foundation is gpui from the `gpui-pre` snapshot of Zed's GPU-accelerated GUI framework, and layout, rendering, and interaction are developed in-house by this project.
+compograph is a pure Rust graph visualization library set with a demo: the graph model and algorithm core are based on petgraph, the UI foundation is gpui from the `gpui-pre` snapshot of Zed's GPU-accelerated GUI framework, and layout, rendering, and interaction are developed in-house by this project.
 
 **No-backward-compatible**: The project is in the development phase; backward compatibility does not need to be considered, only a reasonable architecture needs to be maintained.
 
@@ -14,25 +14,24 @@ compograph is a pure Rust desktop graph visualization application: the graph mod
 
 The top level contains `crates/`, `docs/`, `Cargo.toml`, and `AGENTS.md`.
 
-`crates/` holds the self-built layers; gpui itself is a registry dependency, not source in the tree:
+`crates/` holds the self-built libraries; gpui itself is a registry dependency, not source in the tree:
 
 - **gpui and its platform backend**: Consumed as the published `gpui-pre` / `gpui-pre-platform` snapshot crates from crates.io (the same snapshot line gpui-kit pins, currently `=0.3.8`), declared once in `[workspace.dependencies]`. There is no vendored gpui source and no submodule mount point.
-- **foundation layer**: `cg-types` (geometry primitives, leaf crate), `cg-geometry` (hit testing and curve geometry, framework-agnostic), `cg-graph` (`GraphStore` graph storage + petgraph `StableGraph` adaptation + change event broadcasting and subscription filtering)
-- **engine layer**: `cg-layout` (`LayoutEngine` trait, layout registry, concrete layout implementations, `LayoutDriver` change-driven position maintenance)
-- **render layer**: `cg-render` (GraphView canvas, `Camera` viewport mapping, draw planning), `cg-interact` (pointer drag/pan/zoom/selection state)
-- **app layer**: `compograph` (desktop application binary, gpui bootstrapping and assembly)
+- `cg-types` (geometry primitives, leaf crate), `cg-geometry` (hit testing and curve geometry, framework-agnostic), `cg-graph` (`GraphStore` graph storage + petgraph `StableGraph` adaptation + change event broadcasting and subscription filtering)
+- `cg-layout` (`LayoutEngine` trait, layout registry, concrete layout implementations, `LayoutDriver` change-driven position maintenance)
+- `cg-render` (GraphView canvas, `Camera` viewport mapping, draw planning), `cg-interact` (pointer drag/pan/zoom/selection state)
 
-Self-built crates are layered as `foundation/`, `engine/`, `render/`, and `app/`; no upstream source lives in the tree, so this project's own code is visible at a glance and is not drowned out by vendor files.
+`examples/compograph_demo` assembles the libraries in a desktop window; no upstream source lives in the tree, so this project's own code is visible at a glance and is not drowned out by vendor files.
 
 ### Rust Crate Dependency DAG
 
 ```
-foundation: cg-types <- cg-geometry
+cg-types <- cg-geometry
 cg-types <- cg-graph (also depends on petgraph and gpui's EventEmitter marker)
-engine: cg-graph + cg-types <- cg-layout (subscription-driven requires gpui's Context, so it depends on gpui at the same level)
-render: cg-graph + cg-layout + cg-geometry + cg-types <- cg-render
+cg-graph + cg-types <- cg-layout (subscription-driven requires gpui's Context, so it depends on gpui at the same level)
+cg-graph + cg-layout + cg-geometry + cg-types <- cg-render
 cg-graph + cg-render + cg-types <- cg-interact
-app: all of the above <- compograph (also depends on gpui_platform)
+demo: all of the above <- compograph_demo (also depends on gpui_platform)
 upstream: the gpui-pre snapshot crates from crates.io interdepend,
  and never depend in reverse on any cg-* crate
 ```
@@ -71,7 +70,7 @@ Prerequisites: the default stable toolchain (no `rust-toolchain.toml` pin). In r
 ```shell
 cargo clippy --all-targets --all-features   # full compilation check
 cargo test --workspace                      # full test suite
-cargo run -p compograph                     # launch desktop application
+cargo run -p compograph_demo                # launch graph demo
 ```
 
 ## Testing

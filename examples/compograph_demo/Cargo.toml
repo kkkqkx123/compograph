@@ -1,0 +1,26 @@
+[package]
+name = "compograph_demo"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Demo assembling the compograph graph libraries in a desktop window"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+compograph-graph.workspace = true
+compograph-interact.workspace = true
+compograph-layout.workspace = true
+compograph-render.workspace = true
+compograph-types.workspace = true
+# The published GPUI Kit release supplies the application shell and the GPUI
+# types. The compograph libraries build against the same `gpui-pre` snapshot
+# the Kit release pins, so the types unify.
+gpui-kit = { version = "0.8", default-features = false }
+
+[dev-dependencies]
+# The test-support feature pulls in `TestAppContext`, which the
+# background write-back tests need to drive the window without a display.
+gpui-kit = { version = "0.8", default-features = false, features = ["test-support"] }

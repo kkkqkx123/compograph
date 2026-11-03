@@ -5,7 +5,7 @@
 //! can never push the runs out of bounds.
 
 use compograph_graph::{ClusterMetric, Linkage};
-use gpui::Context;
+use gpui_kit::Context;
 
 use crate::app_state::{
     CLUSTER_K_MAX, CLUSTER_THRESHOLD_MAX, GraphWindow, PATH_K_MAX, SIMPLE_LIMIT_MAX, endpoint_slot,

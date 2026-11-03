@@ -1,4 +1,4 @@
-//! compograph desktop application entry point.
+//! Demo assembling the compograph graph libraries in a desktop window.
 //!
 //! `--smoke-frames N` renders N frames, prints the frame timing summary and
 //! quits — the smoke entry for scripted/platform verification.
@@ -21,11 +21,10 @@ use std::sync::OnceLock;
 use std::time::Instant;
 
 use app_state::GraphWindow;
-use gpui::{
-    App, AppContext, Bounds, Context, IntoElement, ParentElement, Render, Styled, Window,
-    WindowBounds, WindowOptions, div, px, size,
+use gpui_kit::{
+    AppContext, Bounds, Context, IntoElement, ParentElement, Render, Styled, Window, WindowBounds,
+    WindowOptions, div, px, size,
 };
-use gpui_platform::application;
 
 /// Smoke-run configuration, set in `main` when `--smoke-frames` is passed.
 struct SmokeRun {
@@ -82,7 +81,7 @@ fn main() {
                 }
             },
             other => {
-                eprintln!("unknown argument {other:?}; usage: compograph [--smoke-frames N]");
+                eprintln!("unknown argument {other:?}; usage: compograph_demo [--smoke-frames N]");
                 std::process::exit(2);
             }
         }
@@ -94,20 +93,24 @@ fn main() {
         });
     }
 
-    application().run(|cx: &mut App| {
+    gpui_kit::application().run(|cx| {
+        gpui_kit::init(cx);
         let bounds = Bounds::centered(None, size(px(1024.0), px(768.0)), cx);
-        let opened = cx.open_window(
+        let opened = gpui_kit::open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
+            cx,
             |_, cx| cx.new(GraphWindow::new),
         );
         match opened {
-            Ok(window) => {
+            Ok((window, view)) => {
                 if window
-                    .update(cx, |view, window, cx| {
-                        window.focus(&view.focus, cx);
+                    .update(cx, |_, window, cx| {
+                        view.update(cx, |view, cx| {
+                            window.focus(&view.focus, cx);
+                        });
                     })
                     .is_err()
                 {
@@ -125,7 +128,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::TestAppContext;
+    use gpui_kit::{App, TestAppContext};
 
     use crate::algo_panel::AlgoOutcome;
     use crate::app_state::{endpoint_slot, is_dismiss_key};
@@ -146,7 +149,7 @@ mod tests {
         assert_eq!(endpoint_slot(&ids, NodeIndex::new(9)), None);
     }
 
-    #[gpui::test]
+    #[gpui_kit::test]
     fn stale_algo_write_back_is_dropped(cx: &mut TestAppContext) {
         let view = cx.update(|cx: &mut App| cx.new(GraphWindow::new));
         cx.update(|cx| {
@@ -179,7 +182,7 @@ mod tests {
         });
     }
 
-    #[gpui::test]
+    #[gpui_kit::test]
     fn selection_and_algo_highlights_share_the_bypass(cx: &mut TestAppContext) {
         let view = cx.update(|cx: &mut App| cx.new(GraphWindow::new));
         cx.update(|cx| {
@@ -201,7 +204,7 @@ mod tests {
         });
     }
 
-    #[gpui::test]
+    #[gpui_kit::test]
     fn json_import_restores_positions_after_driver_reactions(cx: &mut TestAppContext) {
         use compograph_types::Point2;
         let view = cx.update(|cx: &mut App| cx.new(GraphWindow::new));

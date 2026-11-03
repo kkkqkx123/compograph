@@ -11,7 +11,7 @@ use compograph_graph::{
     GraphDocument, GraphView, NodeIndex, export_dot_document, sync_document,
 };
 use compograph_render::{ExportRequest, ExportScope, ExportSnapshot, encode_png, export_pixels};
-use gpui::{App, Context, PathPromptOptions};
+use gpui_kit::{App, Context, PathPromptOptions};
 
 use crate::app_state::{EXPORT_SCALE, GraphWindow, working_directory};
 use crate::file_io;

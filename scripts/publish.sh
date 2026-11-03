@@ -6,17 +6,17 @@ if [[ "${1:-}" == "--dry-run" ]]; then
     DRY_RUN=true
 fi
 
-# Ordered by the crate dependency DAG: foundation -> engine -> render -> app.
-# Format: "<directory>:<published package name>" (directory names are unchanged;
+# Ordered by the crate dependency DAG: types/geometry/graph -> layout ->
+# render/interact. The demo under examples/ is not published.
+# Format: "<directory>:<published package name>" (directory names are short;
 # package names carry the compograph- prefix).
 CRATES=(
-    "crates/foundation/cg-types:compograph-types"
-    "crates/foundation/cg-geometry:compograph-geometry"
-    "crates/foundation/cg-graph:compograph-graph"
-    "crates/engine/cg-layout:compograph-layout"
-    "crates/render/cg-render:compograph-render"
-    "crates/render/cg-interact:compograph-interact"
-    "crates/app/compograph:compograph"
+    "crates/cg-types:compograph-types"
+    "crates/cg-geometry:compograph-geometry"
+    "crates/cg-graph:compograph-graph"
+    "crates/cg-layout:compograph-layout"
+    "crates/cg-render:compograph-render"
+    "crates/cg-interact:compograph-interact"
 )
 
 for entry in "${CRATES[@]}"; do

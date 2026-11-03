@@ -18,7 +18,7 @@ use compograph_render::{
     visible_node_ids, world_viewport_rect,
 };
 use compograph_types::{Point2, Rect, Vec2};
-use gpui::{Context, Window};
+use gpui_kit::{Context, Window};
 
 use crate::app_state::GraphWindow;
 

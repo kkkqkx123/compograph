@@ -19,7 +19,7 @@ use compograph_render::{
     subscribe_repaint,
 };
 use compograph_types::{Point2, Vec2};
-use gpui::{AppContext, Context, Entity, FocusHandle, Subscription, Task};
+use gpui_kit::{AppContext, Context, Entity, FocusHandle, Subscription, Task};
 
 use crate::algo_panel::EdgePair;
 use crate::frame_plans::StructureCache;
@@ -290,7 +290,7 @@ impl GraphWindow {
         view
     }
 
-    pub(crate) fn viewport_point(position: gpui::Point<gpui::Pixels>) -> Point2 {
+    pub(crate) fn viewport_point(position: gpui_kit::Point<gpui_kit::Pixels>) -> Point2 {
         Point2::new(f32::from(position.x), f32::from(position.y))
     }
 

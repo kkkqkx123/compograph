@@ -11,9 +11,9 @@ use compograph_interact::{
     should_clear_on_blank, wheel_zoom_factor,
 };
 use compograph_render::{DetailLevel, graph_view};
-use gpui::{
+use gpui_kit::{
     App, Context, InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ParentElement, ScrollDelta, ScrollWheelEvent, Styled, Window,
+    MouseMoveEvent, MouseUpEvent, ParentElement, ScrollDelta, ScrollEvent, Styled, Window,
     div, prelude::FluentBuilder, px,
 };
 
@@ -247,8 +247,8 @@ impl GraphWindow {
                     cx.notify();
                 }),
             )
-            .on_scroll_wheel(cx.listener(
-                |this, event: &ScrollWheelEvent, _window, cx| {
+            .on_scroll(cx.listener(
+                |this, event: &ScrollEvent, _window, cx| {
                     let anchor = Self::viewport_point(event.position);
                     let lines = match &event.delta {
                         ScrollDelta::Pixels(pixels) => {

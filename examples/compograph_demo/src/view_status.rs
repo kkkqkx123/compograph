@@ -4,7 +4,7 @@
 //! and formats them; it never mutates state.
 
 use compograph_render::DetailLevel;
-use gpui::{Context, IntoElement, ParentElement, Styled, div};
+use gpui_kit::{Context, IntoElement, ParentElement, Styled, div};
 
 use crate::app_state::GraphWindow;
 

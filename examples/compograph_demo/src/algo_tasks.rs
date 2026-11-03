@@ -23,7 +23,7 @@ use compograph_graph::{
     strongly_connected_components, topo_order, topological_order, transitive_reduction,
     undirected_connected_components, weighted_degree_centrality,
 };
-use gpui::Context;
+use gpui_kit::Context;
 
 use crate::algo_panel::{self, AlgoOutcome};
 use crate::app_state::{
@@ -33,14 +33,14 @@ use crate::app_state::{
 
 impl GraphWindow {
     /// Sorted node identifiers currently in the store.
-    pub(crate) fn ordered_nodes(&self, cx: &gpui::App) -> Vec<NodeIndex> {
+    pub(crate) fn ordered_nodes(&self, cx: &gpui_kit::App) -> Vec<NodeIndex> {
         let mut ids: Vec<NodeIndex> = self.store.read(cx).node_ids().collect();
         ids.sort_unstable_by_key(|node| node.index());
         ids
     }
 
     /// Start and goal nodes selected by the panel parameters.
-    pub(crate) fn algo_endpoints(&self, cx: &gpui::App) -> Option<(NodeIndex, NodeIndex)> {
+    pub(crate) fn algo_endpoints(&self, cx: &gpui_kit::App) -> Option<(NodeIndex, NodeIndex)> {
         let ids = self.ordered_nodes(cx);
         if ids.is_empty() {
             return None;
@@ -52,7 +52,7 @@ impl GraphWindow {
     }
 
     /// Label shown for a panel endpoint slot.
-    pub(crate) fn endpoint_label(&self, slot: usize, cx: &gpui::App) -> String {
+    pub(crate) fn endpoint_label(&self, slot: usize, cx: &gpui_kit::App) -> String {
         let ids = self.ordered_nodes(cx);
         if ids.is_empty() {
             return "-".to_string();
